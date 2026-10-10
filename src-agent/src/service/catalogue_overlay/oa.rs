@@ -1,5 +1,6 @@
 //! Fetch OAuth provider catalogues from koma-landing `/api/v1/oa/providers/{id}`
-//! and merge them into the catalogue overlay table (keyed by chat_endpoint).
+//! and merge them into the catalogue overlay table (keyed by catalogue identity).
+//! Also resolves on-demand public model detail for incomplete/missing rows.
 
 use std::time::Duration;
 
@@ -76,6 +77,97 @@ impl From<OaRow> for OverlayModel {
 
 fn oa_base() -> String {
     std::env::var("KOMA_OA_BASE").unwrap_or_else(|_| DEFAULT_OA_BASE.to_string())
+}
+
+/// Fetch public OA detail once, with provider membership preferred over the
+/// bare OpenRouter join. The whole chain shares the catalogue's 12s budget;
+/// no chat credentials are sent to the public OA service.
+pub async fn fetch_oa_detail(
+    provider: Option<OAuthProvider>,
+    model_id: &str,
+) -> anyhow::Result<OverlayModel> {
+    let base = oa_base();
+    fetch_detail_at(&base, provider, model_id).await
+}
+
+async fn fetch_detail_at(
+    base: &str,
+    provider: Option<OAuthProvider>,
+    model_id: &str,
+) -> anyhow::Result<OverlayModel> {
+    let client = reqwest::Client::builder()
+        .timeout(FETCH_TIMEOUT)
+        .user_agent(concat!("koma/", env!("CARGO_PKG_VERSION")))
+        .build()?;
+    tokio::time::timeout(FETCH_TIMEOUT, async {
+        if let Some(provider) = provider.filter(|p| *p != OAuthProvider::Extension) {
+            let url = detail_url(base, Some(provider.wire_id()), model_id)?;
+            if let Some(model) = fetch_detail_row(&client, url, model_id).await? {
+                return Ok(model);
+            }
+        }
+        let url = detail_url(base, None, model_id)?;
+        fetch_detail_row(&client, url, model_id)
+            .await?
+            .ok_or_else(|| anyhow::anyhow!("model detail not found"))
+    })
+    .await
+    .map_err(|_| anyhow::anyhow!("model detail timed out"))?
+}
+
+fn detail_url(base: &str, provider: Option<&str>, model_id: &str) -> anyhow::Result<url::Url> {
+    anyhow::ensure!(
+        !model_id.is_empty()
+            && model_id
+                .split('/')
+                .all(|s| !s.is_empty() && s != "." && s != ".."),
+        "invalid model detail id"
+    );
+    let mut url = url::Url::parse(base)?;
+    url.set_query(None);
+    url.set_fragment(None);
+    {
+        let mut path = url
+            .path_segments_mut()
+            .map_err(|_| anyhow::anyhow!("invalid OA base URL"))?;
+        path.pop_if_empty().push("models");
+        if let Some(provider) = provider {
+            path.push(provider);
+        }
+        path.extend(model_id.split('/')).push("detail");
+    }
+    Ok(url)
+}
+
+async fn fetch_detail_row(
+    client: &reqwest::Client,
+    url: url::Url,
+    model_id: &str,
+) -> anyhow::Result<Option<OverlayModel>> {
+    let resp = client.get(url).send().await?;
+    if resp.status() == reqwest::StatusCode::NOT_FOUND {
+        return Ok(None);
+    }
+    anyhow::ensure!(
+        resp.status() == reqwest::StatusCode::OK,
+        "model detail status {}",
+        resp.status()
+    );
+    let value: serde_json::Value = resp.json().await?;
+    parse_detail(value, model_id)
+}
+
+fn parse_detail(value: serde_json::Value, model_id: &str) -> anyhow::Result<Option<OverlayModel>> {
+    if value.get("matched").and_then(|v| v.as_bool()) == Some(false) {
+        return Ok(None);
+    }
+    let row: OaRow = serde_json::from_value(value)?;
+    anyhow::ensure!(!row.id.is_empty(), "model detail has empty id");
+    let mut model = OverlayModel::from(row);
+    // Bare OR resolution may return a canonical wire id rather than the full
+    // requested id. Cache the capabilities under the caller's exact model id.
+    model.id = model_id.to_string();
+    Ok(Some(model))
 }
 
 /// Background thread: refresh OA catalogues and merge into the live overlay.
@@ -180,7 +272,7 @@ fn refresh_all() -> anyhow::Result<()> {
     Ok(())
 }
 
-fn merge_disk_into_overlay(oa_dir: &std::path::Path) {
+pub(super) fn merge_disk_into_overlay(oa_dir: &std::path::Path) {
     let mut patch = OverlayTable::new();
     for (provider, wire_id) in OA_PROVIDERS {
         let path = oa_dir.join(format!("{wire_id}.json"));
@@ -229,13 +321,13 @@ fn apply_provider_rows(provider: OAuthProvider, rows: Vec<OaRow>, patch: &mut Ov
         return;
     }
 
-    let endpoint = registry::meta(provider).chat_endpoint;
+    let endpoint = super::catalogue_key(registry::meta(provider).chat_endpoint, Some(provider));
     if endpoint.is_empty() {
         return;
     }
     let models: Vec<OverlayModel> = rows.into_iter().map(OverlayModel::from).collect();
     if !models.is_empty() {
-        patch.insert(endpoint.to_string(), models);
+        patch.insert(endpoint, models);
     }
 }
 
@@ -266,7 +358,147 @@ fn atomic_write(path: &std::path::Path, bytes: &[u8]) -> std::io::Result<()> {
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::unwrap_used, clippy::expect_used)]
     use super::*;
+
+    #[test]
+    fn detail_url_preserves_model_segments_and_encodes_reserved_chars() {
+        let url = detail_url(
+            "https://example.test/api/v1/oa/",
+            Some("commandcode"),
+            "author/model?#",
+        )
+        .unwrap();
+        assert_eq!(
+            url.as_str(),
+            "https://example.test/api/v1/oa/models/commandcode/author/model%3F%23/detail"
+        );
+        assert!(detail_url("https://example.test/oa", None, "../model").is_err());
+        assert!(detail_url("https://example.test/oa", None, "").is_err());
+    }
+
+    #[test]
+    fn detail_parsing_requires_a_match_and_a_nonempty_id() {
+        use serde_json::json;
+        assert!(parse_detail(json!({"matched": false}), "haiku")
+            .unwrap()
+            .is_none());
+        assert!(parse_detail(json!({"id": ""}), "haiku").is_err());
+        assert!(parse_detail(json!({"reasoning": {}}), "haiku").is_err());
+        let model = parse_detail(json!({
+            "id": "claude-haiku-5-5",
+            "reasoning": {"mandatory": false, "supported_efforts": ["max", "xhigh", "high", "medium", "low"]},
+            "context_length": 200000,
+            "pricing": {"input": 1.0, "cached": 0.1, "output": 5.0}
+        }), "anthropic/claude-haiku-5.5").unwrap().unwrap();
+        assert_eq!(model.id, "anthropic/claude-haiku-5.5");
+        assert_eq!(model.context_length, Some(200000));
+        assert_eq!(model.pricing.as_ref().unwrap().input, 1.0);
+        let caps = crate::service::openrouter::effort_caps(&[model.to_model_info()], &model.id);
+        assert!(caps.supported);
+        assert_eq!(caps.efforts, ["max", "xhigh", "high", "medium", "low"]);
+        assert!(
+            parse_detail(json!({"id": "haiku", "matched": true}), "haiku")
+                .unwrap()
+                .is_some()
+        );
+    }
+
+    fn mock_detail_server(
+        responses: Vec<(u16, &'static str)>,
+    ) -> (String, std::thread::JoinHandle<Vec<String>>) {
+        use std::io::{Read, Write};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let base = format!("http://{}/api/v1/oa", listener.local_addr().unwrap());
+        listener.set_nonblocking(true).unwrap();
+        let thread = std::thread::spawn(move || {
+            let mut requests = Vec::new();
+            for (status, body) in responses {
+                let deadline = std::time::Instant::now() + Duration::from_secs(4);
+                let mut stream = loop {
+                    match listener.accept() {
+                        Ok((stream, _)) => break stream,
+                        Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                            assert!(
+                                std::time::Instant::now() < deadline,
+                                "detail request not received"
+                            );
+                            std::thread::sleep(Duration::from_millis(10));
+                        }
+                        Err(e) => panic!("accept: {e}"),
+                    }
+                };
+                stream
+                    .set_read_timeout(Some(Duration::from_secs(2)))
+                    .unwrap();
+                let mut request = Vec::new();
+                let mut byte = [0u8; 1];
+                while !request.ends_with(b"\r\n\r\n") {
+                    stream.read_exact(&mut byte).unwrap();
+                    request.push(byte[0]);
+                }
+                requests.push(String::from_utf8(request).unwrap());
+                write!(stream, "HTTP/1.1 {status} Test\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len()).unwrap();
+            }
+            requests
+        });
+        (base, thread)
+    }
+
+    #[tokio::test]
+    async fn detail_404_falls_through_to_bare_without_credentials() {
+        let (base, server) = mock_detail_server(vec![
+            (404, r#"{"matched":false}"#),
+            (
+                200,
+                r#"{"id":"claude-haiku-5-5","matched":true,"reasoning":{"supported_efforts":["high","low"]}}"#,
+            ),
+        ]);
+        let result =
+            fetch_detail_at(&base, Some(OAuthProvider::CommandCode), "claude-haiku-5-5").await;
+        let requests = server.join().unwrap();
+        let model = result.unwrap();
+        assert!(model.reasoning.is_some());
+        assert!(
+            requests[0].starts_with("GET /api/v1/oa/models/commandcode/claude-haiku-5-5/detail ")
+        );
+        assert!(requests[1].starts_with("GET /api/v1/oa/models/claude-haiku-5-5/detail "));
+        for request in requests {
+            assert!(!request.to_lowercase().contains("authorization:"));
+            assert!(request.to_lowercase().contains("user-agent: koma/"));
+        }
+    }
+
+    #[tokio::test]
+    async fn detail_unknown_and_http_failure_are_terminal() {
+        let (base, server) = mock_detail_server(vec![(404, "{}"), (404, "{}")]);
+        assert!(
+            fetch_detail_at(&base, Some(OAuthProvider::CommandCode), "unknown")
+                .await
+                .is_err()
+        );
+        assert_eq!(server.join().unwrap().len(), 2);
+        let (base, server) = mock_detail_server(vec![(503, "{}")]);
+        assert!(
+            fetch_detail_at(&base, Some(OAuthProvider::CommandCode), "unknown")
+                .await
+                .is_err()
+        );
+        assert_eq!(server.join().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn provider_rows_use_catalogue_identity() {
+        for provider in [OAuthProvider::CommandCode, OAuthProvider::Kilocode] {
+            let parsed: OaListResponse =
+                serde_json::from_str(r#"{"data":[{"id":"model"}]}"#).unwrap();
+            let mut patch = OverlayTable::new();
+            apply_provider_rows(provider, parsed.data, &mut patch);
+            let key =
+                super::super::catalogue_key(registry::meta(provider).chat_endpoint, Some(provider));
+            assert_eq!(patch[&key][0].id, "model");
+        }
+    }
 
     #[test]
     fn maps_oa_row_to_overlay() {

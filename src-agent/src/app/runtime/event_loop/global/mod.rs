@@ -71,6 +71,8 @@ pub(super) fn service_global(
     dirty |= drains::drain_ext_notifies(state);
     dirty |= drains::drain_awareness(state);
     dirty |= drains::drain_warm(state);
+    dirty |= drains::drain_oa_details(state);
+    dirty |= drains::fetch_oa_details(state, handle);
     dirty |= drains::fetch_catalogue_debounced(state, client, handle);
     dirty |= ui::drain_clipboard(state);
     dirty |= ui::advance_loading_splash(state);

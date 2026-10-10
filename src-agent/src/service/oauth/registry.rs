@@ -202,6 +202,13 @@ pub fn oauth_providers() -> Vec<(&'static str, &'static str, &'static str)> {
     providers
 }
 
+/// Registered native identities, derived from the existing login registry.
+pub fn native_providers() -> impl Iterator<Item = OAuthProvider> {
+    oauth_providers()
+        .into_iter()
+        .filter_map(|(id, _, _)| OAuthProvider::from_wire_id(id))
+}
+
 /// Static metadata for `p`.
 pub fn meta(p: OAuthProvider) -> OAuthProviderMeta {
     match p {

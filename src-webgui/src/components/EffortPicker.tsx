@@ -15,6 +15,7 @@ import { BrailleSpinner } from './BrailleSpinner'
 // trigger-pill label is DERIVED from the authoritative settingsValues.effort
 // the host re-pushes on every pick — no local state beyond the open flag.
 const MENU_W = 200
+const LOADING_REPOLL_DELAYS = [800, 1500, 2500] as const
 
 function useAnchorRect(open: boolean, ref: React.RefObject<HTMLElement | null>) {
   const [rect, setRect] = useState<DOMRect | null>(null)
@@ -44,7 +45,8 @@ export function EffortPicker() {
   const [open, setOpen] = useState(false)
   const ref = useRef<HTMLDivElement>(null)
   const menuRef = useRef<HTMLDivElement>(null)
-  const retriedRef = useRef(false)
+  const repollCountRef = useRef(0)
+  const isLoading = menu == null || menu.state === 'loading'
   const rect = useAnchorRect(open, ref)
 
   useEffect(() => {
@@ -65,23 +67,31 @@ export function EffortPicker() {
     }
   }, [open])
 
-  // Re-poll ONCE ~800ms after opening if still loading — the cold-cache fetch
-  // the host just armed on open may have landed by then, so a single retry
-  // usually turns "loading" into "ready"/"unsupported" without the user
-  // having to close + reopen the picker. Resets on every open/close.
+  // Bound cold-cache loading retries to three repolls per opening. Depend on
+  // the loading flag, not the reply object: repeated loading replies must not
+  // restart the timer or reset the budget. Stop on resolution/close/unmount.
   useEffect(() => {
     if (!open) {
-      retriedRef.current = false
+      repollCountRef.current = 0
       return
     }
-    const isLoading = menu == null || menu.state === 'loading'
-    if (!isLoading || retriedRef.current) return
-    const t = window.setTimeout(() => {
-      retriedRef.current = true
-      req({ r: 'GetEffortOptions' })
-    }, 800)
-    return () => window.clearTimeout(t)
-  }, [open, menu, req])
+    if (!isLoading) return
+    let cancelled = false
+    let timer: number | undefined
+    const schedule = () => {
+      if (cancelled || repollCountRef.current >= LOADING_REPOLL_DELAYS.length) return
+      timer = window.setTimeout(() => {
+        repollCountRef.current += 1
+        req({ r: 'GetEffortOptions' })
+        schedule()
+      }, LOADING_REPOLL_DELAYS[repollCountRef.current])
+    }
+    schedule()
+    return () => {
+      cancelled = true
+      window.clearTimeout(timer)
+    }
+  }, [open, isLoading, req])
 
   const triggerLabel = effort === '' ? 'default' : effort
   const activeToken = effort === '' ? 'default' : effort

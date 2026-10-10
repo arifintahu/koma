@@ -39,8 +39,5 @@ mod types;
 pub use catalogue::{context_length_for, effort_caps, model_image_capability, ImageCapability};
 pub use client::OpenRouterClient;
 pub use types::{Conn, EffortCaps};
-// `is_openrouter` is crate-internal (not part of the module's public surface)
-// but needs to reach `app::runtime::commands::effort` — see its doc comment.
-pub(crate) use helpers::is_openrouter;
 // Interactive max_tokens context-safe clamp (stream/run + subagents).
 pub(crate) use helpers::effective_max_output_tokens;

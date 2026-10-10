@@ -242,6 +242,19 @@ pub struct AppStateRest {
     /// `models_cache` + `models_cache_endpoint`). Drained in `run_loop` independently
     /// of streaming, mirroring `endpoints_rx`. `None` when nothing is in flight.
     pub warm_rx: Option<tokio::sync::mpsc::UnboundedReceiver<WarmEvent>>,
+    /// Lifetime OA-detail lane: never replaced by catalogue/awareness warming.
+    pub oa_detail_tx: tokio::sync::mpsc::UnboundedSender<WarmEvent>,
+    pub oa_detail_rx: Option<tokio::sync::mpsc::UnboundedReceiver<WarmEvent>>,
+    /// Queued detail requests; in-flight includes queued requests to dedupe rapid opens.
+    pub oa_detail_pending: Vec<(String, Option<OAuthProvider>, String)>,
+    pub oa_detail_inflight: std::collections::HashSet<(String, String)>,
+    /// Terminal marker (true = success, false = unavailable). Never auto-retry.
+    pub oa_detail_completed: HashMap<(String, String), bool>,
+    /// Native effort fallback endpoints already attempted (no gateway retry loops).
+    pub effort_native_attempted: std::collections::HashSet<String>,
+    /// Session UUIDs plus resolved key/model awaiting a completion push.
+    /// A set bounds/coalesces the outbox even in the standalone loop.
+    pub effort_refresh_sessions: HashMap<String, (String, String)>,
     /// Cached model catalogue (`GET {endpoint}/models`) for ONE endpoint at a
     /// time — the endpoint recorded in `models_cache_endpoint`. Fetched ON DEMAND
     /// (debounced) by the model omnisearch for whichever provider is being edited,
@@ -535,6 +548,7 @@ impl AppStateRest {
         // Extension notify lane, created ONCE here for the same reason as
         // `ext_call_tx`/`ext_call_rx` above.
         let (ext_notify_tx, ext_notify_rx) = tokio::sync::mpsc::unbounded_channel();
+        let (oa_detail_tx, oa_detail_rx) = tokio::sync::mpsc::unbounded_channel();
         let first = SessionRuntime::new();
         // Seed the viewed set with the sole session's UUID so the per-tick gates treat
         // it as foreground from tick zero (the local loop re-derives this each tick; the
@@ -595,6 +609,13 @@ impl AppStateRest {
             launch_dir: std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from(".")),
             endpoints_rx: None,
             warm_rx: None,
+            oa_detail_tx,
+            oa_detail_rx: Some(oa_detail_rx),
+            oa_detail_pending: Vec::new(),
+            oa_detail_inflight: std::collections::HashSet::new(),
+            oa_detail_completed: HashMap::new(),
+            effort_native_attempted: std::collections::HashSet::new(),
+            effort_refresh_sessions: HashMap::new(),
             models_cache: None,
             models_cache_endpoint: None,
             models_cache_failed: None,

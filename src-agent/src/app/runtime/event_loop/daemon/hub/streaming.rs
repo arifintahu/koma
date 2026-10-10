@@ -165,6 +165,7 @@ impl DaemonHub {
         &mut self,
         state: &mut AppState,
     ) {
+        self.drain_effort_pushes(state);
         // Nothing to do until at least one client has attached. Enrolled-but-not-
         // attached clients have no baseline and receive nothing (critique #2).
         if !self.clients.iter().any(|c| c.attached) {

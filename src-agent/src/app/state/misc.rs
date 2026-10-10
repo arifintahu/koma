@@ -5,6 +5,23 @@ use super::rest::AppStateRest;
 use super::types::CataloguePending;
 
 impl AppStateRest {
+    /// Queue at most one OA request per catalogue/model for the app lifetime.
+    pub fn request_oa_detail(
+        &mut self,
+        catalogue_key: &str,
+        provider: Option<crate::model::app_config::OAuthProvider>,
+        model_id: &str,
+    ) {
+        let identity = (catalogue_key.to_string(), model_id.to_string());
+        if self.oa_detail_completed.contains_key(&identity)
+            || !self.oa_detail_inflight.insert(identity)
+        {
+            return;
+        }
+        self.oa_detail_pending
+            .push((catalogue_key.to_string(), provider, model_id.to_string()));
+    }
+
     pub fn remember_creds(&mut self, key: &str, model: &str, provider: &str) {
         self.last_key = Some(key.to_string());
         self.last_model = Some(model.to_string());

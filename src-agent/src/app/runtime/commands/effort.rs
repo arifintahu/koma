@@ -116,121 +116,296 @@ fn ready_from_caps(state: &AppState, caps: &crate::service::openrouter::EffortCa
     }
 }
 
-/// Derive the `/effort` menu for the current model (or report why one isn't
-/// available yet). Needs an active session + client (the menu is per-model and
-/// the catalogue fetch uses the client's endpoint).
-///
-/// Side effect: when the Main route resolves AND it's an OpenRouter endpoint
-/// (or the catalogue overlay doesn't cover it), this ARMS a debounced
-/// catalogue fetch for its endpoint (if one isn't already pending/in-flight)
-/// so a SUBSEQUENT call has capabilities — this fires for BOTH callers (TUI
-/// open, GUI `GetEffortOptions`), which is exactly what lets a GUI-triggered
-/// cold fetch warm the cache for a following TUI/GUI open.
+/// OAuth identity must come from the resolved UUID, never the chat URL (CC
+/// switches between API and NDJSON; KomaRun switches between tier endpoints).
+pub(crate) fn route_provider(
+    config: &crate::model::app_config::AppConfig,
+    route: &crate::app::resolve::Resolved,
+) -> Option<crate::model::app_config::OAuthProvider> {
+    config
+        .oauth_conns
+        .iter()
+        .find(|c| !route.oauth_uuid.is_empty() && c.uuid == route.oauth_uuid)
+        .map(|c| c.provider)
+}
+
+pub(crate) fn route_catalogue_key(
+    config: &crate::model::app_config::AppConfig,
+    route: &crate::app::resolve::Resolved,
+) -> String {
+    crate::service::catalogue_overlay::catalogue_key(&route.endpoint, route_provider(config, route))
+}
+
+/// Only the actual OpenRouter host owns the authoritative live effort path.
+/// Gateway paths containing `/openrouter` (Kilo) are NOT OpenRouter identity.
+pub(crate) fn is_live_openrouter(endpoint: &str) -> bool {
+    url::Url::parse(endpoint).ok().is_some_and(|url| {
+        url.host_str()
+            .is_some_and(|host| host == "openrouter.ai" || host.ends_with(".openrouter.ai"))
+    })
+}
+
+/// Native catalogue location for static-key gateways. CC must NEVER probe
+/// /models at either its API base or its NDJSON root for effort metadata.
+pub(crate) fn native_effort_endpoint(endpoint: &str) -> Option<String> {
+    use crate::model::app_config::OAuthProvider;
+    use crate::service::oauth::registry;
+    let host = url::Url::parse(endpoint)
+        .ok()
+        .and_then(|u| u.host_str().map(str::to_owned));
+    if host.as_deref() == Some("api.commandcode.ai") {
+        return None;
+    }
+    for provider in [
+        OAuthProvider::Codex,
+        OAuthProvider::ClaudeAI,
+        OAuthProvider::Kilocode,
+        OAuthProvider::KomaRun,
+        OAuthProvider::Xai,
+    ] {
+        let meta = registry::meta(provider);
+        if endpoint.trim_end_matches('/') == meta.chat_endpoint.trim_end_matches('/') {
+            return (!meta.catalogue_endpoint.is_empty())
+                .then(|| meta.catalogue_endpoint.to_string());
+        }
+    }
+    Some(endpoint.to_string())
+}
+
+/// Shared derivation for TUI, GUI requests, and completion refreshes.
 pub(crate) fn effort_menu(
     state: &mut AppState,
     client: &mut Option<Arc<OpenRouterClient>>,
 ) -> EffortMenu {
-    // `_c` only gates "is there a usable client?"; the catalogue is now
-    // fetched on demand by the debounced tick, not here.
-    let (Some(_c), Some(settings)) = (
-        client.as_ref(),
-        state.rest.fg().session.as_ref().map(|s| s.settings.clone()),
-    ) else {
-        return EffortMenu::Unsupported("no active session".to_string());
+    if client.is_none() {
+        return EffortMenu::Unsupported("no active session".into());
+    }
+    derive_effort_menu(state)
+}
+
+pub(crate) fn derive_effort_menu(state: &mut AppState) -> EffortMenu {
+    let Some(settings) = state.rest.fg().session.as_ref().map(|s| s.settings.clone()) else {
+        return EffortMenu::Unsupported("no active session".into());
     };
-    let model = settings.model.clone();
-    // Resolve the MAIN role (the effort menu is per the chat model, served
-    // by the Main endpoint). Snapshot the route into an owned local so it
-    // doesn't borrow `state.rest` across the mutation below.
     let main = crate::app::resolve::resolve_role(
         &state.rest.config,
         &settings,
         crate::model::app_config::ModelRole::Main,
     );
-
-    // Non-OpenRouter endpoints (Codex `chatgpt.com/backend-api/codex`,
-    // Claude `api.anthropic.com`, xAI, DeepSeek, ...) don't expose a real
-    // `GET /models` listing, so the `models_cache` path below can NEVER
-    // resolve for them — without this, `/effort` sits in `Loading` forever
-    // (or churns "couldn't fetch capabilities — retrying..." once the armed
-    // fetch inevitably 404s/400s). Check the curated `catalogue_overlay`
-    // FIRST, before arming any fetch, so a hit short-circuits straight to
-    // `Ready` with NO network round-trip and NO Loading stall. OpenRouter
-    // itself is EXCLUDED from this path: it self-describes via a real
-    // `/models` call, so its live cache stays authoritative and the overlay
-    // is never consulted for it.
-    if let Some(r) = main.as_ref() {
-        if !crate::service::openrouter::is_openrouter(&r.endpoint) {
-            let overlay = crate::service::catalogue_overlay::models_for(&r.endpoint);
-            if overlay.iter().any(|m| m.id == r.model_id) {
-                let caps = crate::service::openrouter::effort_caps(&overlay, &r.model_id);
-                return ready_from_caps(state, &caps);
+    let Some(route) = main else {
+        return EffortMenu::Unsupported("model capabilities unavailable".into());
+    };
+    let is_or = is_live_openrouter(&route.endpoint);
+    if !is_or {
+        use crate::service::catalogue_overlay;
+        let provider = route_provider(&state.rest.config, &route);
+        let key = route_catalogue_key(&state.rest.config, &route);
+        let mut overlay = catalogue_overlay::models_for(&key);
+        if let Some(p) =
+            provider.filter(|p| *p != crate::model::app_config::OAuthProvider::Extension)
+        {
+            // Include runtime key AND provider aliases/tiers. Do not let an
+            // incomplete canonical duplicate hide reasoning in a legacy alias.
+            for model in catalogue_overlay::models_for_provider(p) {
+                if !overlay.iter().any(|m| m.id == model.id) {
+                    overlay.push(model);
+                } else if crate::service::openrouter::effort_caps(
+                    std::slice::from_ref(&model),
+                    &model.id,
+                )
+                .supported
+                {
+                    if let Some(existing) = overlay.iter_mut().find(|m| m.id == model.id) {
+                        if !crate::service::openrouter::effort_caps(
+                            std::slice::from_ref(existing),
+                            &existing.id,
+                        )
+                        .supported
+                        {
+                            *existing = model;
+                        }
+                    }
+                }
             }
         }
-    }
-
-    // Arm a debounced fetch for the Main endpoint so a SUBSEQUENT
-    // `/effort` open has capabilities. This open uses a matching successful
-    // cache if available; otherwise it reports loading/error and does NOT
-    // open a guessed generic menu.
-    // Capture whether THIS endpoint had a prior fetch failure BEFORE we clear
-    // the marker below. The clear wipes it in this same call, so the status
-    // branch further down must read this captured flag, not the field.
-    let mut prev_fetch_failed = false;
-    if let Some(r) = main.as_ref() {
-        // Clear any prior fetch failure so user-triggered /effort retries.
-        if state.rest.models_cache_failed.as_deref() == Some(r.endpoint.as_str()) {
-            prev_fetch_failed = true;
+        let caps = crate::service::openrouter::effort_caps(&overlay, &route.model_id);
+        if caps.supported {
+            return ready_from_caps(state, &caps);
+        }
+        let completed = state
+            .rest
+            .oa_detail_completed
+            .contains_key(&(key.clone(), route.model_id.clone()));
+        // OA is preferred for OAuth gateways; a single terminal detail attempt
+        // may fall back to genuine native reasoning. Static gateways can use
+        // their native catalogue first. CC has no native effort probe, ever.
+        let native = match provider {
+            Some(crate::model::app_config::OAuthProvider::CommandCode) => None,
+            Some(crate::model::app_config::OAuthProvider::Extension) | None => {
+                native_effort_endpoint(&route.endpoint)
+            }
+            Some(p) => {
+                let endpoint = crate::service::oauth::registry::meta(p).catalogue_endpoint;
+                (!endpoint.is_empty()).then(|| endpoint.to_string())
+            }
+        };
+        if provider.is_none() || completed {
+            if let Some(endpoint) = native {
+                let cached = state.rest.models_cache_endpoint.as_deref() == Some(endpoint.as_str())
+                    && state.rest.models_cache.is_some();
+                if cached {
+                    if let Some(models) = &state.rest.models_cache {
+                        let caps = crate::service::openrouter::effort_caps(models, &route.model_id);
+                        if caps.supported {
+                            return ready_from_caps(state, &caps);
+                        }
+                    }
+                } else if state
+                    .rest
+                    .catalogue_pending
+                    .as_ref()
+                    .is_some_and(|p| p.endpoint == endpoint)
+                    || state.rest.catalogue_fetching.as_deref() == Some(endpoint.as_str())
+                {
+                    return EffortMenu::Loading("fetching model capabilities...".into());
+                } else if state.rest.models_cache_failed.as_deref() != Some(endpoint.as_str())
+                    && state.rest.effort_native_attempted.insert(endpoint.clone())
+                {
+                    arm_catalogue(state, &endpoint, &route);
+                    return EffortMenu::Loading("fetching model capabilities...".into());
+                }
+            }
+        }
+        match state
+            .rest
+            .oa_detail_completed
+            .get(&(key.clone(), route.model_id.clone()))
+        {
+            Some(true) => EffortMenu::Unsupported("model has no thinking control".into()),
+            Some(false) => EffortMenu::Unsupported("model capabilities unavailable".into()),
+            None => {
+                state
+                    .rest
+                    .request_oa_detail(&key, provider, &route.model_id);
+                EffortMenu::Loading("fetching model capabilities...".into())
+            }
+        }
+    } else {
+        // OpenRouter remains authoritative and explicitly re-opened failures retry.
+        let prev_fetch_failed =
+            state.rest.models_cache_failed.as_deref() == Some(route.endpoint.as_str());
+        if prev_fetch_failed {
             state.rest.models_cache_failed = None;
         }
-        // Only arm the fetch if we don't already have a pending/in-flight
-        // request for this endpoint — prevents rapid /effort opens from
-        // constantly pushing the debounce forward.
-        let already_pending = state
-            .rest
-            .catalogue_pending
-            .as_ref()
-            .is_some_and(|p| p.endpoint == r.endpoint);
-        let already_fetching =
-            state.rest.catalogue_fetching.as_deref() == Some(r.endpoint.as_str());
-        if !already_pending && !already_fetching {
-            state
-                .rest
-                .request_catalogue(&r.endpoint, &r.api_key, &r.oauth_uuid);
+        arm_catalogue(state, &route.endpoint, &route);
+        if let Some(models) = state.rest.models_cache.as_ref().filter(|_| {
+            state.rest.models_cache_endpoint.as_deref() == Some(route.endpoint.as_str())
+        }) {
+            ready_from_caps(
+                state,
+                &crate::service::openrouter::effort_caps(models, &route.model_id),
+            )
+        } else {
+            EffortMenu::Loading(
+                if prev_fetch_failed {
+                    "couldn't fetch capabilities — retrying..."
+                } else {
+                    "fetching model capabilities..."
+                }
+                .into(),
+            )
         }
     }
-    // Only trust `models_cache` when it was fetched for the Main endpoint;
-    // a cache for some OTHER provider's endpoint must not drive THIS model's
-    // capability menu.
-    let cache_for_main = main
-        .as_ref()
-        .map(|r| state.rest.models_cache_endpoint.as_deref() == Some(r.endpoint.as_str()))
-        .unwrap_or(false);
+}
 
-    // Build the option list + capability note from the (cached) catalogue.
-    // MODEL-ID FIX (mirrors run.rs's WINDOW-SIZING FIX): look up caps by the
-    // RESOLVED Main model id (what we actually send), NOT the legacy
-    // `settings.model` — a per-session or config Main override must resolve
-    // capabilities for the model actually in use. Falls back to
-    // `settings.model` only when `main` didn't resolve.
-    let model_for_caps = main.as_ref().map(|r| r.model_id.as_str()).unwrap_or(&model);
-    if let Some(models) = state.rest.models_cache.as_ref().filter(|_| cache_for_main) {
-        let caps = crate::service::openrouter::effort_caps(models, model_for_caps);
-        ready_from_caps(state, &caps)
-    } else {
-        // Cache not available or doesn't match Main endpoint.
-        // Report loading instead of a generic menu.
-        let status = if main.is_some() {
-            if prev_fetch_failed {
-                "couldn't fetch capabilities — retrying..."
-            } else {
-                "fetching model capabilities..."
-            }
-        } else {
-            "model capabilities unavailable"
-        };
-        EffortMenu::Loading(status.to_string())
+fn arm_catalogue(state: &mut AppState, endpoint: &str, route: &crate::app::resolve::Resolved) {
+    let pending = state
+        .rest
+        .catalogue_pending
+        .as_ref()
+        .is_some_and(|p| p.endpoint == endpoint);
+    let fetching = state.rest.catalogue_fetching.as_deref() == Some(endpoint);
+    if !pending && !fetching {
+        state
+            .rest
+            .request_catalogue(endpoint, &route.api_key, &route.oauth_uuid);
     }
+}
+
+/// Fold completion into every matching session, not the stale global cursor.
+/// Re-derive only a loading status or an open picker; never steal another modal.
+pub(crate) fn refresh_effort_sessions(
+    state: &mut AppState,
+    mut matches: impl FnMut(
+        &crate::model::app_config::AppConfig,
+        &crate::app::resolve::Resolved,
+    ) -> bool,
+) {
+    let saved_fg = state.rest.foreground;
+    for i in 0..state.rest.sessions.len() {
+        let rt = &state.rest.sessions[i];
+        if rt.closed {
+            continue;
+        }
+        let route = rt.session.as_ref().and_then(|s| {
+            crate::app::resolve::resolve_role(
+                &state.rest.config,
+                &s.settings,
+                crate::model::app_config::ModelRole::Main,
+            )
+        });
+        if !route
+            .as_ref()
+            .is_some_and(|r| matches(&state.rest.config, r))
+        {
+            continue;
+        }
+        let identity = route.as_ref().map(|r| {
+            (
+                route_catalogue_key(&state.rest.config, r),
+                r.model_id.clone(),
+            )
+        });
+        if let Some(identity) = identity {
+            state
+                .rest
+                .effort_refresh_sessions
+                .insert(rt.id.clone(), identity);
+        }
+        let loading = rt.status == "fetching model capabilities..."
+            || rt.status == "couldn't fetch capabilities — retrying...";
+        let picker = matches!(rt.mode, Mode::Effort(_));
+        if !loading && !picker {
+            continue;
+        }
+        state.rest.foreground = i;
+        match derive_effort_menu(state) {
+            EffortMenu::Ready {
+                options,
+                selected,
+                note,
+            } => {
+                if picker {
+                    *state.mode_mut() = Mode::Effort(Box::new(EffortPickerState {
+                        options,
+                        selected,
+                        note,
+                    }));
+                }
+                if loading {
+                    state.rest.fg_mut().status.clear();
+                }
+            }
+            EffortMenu::Unsupported(note) => {
+                if picker {
+                    *state.mode_mut() = Mode::Chat;
+                }
+                state.rest.fg_mut().status = note;
+            }
+            EffortMenu::Loading(note) => state.rest.fg_mut().status = note,
+        }
+    }
+    state.rest.foreground = saved_fg;
 }
 
 /// Handle the `/effort` command: open the effort picker for the current model.
@@ -263,3 +438,7 @@ pub(super) fn handle_effort(
     }
     Ok(())
 }
+
+#[cfg(test)]
+#[path = "effort_tests.rs"]
+mod tests;

@@ -812,6 +812,91 @@ pub(super) fn drain_awareness(state: &mut AppState) -> bool {
     dirty
 }
 
+/// Spawn queued OA details off-loop. Each task always sends a terminal event;
+/// the lifetime sender/receiver is independent of replaceable `warm_rx`.
+pub(super) fn fetch_oa_details(state: &mut AppState, handle: &tokio::runtime::Handle) -> bool {
+    let pending = std::mem::take(&mut state.rest.oa_detail_pending);
+    let dirty = !pending.is_empty();
+    for (catalogue_key, provider, model_id) in pending {
+        let tx = state.rest.oa_detail_tx.clone();
+        handle.spawn(async move {
+            let result = crate::service::catalogue_overlay::fetch_oa_detail(provider, &model_id)
+                .await
+                .map_err(|e| catalogue_error_diagnostic(&e));
+            let _ = tx.send(WarmEvent::WarmOaDetail {
+                catalogue_key,
+                model_id,
+                result,
+            });
+        });
+    }
+    dirty
+}
+
+pub(super) fn drain_oa_details(state: &mut AppState) -> bool {
+    let Some(mut rx) = state.rest.oa_detail_rx.take() else {
+        return false;
+    };
+    let mut dirty = false;
+    while let Ok(ev) = rx.try_recv() {
+        if let WarmEvent::WarmOaDetail {
+            catalogue_key,
+            model_id,
+            result,
+        } = ev
+        {
+            apply_oa_detail(state, catalogue_key, model_id, result);
+            dirty = true;
+        }
+    }
+    state.rest.oa_detail_rx = Some(rx);
+    dirty
+}
+
+fn apply_oa_detail(
+    state: &mut AppState,
+    catalogue_key: String,
+    model_id: String,
+    result: Result<crate::service::catalogue_overlay::OverlayModel, String>,
+) {
+    let identity = (catalogue_key.clone(), model_id.clone());
+    state.rest.oa_detail_inflight.remove(&identity);
+    state
+        .rest
+        .oa_detail_completed
+        .insert(identity, result.is_ok());
+    match result {
+        Ok(model) => crate::service::catalogue_overlay::merge_detail(&catalogue_key, model),
+        Err(error) => crate::model::store::append_global_error_log("OA detail", &error),
+    }
+    crate::app::runtime::commands::effort::refresh_effort_sessions(state, |config, route| {
+        route.model_id == model_id
+            && crate::app::runtime::commands::effort::route_catalogue_key(config, route)
+                == catalogue_key
+    });
+}
+
+fn refresh_catalogue_effort(state: &mut AppState, endpoint: &str, failed: bool) {
+    crate::app::runtime::commands::effort::refresh_effort_sessions(state, |config, route| {
+        if failed && crate::app::runtime::commands::effort::is_live_openrouter(&route.endpoint) {
+            return false;
+        }
+        let provider = crate::app::runtime::commands::effort::route_provider(config, route);
+        let native = match provider {
+            Some(crate::model::app_config::OAuthProvider::CommandCode) => None,
+            Some(crate::model::app_config::OAuthProvider::Extension) | None => {
+                crate::app::runtime::commands::effort::native_effort_endpoint(&route.endpoint)
+            }
+            Some(p) => Some(
+                crate::service::oauth::registry::meta(p)
+                    .catalogue_endpoint
+                    .to_string(),
+            ),
+        };
+        native.as_deref() == Some(endpoint)
+    });
+}
+
 /// Drain the startup-warming channel. Fully independent of streaming: the
 /// background catalogue + awareness tasks each send one [`WarmEvent`]. ALWAYS
 /// fold the result into `state.rest.*` (the cache / summary) regardless of the
@@ -842,6 +927,7 @@ pub(super) fn drain_warm(state: &mut AppState) -> bool {
                     if state.rest.catalogue_fetching.as_deref() == Some(endpoint.as_str()) {
                         state.rest.catalogue_fetching = None;
                     }
+                    refresh_catalogue_effort(state, &endpoint, false);
                     dirty = true;
                 }
                 Ok(WarmEvent::WarmCatalogueFailed { endpoint, error }) => {
@@ -859,6 +945,16 @@ pub(super) fn drain_warm(state: &mut AppState) -> bool {
                     if state.rest.catalogue_fetching.as_deref() == Some(endpoint.as_str()) {
                         state.rest.catalogue_fetching = None;
                     }
+                    // Non-OR native failures can now fall back to OA details.
+                    refresh_catalogue_effort(state, &endpoint, true);
+                    dirty = true;
+                }
+                Ok(WarmEvent::WarmOaDetail {
+                    catalogue_key,
+                    model_id,
+                    result,
+                }) => {
+                    apply_oa_detail(state, catalogue_key, model_id, result);
                     dirty = true;
                 }
                 Ok(WarmEvent::WarmAwareness(result)) => {
@@ -1004,7 +1100,20 @@ pub(super) fn fetch_catalogue_debounced(
                 // Catalogue GET, never koma-free — no X-Koma header needed.
                 install_id: "",
             };
-            let ev = match c.list_models(conn).await {
+            // Streaming clients have no total request timeout. Bound non-OR
+            // catalogue fallbacks too, so a gateway cannot leave effort loading
+            // forever. Preserve OpenRouter's existing fetch behavior.
+            let result = if crate::app::runtime::commands::effort::is_live_openrouter(&endpoint) {
+                c.list_models(conn).await
+            } else {
+                match tokio::time::timeout(std::time::Duration::from_secs(12), c.list_models(conn))
+                    .await
+                {
+                    Ok(result) => result,
+                    Err(_) => Err(anyhow::anyhow!("model catalogue timed out")),
+                }
+            };
+            let ev = match result {
                 Ok(models) => WarmEvent::WarmCatalogue { endpoint, models },
                 Err(error) => WarmEvent::WarmCatalogueFailed {
                     endpoint,
@@ -1168,3 +1277,7 @@ mod ext_notify_tests;
 #[cfg(test)]
 #[path = "drains_test.rs"]
 mod drains_test;
+
+#[cfg(test)]
+#[path = "drains_effort_tests.rs"]
+mod effort_tests;

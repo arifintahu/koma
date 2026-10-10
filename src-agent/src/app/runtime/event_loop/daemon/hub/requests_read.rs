@@ -668,32 +668,58 @@ impl DaemonHub {
         state: &mut AppState,
         client: &mut Option<Arc<OpenRouterClient>>,
     ) {
-        use crate::app::runtime::commands::effort::EffortMenu;
-        let event = match crate::app::runtime::commands::effort::effort_menu(state, client) {
-            EffortMenu::Loading(note) => DaemonEvent::EffortOptions {
-                options: Vec::new(),
-                selected: 0,
-                note,
-                state: "loading".to_string(),
-            },
-            EffortMenu::Unsupported(note) => DaemonEvent::EffortOptions {
-                options: Vec::new(),
-                selected: 0,
-                note,
-                state: "unsupported".to_string(),
-            },
-            EffortMenu::Ready {
-                options,
-                selected,
-                note,
-            } => DaemonEvent::EffortOptions {
-                options,
-                selected,
-                note,
-                state: "ready".to_string(),
-            },
-        };
+        let event = effort_event(crate::app::runtime::commands::effort::effort_menu(
+            state, client,
+        ));
         self.send_to(idx, event);
+    }
+
+    /// Completion fan-out: only attached clients whose CURRENT foreground
+    /// matches a refreshed session. Derive inside each client's own bracket.
+    pub(super) fn drain_effort_pushes(&mut self, state: &mut AppState) {
+        let refreshed = std::mem::take(&mut state.rest.effort_refresh_sessions);
+        if refreshed.is_empty() {
+            return;
+        }
+        let saved_fg = state.rest.foreground;
+        for idx in 0..self.clients.len() {
+            if !self.clients[idx].attached {
+                continue;
+            }
+            let fg = state
+                .rest
+                .resolve_foreground(self.clients[idx].foreground.as_deref());
+            let session = &state.rest.sessions[fg];
+            let identity = session
+                .session
+                .as_ref()
+                .and_then(|s| {
+                    crate::app::resolve::resolve_role(
+                        &state.rest.config,
+                        &s.settings,
+                        crate::model::app_config::ModelRole::Main,
+                    )
+                })
+                .map(|route| {
+                    (
+                        crate::app::runtime::commands::effort::route_catalogue_key(
+                            &state.rest.config,
+                            &route,
+                        ),
+                        route.model_id,
+                    )
+                });
+            let Some(expected) = refreshed.get(&session.id) else {
+                continue;
+            };
+            if session.closed || identity.as_ref() != Some(expected) {
+                continue;
+            }
+            state.rest.foreground = fg;
+            let menu = crate::app::runtime::commands::effort::derive_effort_menu(state);
+            self.send_to(idx, effort_event(menu));
+        }
+        state.rest.foreground = saved_fg;
     }
 
     // GUI Explore stream tab: set THIS client's read-only stream view (which
@@ -843,3 +869,35 @@ impl DaemonHub {
         );
     }
 }
+
+fn effort_event(menu: crate::app::runtime::commands::effort::EffortMenu) -> DaemonEvent {
+    use crate::app::runtime::commands::effort::EffortMenu;
+    match menu {
+        EffortMenu::Loading(note) => DaemonEvent::EffortOptions {
+            options: Vec::new(),
+            selected: 0,
+            note,
+            state: "loading".to_string(),
+        },
+        EffortMenu::Unsupported(note) => DaemonEvent::EffortOptions {
+            options: Vec::new(),
+            selected: 0,
+            note,
+            state: "unsupported".to_string(),
+        },
+        EffortMenu::Ready {
+            options,
+            selected,
+            note,
+        } => DaemonEvent::EffortOptions {
+            options,
+            selected,
+            note,
+            state: "ready".to_string(),
+        },
+    }
+}
+
+#[cfg(test)]
+#[path = "requests_effort_tests.rs"]
+mod effort_tests;
