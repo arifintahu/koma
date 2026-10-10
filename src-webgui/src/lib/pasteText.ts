@@ -54,12 +54,15 @@ export function formatPasteFence(block: PastedBlock): string {
 
 const FENCE = /<<<pasted_text n=(\d+) path="([^"]*)">>>\r?\n?([\s\S]*?)\r?\n?<<<end_pasted_text n=\d+>>>/g
 
-/** Pull paste fences out of a user message. The fence body is what the model read. */
-export function splitPasteMessage(content: string): { prose: string; pastes: PastedBlock[] } {
+/** Pull out paste bodies, optionally leaving their references in place for the transcript. */
+export function splitPasteMessage(
+  content: string,
+  options: { preserveMarkers?: boolean } = {},
+): { prose: string; pastes: PastedBlock[] } {
   const pastes: PastedBlock[] = []
   const prose = content.replace(FENCE, (_fence, n: string, path: string, body: string) => {
     pastes.push({ n: Number(n), path, text: body })
-    return ''
+    return options.preserveMarkers ? pasteMarker(Number(n)) : ''
   })
   return { prose: prose.replace(/\n{3,}/g, '\n\n').trim(), pastes }
 }

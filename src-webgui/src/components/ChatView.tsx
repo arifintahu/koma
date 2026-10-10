@@ -355,7 +355,7 @@ function UserMessage({
   // → no pencil (e.g. the live view, where the index isn't a committed message).
   onEdit?: () => void
 }) {
-  const pasted = splitPasteMessage(content)
+  const pasted = splitPasteMessage(content, { preserveMarkers: true })
   const split = splitDiagramMessage(pasted.prose)
   const designed = splitDesignMessage(split.prose)
   // A diagram reference stays a drawing here. A design reference stays a chip.
