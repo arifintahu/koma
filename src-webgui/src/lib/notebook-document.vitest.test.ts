@@ -4,8 +4,10 @@ import {
   insertCell,
   moveCell,
   parseNotebook,
+  setCellOutputs,
   setCellSource,
   setCellType,
+  sliceCellOutputsJson,
   sliceSpan,
   encodeSourceArrayLiteral,
   jsonStringLiteral,
@@ -128,5 +130,17 @@ describe('notebook-document lossless engine', () => {
     if (!again.ok) return
     expect(again.doc.cells[0]!.source).toBe('print("hi")')
     expect(again.doc.nbformat).toBe(4)
+  })
+
+  it('setCellOutputs rewrites only outputs and execution_count spans', () => {
+    const parsed = parseNotebook(FIXTURE)
+    expect(parsed.ok).toBe(true)
+    if (!parsed.ok) return
+    const outs = [{ output_type: 'stream', name: 'stdout', text: 'hi\n' }]
+    const next = setCellOutputs(parsed.doc, 0, JSON.stringify(outs), 7)
+    expect(next.text).toContain(BIG)
+    expect(next.cells[0]!.executionCount).toBe(7)
+    expect(JSON.parse(sliceCellOutputsJson(next, 0))).toEqual(outs)
+    expect(next.text).toContain('# Title')
   })
 })

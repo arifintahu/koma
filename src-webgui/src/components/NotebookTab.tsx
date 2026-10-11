@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import * as monaco from 'monaco-editor/esm/vs/editor/editor.api'
-import { BookOpen, Braces, ChevronDown, ChevronUp, Code2, FileText, Play, Plus, Sparkles, Trash2 } from 'lucide-react'
+import { BookOpen, Braces, ChevronDown, ChevronUp, Code2, Play, Plus, Square, Sparkles, Trash2, RotateCcw } from 'lucide-react'
 import { Streamdown } from 'streamdown'
 import { initMonaco, applyKomaTheme, readMonoFont } from '../lib/monaco-setup'
 import { stampModelPath } from '../lib/monaco-lsp'
@@ -13,6 +13,22 @@ import {
 import { isNotebookPath } from '../lib/notebook-workspace'
 import { NOTEBOOK_EDITABLE_MAX_CHARS, type NotebookCellType } from '../lib/notebook-document'
 import { notebookAnalysisLabel } from '../lib/notebook-analysis'
+import {
+  consentKernel,
+  executeCell,
+  interruptKernel,
+  iopubToNbformatOutput,
+  kernelIsRunnable,
+  probeIpykernel,
+  restartKernel,
+  startKernel,
+  stopKernel,
+  subscribeNotebookEvents,
+  type KernelStatus,
+  type NotebookKernelInfo,
+  type NotebookNativeEvent,
+} from '../lib/notebook-runtime'
+import { NotebookOutputs } from './NotebookOutputs'
 import { showCodingHistory } from './CodingHistory'
 import { useKoma, type Tab } from '../store/koma'
 import { fileKey } from '../store/coding'
@@ -259,6 +275,37 @@ function UnavailablePill({ label, detail }: { label: string; detail: string }) {
   )
 }
 
+function KernelStatusPill({
+  status,
+  busy,
+  error,
+}: {
+  status: KernelStatus | null
+  busy: boolean
+  error: string | null
+}) {
+  if (error) {
+    return (
+      <span title={error} className="inline-flex items-center gap-1 rounded border border-koma-error/40 px-1.5 py-0.5 text-[10px] text-koma-error">
+        Kernel error
+      </span>
+    )
+  }
+  if (!status) {
+    return (
+      <span className="inline-flex items-center gap-1 rounded border border-koma-border px-1.5 py-0.5 text-[10px] text-koma-dim">
+        Kernel off
+      </span>
+    )
+  }
+  return (
+    <span className="inline-flex items-center gap-1 rounded border border-koma-border px-1.5 py-0.5 text-[10px] text-koma-dim">
+      {busy && <BrailleSpinner size={10} />}
+      {status}
+    </span>
+  )
+}
+
 export default function NotebookTab({ tab }: { tab: CodingTab }) {
   const hostId = useKoma(s => s.remoteState.hostId ?? 'local')
   return <WorkspaceNotebook key={JSON.stringify([hostId, tab.id])} tab={tab} />
@@ -276,6 +323,17 @@ function WorkspaceNotebook({ tab }: { tab: CodingTab }) {
   const [mdPreview, setMdPreview] = useState<Record<string, boolean>>({})
   const rawDraftRef = useRef<string | null>(null)
   const [rawDraft, setRawDraft] = useState<string | null>(null)
+
+  const [kernel, setKernel] = useState<NotebookKernelInfo | null>(null)
+  const [kernelStatus, setKernelStatus] = useState<KernelStatus | null>(null)
+  const [kernelError, setKernelError] = useState<string | null>(null)
+  const [runBusy, setRunBusy] = useState(false)
+  const [startingKernel, setStartingKernel] = useState(false)
+  const liveOutputsRef = useRef<unknown[]>([])
+  const liveParentRef = useRef<string | null>(null)
+  const liveCellRef = useRef<string | null>(null)
+  const kernelRef = useRef<NotebookKernelInfo | null>(null)
+  kernelRef.current = kernel
 
   // Obtain / dispose controller with the tab mount. Coding may retain the buffer.
   useEffect(() => {
@@ -297,6 +355,55 @@ function WorkspaceNotebook({ tab }: { tab: CodingTab }) {
     controller.adoptExternalText(fileState.content)
   }, [controller, fileState?.content])
 
+  // Release kernel when the tab unmounts.
+  useEffect(() => {
+    return () => {
+      const k = kernelRef.current
+      if (k?.kernelId) {
+        void stopKernel(workspace, k.kernelId).catch(() => {})
+      }
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [workspace.hostId, workspace.root, tab.path])
+
+  // Subscribe to native notebook events for this document.
+  useEffect(() => {
+    return subscribeNotebookEvents(workspace, tab.path, (event: NotebookNativeEvent) => {
+      if (event.k === 'NotebookKernelState') {
+        const st = event as { status?: KernelStatus; error?: string; generation?: number }
+        if (st.status) setKernelStatus(st.status)
+        if (st.error) setKernelError(String(st.error))
+        if (st.generation != null && kernelRef.current) {
+          setKernel(k => (k ? { ...k, generation: st.generation!, status: st.status ?? k.status } : k))
+        }
+        return
+      }
+      if (event.k === 'NotebookIo') {
+        const io = event as { parentMsgId?: string; msgType: string; payload: Record<string, unknown> }
+        if (liveParentRef.current && io.parentMsgId && io.parentMsgId !== liveParentRef.current) return
+        if (io.msgType === 'clear_output') {
+          liveOutputsRef.current = []
+        } else {
+          const mapped = iopubToNbformatOutput(io.msgType, io.payload ?? {})
+          if (mapped) liveOutputsRef.current = [...liveOutputsRef.current, mapped]
+        }
+        const cellId = liveCellRef.current
+        if (cellId && controller) {
+          controller.setCellOutputs(cellId, liveOutputsRef.current, null, false)
+        }
+        return
+      }
+      if (event.k === 'NotebookExecuteReply') {
+        const reply = event as { executionCount?: number | null; cellId?: string; status?: string }
+        const cellId = reply.cellId ?? liveCellRef.current
+        if (cellId && controller) {
+          controller.setCellOutputs(cellId, liveOutputsRef.current, reply.executionCount ?? null, false)
+        }
+        setRunBusy(false)
+      }
+    })
+  }, [workspace, tab.path, controller])
+
   useCodingAutosave(tab.root, tab.path, fileState, codingAutosave)
 
   const state = useControllerState(controller)
@@ -310,6 +417,116 @@ function WorkspaceNotebook({ tab }: { tab: CodingTab }) {
   )
   const canSave = !!(canEdit && fileState?.dirty && !fileState.saving && !fileState.conflict)
   const canRevert = !!(fileState && (fileState.dirty || fileState.conflict) && !fileState.saving)
+  const runnable = kernelIsRunnable(kernelStatus) && !!kernel && !startingKernel
+
+  async function ensureKernel(): Promise<NotebookKernelInfo | null> {
+    if (!controller) return null
+    if (kernel && kernelIsRunnable(kernelStatus)) return kernel
+    setStartingKernel(true)
+    setKernelError(null)
+    try {
+      const probe = await probeIpykernel(workspace)
+      if (!probe.ipykernel) {
+        setKernelError(
+          'ipykernel is not available in the selected interpreter. Install it in that environment, then retry — Koma will not silently pip install.',
+        )
+        return null
+      }
+      const interpreter = probe.interpreter || 'python3'
+      const ok = window.confirm(
+        `Start a Python kernel for this notebook?\n\nInterpreter: ${interpreter}\nNotebook: ${tab.path}\n\nThe kernel runs on the workspace host and can execute code in this document.`,
+      )
+      if (!ok) return null
+      await consentKernel(workspace, tab.path, interpreter, controller.documentEpoch)
+      const info = await startKernel(workspace, tab.path, controller.documentEpoch, interpreter)
+      setKernel(info)
+      setKernelStatus(info.status)
+      return info
+    } catch (e) {
+      setKernelError(e instanceof Error ? e.message : String(e))
+      return null
+    } finally {
+      setStartingKernel(false)
+    }
+  }
+
+  async function runCell(runtimeId: string) {
+    if (!controller || !state?.parse.ok) return
+    const index = state.identities.findIndex(i => i.runtimeId === runtimeId)
+    if (index < 0) return
+    const cell = state.parse.doc.cells[index]
+    if (!cell || cell.cellType !== 'code') return
+    const info = await ensureKernel()
+    if (!info) return
+    setRunBusy(true)
+    setKernelError(null)
+    liveOutputsRef.current = []
+    liveCellRef.current = runtimeId
+    liveParentRef.current = null
+    controller.clearCellOutputs(runtimeId)
+    try {
+      const reply = await executeCell({
+        workspace,
+        kernelId: info.kernelId,
+        path: tab.path,
+        cellId: runtimeId,
+        code: cell.source,
+        generation: info.generation,
+        documentEpoch: controller.documentEpoch,
+      })
+      if (reply.parentMsgId) liveParentRef.current = reply.parentMsgId
+      controller.setCellOutputs(
+        runtimeId,
+        liveOutputsRef.current,
+        reply.executionCount ?? null,
+        false,
+      )
+      setKernelStatus('idle')
+    } catch (e) {
+      setKernelError(e instanceof Error ? e.message : String(e))
+      setKernelStatus(s => s)
+    } finally {
+      setRunBusy(false)
+      liveCellRef.current = null
+    }
+  }
+
+  async function runAll() {
+    if (!controller || !state?.parse.ok) return
+    for (const id of state.identities) {
+      const index = state.identities.findIndex(i => i.runtimeId === id.runtimeId)
+      const cell = state.parse.doc.cells[index!]
+      if (cell?.cellType === 'code') {
+        // Re-read state each iteration would be better; sequential await is fine for v1.
+        await runCell(id.runtimeId)
+        if (kernelError) break
+      }
+    }
+  }
+
+  async function onInterrupt() {
+    if (!kernel) return
+    try {
+      await interruptKernel(workspace, kernel.kernelId)
+    } catch (e) {
+      setKernelError(e instanceof Error ? e.message : String(e))
+    }
+  }
+
+  async function onRestart() {
+    if (!kernel) return
+    setStartingKernel(true)
+    try {
+      const info = await restartKernel(workspace, kernel.kernelId)
+      setKernel(info)
+      setKernelStatus(info.status)
+      setKernelError(null)
+    } catch (e) {
+      setKernelError(e instanceof Error ? e.message : String(e))
+    } finally {
+      setStartingKernel(false)
+    }
+  }
 
   const status = useMemo(() => {
     if (!fileState) return 'Loading…'
@@ -387,7 +604,35 @@ function WorkspaceNotebook({ tab }: { tab: CodingTab }) {
         icon={<BookOpen size={13} className="flex-none text-koma-dim" />}
         trailing={
           <div className="flex flex-none items-center gap-1">
-            <UnavailablePill label="Run" detail="Python kernel runs land after native containment proofs. Opening never starts a kernel. RPC ops exist but Run stays disabled." />
+            <KernelStatusPill status={kernelStatus} busy={runBusy || startingKernel} error={kernelError} />
+            <button
+              type="button"
+              title={runnable ? 'Run all code cells' : 'Start kernel and run all'}
+              disabled={readOnly || startingKernel}
+              onClick={() => void runAll()}
+              className="flex h-6 items-center gap-1 rounded px-1.5 text-[11px] text-koma-dim hover:bg-koma-hover hover:text-koma-fg disabled:opacity-30"
+            >
+              <Play size={13} />
+              Run all
+            </button>
+            <button
+              type="button"
+              title="Interrupt kernel"
+              disabled={!kernel || readOnly}
+              onClick={() => void onInterrupt()}
+              className="flex h-6 items-center gap-1 rounded px-1.5 text-[11px] text-koma-dim hover:bg-koma-hover hover:text-koma-fg disabled:opacity-30"
+            >
+              <Square size={12} />
+            </button>
+            <button
+              type="button"
+              title="Restart kernel"
+              disabled={!kernel || readOnly || startingKernel}
+              onClick={() => void onRestart()}
+              className="flex h-6 items-center gap-1 rounded px-1.5 text-[11px] text-koma-dim hover:bg-koma-hover hover:text-koma-fg disabled:opacity-30"
+            >
+              <RotateCcw size={12} />
+            </button>
             <UnavailablePill label="Analysis" detail={notebookAnalysisLabel()} />
             <button
               type="button"
@@ -424,6 +669,12 @@ function WorkspaceNotebook({ tab }: { tab: CodingTab }) {
       {state.lastError && (
         <div className="flex flex-none items-center gap-2 border-b border-koma-border bg-koma-error/10 px-3 py-1.5 text-[12px] text-koma-error">
           <span className="min-w-0 flex-1">{state.lastError}</span>
+        </div>
+      )}
+      {kernelError && (
+        <div className="flex flex-none items-center gap-2 border-b border-koma-border bg-koma-error/10 px-3 py-1.5 text-[12px] text-koma-error">
+          <span className="min-w-0 flex-1">{kernelError}</span>
+          <button type="button" className="text-[11px] underline" onClick={() => setKernelError(null)}>Dismiss</button>
         </div>
       )}
       {!state.parse.ok && state.mode === 'raw' && (
@@ -484,7 +735,15 @@ function WorkspaceNotebook({ tab }: { tab: CodingTab }) {
                       <button type="button" disabled={readOnly || index >= notebookDoc.cells.length - 1} title="Move down" className="rounded p-0.5 text-koma-dim hover:bg-koma-hover disabled:opacity-30" onClick={() => controller.moveCell(identity.runtimeId, index + 1)}><ChevronDown size={13} /></button>
                       <button type="button" disabled={readOnly} title="Add cell below" className="rounded p-0.5 text-koma-dim hover:bg-koma-hover disabled:opacity-30" onClick={() => controller.addCell(identity.runtimeId, 'code')}><Plus size={13} /></button>
                       <button type="button" disabled={readOnly || notebookDoc.cells.length <= 1} title="Delete cell" className="rounded p-0.5 text-koma-dim hover:bg-koma-hover disabled:opacity-30" onClick={() => controller.deleteCell(identity.runtimeId)}><Trash2 size={13} /></button>
-                      <button type="button" disabled title="Run cell (unavailable)" className="rounded p-0.5 text-koma-dim opacity-40"><Play size={13} /></button>
+                      <button
+                        type="button"
+                        disabled={readOnly || cell.cellType !== 'code' || startingKernel || runBusy}
+                        title={cell.cellType === 'code' ? (runnable ? 'Run cell' : 'Start kernel and run cell') : 'Only code cells run'}
+                        className="rounded p-0.5 text-koma-dim hover:bg-koma-hover hover:text-koma-fg disabled:opacity-30"
+                        onClick={() => void runCell(identity.runtimeId)}
+                      >
+                        <Play size={13} />
+                      </button>
                       <button type="button" disabled title="Analysis (unavailable)" className="rounded p-0.5 text-koma-dim opacity-40"><Sparkles size={13} /></button>
                     </span>
                   </div>
@@ -500,11 +759,8 @@ function WorkspaceNotebook({ tab }: { tab: CodingTab }) {
                       onChange={(text) => controller.setCellSource(identity.runtimeId, text)}
                     />
                   )}
-                  {cell.cellType === 'code' && cell.hasOutputs && (
-                    <div className="border-t border-koma-border px-2 py-1.5 text-[11px] text-koma-dim">
-                      <FileText size={12} className="mr-1 inline" />
-                      Outputs are preserved on disk. Rendering runs after the kernel milestone.
-                    </div>
+                  {cell.cellType === 'code' && (
+                    <NotebookOutputs outputs={controller.getCellOutputs(identity.runtimeId)} />
                   )}
                 </div>
               )

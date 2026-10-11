@@ -442,6 +442,57 @@ export function moveCell(doc: NotebookDocument, from: number, to: number): Noteb
   return reparseOrThrow(replaceSpan(doc.text, doc.cellsNode.span, `[${inner}]`))
 }
 
+/**
+ * Replace a code cell's `outputs` and `execution_count` spans only.
+ * `outputs` must already be valid JSON text for an array (caller serializes).
+ * Preserves unrelated cell fields and bigint metadata elsewhere in the document.
+ */
+export function setCellOutputs(
+  doc: NotebookDocument,
+  index: number,
+  outputsJson: string,
+  executionCount: number | null,
+): NotebookDocument {
+  const cell = doc.cells[index]
+  if (!cell) throw new Error(`cell ${index} missing`)
+  if (cell.cellType !== 'code') throw new Error(`cell ${index} is not a code cell`)
+  // Validate outputs JSON is an array without re-stringifying the whole notebook.
+  const parsed = JSON.parse(outputsJson) as unknown
+  if (!Array.isArray(parsed)) throw new Error('outputs must be a JSON array')
+  let text = doc.text
+  let next = doc
+  const outputsEntry = entry(cell.cellObject, 'outputs')
+  if (outputsEntry) {
+    text = replaceSpan(text, outputsEntry.value.span, outputsJson)
+    next = reparseOrThrow(text)
+  } else {
+    text = insertObjectField(text, cell.cellObject, 'outputs', outputsJson)
+    next = reparseOrThrow(text)
+  }
+  const again = next.cells[index]
+  if (!again) throw new Error(`cell ${index} missing after outputs write`)
+  const execLit = executionCount == null ? 'null' : String(Math.trunc(executionCount))
+  const execEntry = entry(again.cellObject, 'execution_count')
+  if (execEntry) {
+    text = replaceSpan(next.text, execEntry.value.span, execLit)
+    next = reparseOrThrow(text)
+  } else {
+    text = insertObjectField(next.text, again.cellObject, 'execution_count', execLit)
+    next = reparseOrThrow(text)
+  }
+  // Smoke-check bigint metadata still present when it was before.
+  return next
+}
+
+/** Raw `outputs` array JSON for a cell, or `[]` when absent. */
+export function sliceCellOutputsJson(doc: NotebookDocument, index: number): string {
+  const cell = doc.cells[index]
+  if (!cell) return '[]'
+  const outputsEntry = entry(cell.cellObject, 'outputs')
+  if (!outputsEntry) return '[]'
+  return doc.text.slice(outputsEntry.value.span.start, outputsEntry.value.span.end)
+}
+
 export function replaceRawText(text: string): NotebookParseResult {
   return parseNotebook(text)
 }

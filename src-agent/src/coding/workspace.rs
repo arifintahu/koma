@@ -67,6 +67,24 @@ pub(super) fn execute(request: &Request) -> Result<Value> {
         Operation::NotebookKernelStatus { kernel_id } => {
             return super::notebook::status(&request.workspace, kernel_id.as_deref())
         }
+        Operation::NotebookExecute {
+            kernel_id,
+            path,
+            cell_id,
+            code,
+            generation,
+            document_epoch,
+        } => {
+            return super::notebook::execute(
+                &request.workspace,
+                kernel_id,
+                path,
+                cell_id.as_deref(),
+                code,
+                *generation,
+                *document_epoch,
+            )
+        }
         _ => {}
     }
     let canonical = root(request)?;
@@ -347,7 +365,8 @@ pub(super) fn execute(request: &Request) -> Result<Value> {
         Operation::NotebookKernelStop { .. }
         | Operation::NotebookKernelInterrupt { .. }
         | Operation::NotebookKernelRelease { .. }
-        | Operation::NotebookKernelStatus { .. } => unreachable!(),
+        | Operation::NotebookKernelStatus { .. }
+        | Operation::NotebookExecute { .. } => unreachable!(),
         _ => anyhow::bail!("Operation is not a workspace operation"),
     }
 }

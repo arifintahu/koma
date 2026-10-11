@@ -21,6 +21,9 @@ mod process_group;
 pub(crate) mod provision;
 mod pty;
 mod notebook;
+mod notebook_client;
+mod notebook_probe;
+mod notebook_wire;
 mod resources;
 mod sync;
 mod tasks;
@@ -297,6 +300,16 @@ pub(crate) enum Operation {
     NotebookIpykernelProbe {
         #[serde(default)]
         interpreter: Option<String>,
+    },
+    /// Execute code on a live kernel. Single in-flight execute per kernel (v1).
+    NotebookExecute {
+        kernel_id: String,
+        path: String,
+        #[serde(default)]
+        cell_id: Option<String>,
+        code: String,
+        generation: u64,
+        document_epoch: u64,
     },
 }
 

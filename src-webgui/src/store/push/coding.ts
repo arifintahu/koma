@@ -45,6 +45,13 @@ export function pushCoding(set: StoreSet, get: StoreGet, env: PushEnvelope): boo
           window.dispatchEvent(new CustomEvent('koma-coding-disk', { detail: env.workspace }))
           break
         }
+        if (typeof env.event.k === 'string' && env.event.k.startsWith('Notebook')) {
+          // Kernel state / IOPub / execute replies — never contain connection secrets.
+          window.dispatchEvent(new CustomEvent('koma-notebook', {
+            detail: { workspace: env.workspace, event: env.event },
+          }))
+          break
+        }
         const event = env.event as PushEnvelope
         // Only language events are accepted from a coding worker.
         if (!event.k.startsWith('Lsp')) break

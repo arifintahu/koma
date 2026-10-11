@@ -7,6 +7,8 @@
  * `metadata.trusted` in the ipynb grants nothing.
  */
 
+import { sanitizeNotebookHtml } from './notebook-html'
+
 export const NOTEBOOK_OUTPUT_MAX_TEXT_CHARS = 256 * 1024
 export const NOTEBOOK_OUTPUT_MAX_IMAGE_BYTES = 2 * 1024 * 1024
 
@@ -17,12 +19,14 @@ export type NotebookOutputKind =
   | 'markdown'
   | 'image-png'
   | 'image-jpeg'
+  | 'html'
   | 'html-blocked'
   | 'unsupported'
 
 export type NotebookSafeOutput =
   | { kind: 'stream' | 'text' | 'markdown' | 'error'; text: string; truncated: boolean }
   | { kind: 'image-png' | 'image-jpeg'; bytes: Uint8Array; mime: string }
+  | { kind: 'html'; html: string }
   | { kind: 'html-blocked' | 'unsupported'; reason: string }
 
 function truncate(text: string, max = NOTEBOOK_OUTPUT_MAX_TEXT_CHARS): { text: string; truncated: boolean } {
@@ -117,12 +121,21 @@ export function classifyNotebookOutput(output: {
     return { kind: 'image-jpeg', bytes, mime: 'image/jpeg' }
   }
   if (data['text/html'] != null) {
-    // M4: HTML requires inert sandboxed iframe + DOMPurify before enablement.
-    // Until that path is wired and advisory-checked, block rather than render.
-    return {
-      kind: 'html-blocked',
-      reason: 'HTML outputs are blocked until the sandboxed renderer ships',
+    const joinHtml = (v: unknown) =>
+      v == null ? '' : Array.isArray(v) ? v.map(String).join('') : String(v)
+    const raw = joinHtml(data['text/html'])
+    const html = sanitizeNotebookHtml(raw)
+    if (!html.trim()) {
+      return {
+        kind: 'html-blocked',
+        reason: 'HTML output empty after sanitization',
+      }
     }
+    const { text: capped, truncated } = truncate(html)
+    if (truncated) {
+      return { kind: 'html', html: capped }
+    }
+    return { kind: 'html', html }
   }
   return { kind: 'unsupported', reason: 'No safe MIME type in output' }
 }

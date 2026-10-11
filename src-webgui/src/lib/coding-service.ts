@@ -60,6 +60,7 @@ export type CodingOperation =
   | { op: 'notebookKernelStop' | 'notebookKernelInterrupt' | 'notebookKernelRestart' | 'notebookKernelRelease'; kernelId: string }
   | { op: 'notebookKernelStatus'; kernelId?: string }
   | { op: 'notebookIpykernelProbe'; interpreter?: string }
+  | { op: 'notebookExecute'; kernelId: string; path: string; cellId?: string; code: string; generation: number; documentEpoch: number }
 
 export type CodingConfig = {
   version: 1
@@ -148,7 +149,14 @@ export function codingRequest<T>(workspace: WorkspaceRef, operation: CodingOpera
       reject(error)
     }
     const abort = () => finishError(new Error('Canceled'))
-    const timeout = operation.op === 'file' && operation.body.saveAs === true ? 600_000 : 30_000
+    const timeout =
+      operation.op === 'file' && operation.body.saveAs === true
+        ? 600_000
+        : operation.op === 'notebookExecute'
+          ? 600_000
+          : operation.op === 'notebookKernelStart' || operation.op === 'notebookKernelRestart'
+            ? 60_000
+            : 30_000
     const timer = setTimeout(() => finishError(new Error('Coding operation timed out; check its outcome before retrying')), timeout)
     pending.set(id, {
       workspace: { ...workspace }, resolve: (value) => resolve(value as T), reject,

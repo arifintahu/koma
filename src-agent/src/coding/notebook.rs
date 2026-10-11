@@ -1,15 +1,13 @@
-//! Owned local notebook kernels (M3 spike).
+//! Owned local notebook kernels (M3).
 //!
 //! Containment rules (enforced here, not in the UI):
 //! - Launch only `{interpreter} -m ipykernel_launcher -f {connection_file}`
 //! - Never execute `metadata.kernelspec.argv` from the notebook
 //! - Connection files live in a private owner-only directory; keys stay native-side
-//! - Unix: new process group (reuse task patterns); Windows: job object
+//! - Unix: new process group (reuse task patterns); Windows: job object + JPY_INTERRUPT_EVENT
 //! - Registered in `has_active()` so daemon idle shutdown cannot strand kernels
 //! - Opening/create never starts a kernel; first start requires explicit consent
-//!
-//! Full Jupyter shell/IOPub correlation lands after these containment proofs are green.
-//! The Run UI stays disabled until then.
+//! - Shell/IOPub client lives next to the process; secrets never appear in CodingEvent
 
 use super::WorkspaceRef;
 use anyhow::{Context, Result};
@@ -22,7 +20,7 @@ use std::{
     io::Write,
     path::{Path, PathBuf},
     process::{Command, Stdio},
-    sync::{Mutex, OnceLock},
+    sync::{Arc, Mutex, OnceLock},
     time::{SystemTime, UNIX_EPOCH},
 };
 
@@ -37,7 +35,6 @@ struct Consent {
     document_epoch: u64,
 }
 
-#[derive(Debug)]
 struct KernelSession {
     id: String,
     workspace: WorkspaceRef,
@@ -45,11 +42,11 @@ struct KernelSession {
     document_epoch: u64,
     interpreter: String,
     connection_dir: PathBuf,
-    #[allow(dead_code)] // held for future shell/IOPub client binding
     connection_file: PathBuf,
     /// Public ports/key material never leave the native side in events.
     generation: u64,
     child: Mutex<Option<Box<dyn ChildWrapper>>>,
+    client: Mutex<Option<Arc<super::notebook_client::ClientHandle>>>,
     #[cfg(windows)]
     interrupt_event: Option<windows_sys::Win32::Foundation::HANDLE>,
     stopping: bool,
@@ -73,16 +70,22 @@ fn consents() -> &'static Mutex<Vec<Consent>> {
     C.get_or_init(|| Mutex::new(Vec::new()))
 }
 
-/// Idle-shutdown must see live kernels as active jobs.
+/// Idle-shutdown must see live kernels (process or client thread) as active jobs.
 pub(super) fn has_active() -> bool {
     registry().lock().map_or(true, |map| {
         map.values().any(|k| {
             if k.stopping {
                 return true;
             }
-            k.child
+            let child_alive = k
+                .child
                 .lock()
-                .map_or(true, |slot| slot.as_ref().is_some_and(|c| c.id() != 0))
+                .map_or(true, |slot| slot.as_ref().is_some_and(|c| c.id() != 0));
+            let client_alive = k
+                .client
+                .lock()
+                .map_or(false, |slot| slot.as_ref().is_some_and(|c| c.is_alive()));
+            child_alive || client_alive
         })
     })
 }
@@ -335,6 +338,12 @@ fn wrap_windows(cmd: &mut CommandWrap) {
 
 fn stop_session(session: &mut KernelSession) -> Result<()> {
     session.stopping = true;
+    // Tear down ZMQ client before killing the process so pumps exit cleanly.
+    if let Ok(mut slot) = session.client.lock() {
+        if let Some(client) = slot.take() {
+            client.shutdown();
+        }
+    }
     if let Ok(mut slot) = session.child.lock() {
         if let Some(child) = slot.as_mut() {
             let _ = child.start_kill();
@@ -358,6 +367,37 @@ fn stop_session(session: &mut KernelSession) -> Result<()> {
     }
     delete_connection(&session.connection_dir);
     session.stopping = false;
+    Ok(())
+}
+
+#[cfg(windows)]
+fn create_interrupt_event() -> Result<(windows_sys::Win32::Foundation::HANDLE, String)> {
+    use windows_sys::Win32::Foundation::HANDLE;
+    use windows_sys::Win32::Security::SECURITY_ATTRIBUTES;
+    use windows_sys::Win32::System::Threading::CreateEventW;
+
+    let mut sa = SECURITY_ATTRIBUTES {
+        nLength: std::mem::size_of::<SECURITY_ATTRIBUTES>() as u32,
+        lpSecurityDescriptor: std::ptr::null_mut(),
+        bInheritHandle: 1, // TRUE — child must inherit for ParentPollerWindows
+    };
+    // Manual-reset false (auto-reset), initial nonsignaled, unnamed.
+    let handle: HANDLE =
+        unsafe { CreateEventW(&mut sa, 0, 0, std::ptr::null()) };
+    anyhow::ensure!(
+        handle != 0 && handle != windows_sys::Win32::Foundation::INVALID_HANDLE_VALUE,
+        "CreateEventW failed for JPY_INTERRUPT_EVENT"
+    );
+    // jupyter_client.win_interrupt: env value is the handle as a decimal string.
+    let as_decimal = format!("{}", handle as usize);
+    Ok((handle, as_decimal))
+}
+
+#[cfg(windows)]
+fn signal_interrupt_event(handle: windows_sys::Win32::Foundation::HANDLE) -> Result<()> {
+    use windows_sys::Win32::System::Threading::SetEvent;
+    let ok = unsafe { SetEvent(handle) };
+    anyhow::ensure!(ok != 0, "SetEvent failed for JPY_INTERRUPT_EVENT");
     Ok(())
 }
 
@@ -444,27 +484,32 @@ pub(super) fn start(
     let interp_str = interp.to_string_lossy().into_owned();
     require_consent(workspace, &interp_str, document_path, document_epoch)?;
 
-    let mut map = registry()
-        .lock()
-        .map_err(|_| anyhow::anyhow!("Kernel registry lock poisoned"))?;
-    anyhow::ensure!(map.len() < MAX_KERNELS, "Too many live notebook kernels");
-
-    // One kernel per document path per workspace.
-    if let Some((id, _)) = map.iter().find(|(_, s)| {
-        s.workspace == *workspace && s.document_path == document_path
-    }) {
-        let id = id.clone();
-        let session = map.get(&id).expect("just found");
-        return Ok(json!({
-            "kernelId": id,
-            "generation": session.generation,
-            "documentPath": document_path,
-            "interpreter": session.interpreter,
-            "interpreterFingerprint": fingerprint_interpreter(Path::new(&session.interpreter)),
-            "status": "running",
-            "reused": true,
-        }));
+    {
+        let map = registry()
+            .lock()
+            .map_err(|_| anyhow::anyhow!("Kernel registry lock poisoned"))?;
+        anyhow::ensure!(map.len() < MAX_KERNELS, "Too many live notebook kernels");
+        // One kernel per document path per workspace.
+        if let Some((id, session)) = map.iter().find(|(_, s)| {
+            s.workspace == *workspace && s.document_path == document_path
+        }) {
+            return Ok(json!({
+                "kernelId": id,
+                "generation": session.generation,
+                "documentPath": document_path,
+                "interpreter": session.interpreter,
+                "interpreterFingerprint": fingerprint_interpreter(Path::new(&session.interpreter)),
+                "status": session
+                    .client
+                    .lock()
+                    .ok()
+                    .and_then(|g| g.as_ref().map(|c| c.run_state().as_str().to_string()))
+                    .unwrap_or_else(|| "running".into()),
+                "reused": true,
+            }));
+        }
     }
+    // Registry lock released before spawn + ZMQ handshake.
 
     let base = std::env::temp_dir().join("koma-notebook-kernels");
     fs::create_dir_all(&base)?;
@@ -476,6 +521,17 @@ pub(super) fn start(
     let (conn_dir, conn_file, _public_meta) = write_connection_file(&base)?;
     let argv = launch_argv(&interp, &conn_file)?;
 
+    #[cfg(windows)]
+    let (interrupt_event, interrupt_env) = match create_interrupt_event() {
+        Ok(pair) => (Some(pair.0), Some(pair.1)),
+        Err(err) => {
+            delete_connection(&conn_dir);
+            return Err(err).context("Create JPY_INTERRUPT_EVENT");
+        }
+    };
+    #[cfg(not(windows))]
+    let _interrupt_event: Option<()> = None;
+
     let mut wrap = CommandWrap::with_new(&argv[0], |cmd| {
         cmd.args(&argv[1..])
             .current_dir(root)
@@ -485,6 +541,10 @@ pub(super) fn start(
             .env_remove("PYTHONSTARTUP")
             .env("PYTHONUNBUFFERED", "1");
         // Connection keys must not leak via child environment dumps to the GUI.
+        #[cfg(windows)]
+        if let Some(ref handle_str) = interrupt_env {
+            cmd.env("JPY_INTERRUPT_EVENT", handle_str);
+        }
     });
     #[cfg(unix)]
     {
@@ -493,12 +553,17 @@ pub(super) fn start(
     #[cfg(windows)]
     {
         wrap_windows(&mut wrap);
-        // JPY_INTERRUPT_EVENT is set when we wire a real interrupt event (full M3).
     }
 
     let child = match wrap.spawn() {
         Ok(c) => c,
         Err(err) => {
+            #[cfg(windows)]
+            if let Some(handle) = interrupt_event {
+                unsafe {
+                    windows_sys::Win32::Foundation::CloseHandle(handle);
+                }
+            }
             delete_connection(&conn_dir);
             // Surface missing ipykernel as a distinct, non-silent failure.
             let msg = err.to_string();
@@ -512,6 +577,45 @@ pub(super) fn start(
     };
 
     let id = format!("nbk-{}-{}", now_ms(), random_token());
+    let generation = 1u64;
+
+    // Attach shell/IOPub client before registering so a failed handshake does not leak a session.
+    let client = match super::notebook_client::start_client(
+        workspace.clone(),
+        document_path.to_string(),
+        &conn_file,
+        generation,
+    ) {
+        Ok(c) => c,
+        Err(err) => {
+            // Kill the just-spawned process and clean connection dir.
+            let mut orphan = KernelSession {
+                id: id.clone(),
+                workspace: workspace.clone(),
+                document_path: document_path.to_string(),
+                document_epoch,
+                interpreter: interp_str.clone(),
+                connection_dir: conn_dir,
+                connection_file: conn_file,
+                generation,
+                child: Mutex::new(Some(child)),
+                client: Mutex::new(None),
+                #[cfg(windows)]
+                interrupt_event,
+                stopping: false,
+                started_ms: now_ms(),
+            };
+            let _ = stop_session(&mut orphan);
+            let msg = format!("{err:#}");
+            if msg.contains("Timed out") {
+                anyhow::bail!(
+                    "Notebook kernel did not become ready (is ipykernel installed in {interp_str}?). {msg}"
+                );
+            }
+            return Err(err).context("Attach notebook kernel client");
+        }
+    };
+
     let session = KernelSession {
         id: id.clone(),
         workspace: workspace.clone(),
@@ -520,22 +624,53 @@ pub(super) fn start(
         interpreter: interp_str.clone(),
         connection_dir: conn_dir,
         connection_file: conn_file,
-        generation: 1,
+        generation,
         child: Mutex::new(Some(child)),
+        client: Mutex::new(Some(Arc::new(client))),
         #[cfg(windows)]
-        interrupt_event: None,
+        interrupt_event,
         stopping: false,
         started_ms: now_ms(),
     };
-    map.insert(id.clone(), session);
+    let client_status = session
+        .client
+        .lock()
+        .ok()
+        .and_then(|g| g.as_ref().map(|c| c.run_state().as_str().to_string()))
+        .unwrap_or_else(|| "starting".into());
+    {
+        let mut map = registry()
+            .lock()
+            .map_err(|_| anyhow::anyhow!("Kernel registry lock poisoned"))?;
+        // Lost the race — another start registered the same document.
+        if let Some((existing_id, existing)) = map.iter().find(|(_, s)| {
+            s.workspace == *workspace && s.document_path == document_path
+        }) {
+            let payload = json!({
+                "kernelId": existing_id,
+                "generation": existing.generation,
+                "documentPath": document_path,
+                "interpreter": existing.interpreter,
+                "status": "running",
+                "reused": true,
+            });
+            drop(map);
+            // Tear down the orphan we just built.
+            let mut orphan = session;
+            let _ = stop_session(&mut orphan);
+            return Ok(payload);
+        }
+        anyhow::ensure!(map.len() < MAX_KERNELS, "Too many live notebook kernels");
+        map.insert(id.clone(), session);
+    }
     Ok(json!({
         "kernelId": id,
-        "generation": 1,
+        "generation": generation,
         "documentPath": document_path,
         "documentEpoch": document_epoch,
         "interpreter": interp_str,
         "interpreterFingerprint": fingerprint_interpreter(&interp),
-        "status": "starting",
+        "status": client_status,
         "reused": false,
         "started": now_ms(),
         // Ports/keys intentionally omitted from the GUI-facing payload.
@@ -558,46 +693,109 @@ pub(super) fn stop(workspace: &WorkspaceRef, kernel_id: &str) -> Result<Value> {
 }
 
 pub(super) fn interrupt(workspace: &WorkspaceRef, kernel_id: &str) -> Result<Value> {
-    let map = registry()
-        .lock()
-        .map_err(|_| anyhow::anyhow!("Kernel registry lock poisoned"))?;
-    let session = map.get(kernel_id).context("Kernel session not found")?;
-    anyhow::ensure!(
-        session.workspace == *workspace,
-        "Kernel belongs to another workspace"
-    );
-    #[cfg(unix)]
-    {
-        let slot = session
-            .child
+    #[cfg(windows)]
+    let mut interrupt_event: Option<windows_sys::Win32::Foundation::HANDLE> = None;
+    let (generation, client) = {
+        let map = registry()
             .lock()
-            .map_err(|_| anyhow::anyhow!("Kernel child lock poisoned"))?;
-        if let Some(child) = slot.as_ref() {
-            let pid = child.id() as libc::pid_t;
-            anyhow::ensure!(pid > 1, "Invalid kernel pid");
-            // Interrupt the process group with SIGINT (not SIGKILL).
-            let rc = unsafe { libc::kill(-(pid as libc::pid_t), libc::SIGINT) };
-            if rc != 0 {
-                let err = std::io::Error::last_os_error();
-                if err.raw_os_error() != Some(libc::ESRCH) {
-                    return Err(err).context("Interrupt kernel");
+            .map_err(|_| anyhow::anyhow!("Kernel registry lock poisoned"))?;
+        let session = map.get(kernel_id).context("Kernel session not found")?;
+        anyhow::ensure!(
+            session.workspace == *workspace,
+            "Kernel belongs to another workspace"
+        );
+        let generation = session.generation;
+        let client = session.client.lock().ok().and_then(|g| g.clone());
+        #[cfg(windows)]
+        {
+            interrupt_event = session.interrupt_event;
+        }
+        #[cfg(unix)]
+        {
+            let slot = session
+                .child
+                .lock()
+                .map_err(|_| anyhow::anyhow!("Kernel child lock poisoned"))?;
+            if let Some(child) = slot.as_ref() {
+                let pid = child.id() as libc::pid_t;
+                anyhow::ensure!(pid > 1, "Invalid kernel pid");
+                // Interrupt the process group with SIGINT (not SIGKILL).
+                let rc = unsafe { libc::kill(-(pid as libc::pid_t), libc::SIGINT) };
+                if rc != 0 {
+                    let err = std::io::Error::last_os_error();
+                    if err.raw_os_error() != Some(libc::ESRCH) {
+                        return Err(err).context("Interrupt kernel");
+                    }
                 }
             }
         }
+        (generation, client)
+    };
+    // Also nudge the control channel when the client is live (best-effort).
+    if let Some(client) = client {
+        let _ = client.interrupt_control();
     }
     #[cfg(windows)]
     {
-        // Full M3 sets JPY_INTERRUPT_EVENT per jupyter_client.win_interrupt.
-        // Until wired, refuse rather than pretend SIGINT works on Windows.
-        anyhow::bail!(
-            "Windows kernel interrupt requires JPY_INTERRUPT_EVENT (not yet enabled in this spike)"
-        );
+        let handle = interrupt_event.context("Windows kernel interrupt event was not created")?;
+        signal_interrupt_event(handle)?;
     }
     #[cfg(not(any(unix, windows)))]
     {
         anyhow::bail!("Kernel interrupt is unavailable on this host");
     }
-    Ok(json!({"ok": true, "kernelId": kernel_id, "generation": session.generation}))
+    Ok(json!({"ok": true, "kernelId": kernel_id, "generation": generation}))
+}
+
+pub(super) fn execute(
+    workspace: &WorkspaceRef,
+    kernel_id: &str,
+    path: &str,
+    cell_id: Option<&str>,
+    code: &str,
+    generation: u64,
+    document_epoch: u64,
+) -> Result<Value> {
+    anyhow::ensure!(
+        code.len() <= super::notebook_wire::MAX_CONTENT_BYTES / 2,
+        "Cell code exceeds size bound"
+    );
+    let client = {
+        let map = registry()
+            .lock()
+            .map_err(|_| anyhow::anyhow!("Kernel registry lock poisoned"))?;
+        let session = map.get(kernel_id).context("Kernel session not found")?;
+        anyhow::ensure!(
+            session.workspace == *workspace,
+            "Kernel belongs to another workspace"
+        );
+        anyhow::ensure!(
+            session.document_path == path,
+            "Execute path does not match kernel document"
+        );
+        anyhow::ensure!(
+            session.document_epoch == document_epoch,
+            "Document epoch mismatch — reload before running"
+        );
+        anyhow::ensure!(
+            session.generation == generation,
+            "Stale kernel generation — restart or refresh before running"
+        );
+        let guard = session
+            .client
+            .lock()
+            .map_err(|_| anyhow::anyhow!("Client lock poisoned"))?;
+        let client = guard.clone().context("Notebook client is not attached")?;
+        drop(guard);
+        client
+    };
+    // Registry lock released — execute may block on ZMQ for a long time.
+    client.execute(
+        code.to_string(),
+        generation,
+        cell_id.map(|s| s.to_string()),
+        document_epoch,
+    )
 }
 
 pub(super) fn restart(
@@ -652,13 +850,27 @@ pub(super) fn status(workspace: &WorkspaceRef, kernel_id: Option<&str>) -> Resul
                 .ok()
                 .and_then(|g| g.as_ref().map(|c| c.id() != 0))
                 .unwrap_or(false);
+            let client_status = s
+                .client
+                .lock()
+                .ok()
+                .and_then(|g| g.as_ref().map(|c| c.run_state().as_str().to_string()));
+            let status = if s.stopping {
+                "stopping".to_string()
+            } else if let Some(cs) = client_status {
+                cs
+            } else if alive {
+                "running".to_string()
+            } else {
+                "exited".to_string()
+            };
             json!({
                 "kernelId": s.id,
                 "documentPath": s.document_path,
                 "documentEpoch": s.document_epoch,
                 "generation": s.generation,
                 "interpreter": s.interpreter,
-                "status": if s.stopping { "stopping" } else if alive { "running" } else { "exited" },
+                "status": status,
                 "started": s.started_ms,
             })
         })
@@ -828,5 +1040,51 @@ mod tests {
             }
             assert!(done);
         }
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_interrupt_event_formats_decimal_handle() {
+        let (handle, env) = create_interrupt_event().expect("CreateEventW");
+        assert!(handle != 0);
+        assert!(!env.is_empty());
+        assert!(env.chars().all(|c| c.is_ascii_digit()), "JPY_INTERRUPT_EVENT must be decimal: {env}");
+        signal_interrupt_event(handle).expect("SetEvent");
+        unsafe {
+            windows_sys::Win32::Foundation::CloseHandle(handle);
+        }
+    }
+
+    /// Opt-in live kernel proof. Requires ipykernel in PATH python.
+    /// `KOMA_NOTEBOOK_KERNEL_TEST=1 cargo test -p agent --no-default-features coding::notebook::tests::live_kernel_execute_print -- --ignored --nocapture`
+    #[test]
+    #[ignore]
+    fn live_kernel_execute_print() {
+        if std::env::var_os("KOMA_NOTEBOOK_KERNEL_TEST").is_none() {
+            eprintln!("skip: set KOMA_NOTEBOOK_KERNEL_TEST=1");
+            return;
+        }
+        let python = std::env::var("KOMA_NOTEBOOK_PYTHON").unwrap_or_else(|_| "python3".into());
+        let root = std::env::temp_dir().join(format!("koma-nb-live-{}", now_ms()));
+        fs::create_dir_all(&root).unwrap();
+        let ws = WorkspaceRef {
+            host_id: "local".into(),
+            root: root.to_string_lossy().into_owned(),
+        };
+        let path = "live.ipynb";
+        consent(&ws, &python, path, 1).unwrap();
+        let started = start(&ws, &root, path, 1, Some(&python), &[]).expect("start kernel");
+        let kid = started["kernelId"].as_str().unwrap().to_string();
+        let gen = started["generation"].as_u64().unwrap();
+        // Secrets must not appear in the start payload.
+        let snap = started.to_string();
+        assert!(!snap.contains("shell_port"));
+        assert!(!snap.contains("\"key\""));
+        let reply = execute(&ws, &kid, path, Some("c0"), "print('hi-koma')", gen, 1)
+            .expect("execute");
+        assert_eq!(reply["status"], "ok");
+        stop(&ws, &kid).unwrap();
+        assert!(!has_active() || status(&ws, None).unwrap()["kernels"].as_array().unwrap().is_empty());
+        let _ = fs::remove_dir_all(&root);
     }
 }

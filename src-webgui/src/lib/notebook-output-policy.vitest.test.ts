@@ -18,7 +18,7 @@ describe('notebook-output-policy', () => {
     if (err.kind === 'error') expect(err.text).toContain('ValueError')
   })
 
-  it('accepts PNG with valid magic and blocks HTML', () => {
+  it('accepts PNG with valid magic and sanitizes HTML', () => {
     const png = classifyNotebookOutput({
       output_type: 'display_data',
       data: { 'image/png': PNG_B64 },
@@ -26,12 +26,32 @@ describe('notebook-output-policy', () => {
     expect(png.kind).toBe('image-png')
     const html = classifyNotebookOutput({
       output_type: 'display_data',
-      data: { 'text/html': '<script>alert(1)</script>' },
+      data: { 'text/html': '<script>alert(1)</script><b onclick="x">ok</b>' },
     })
-    expect(html).toEqual({
-      kind: 'html-blocked',
-      reason: 'HTML outputs are blocked until the sandboxed renderer ships',
+    // Script + handlers stripped; remaining safe markup may render as html.
+    if (html.kind === 'html') {
+      expect(html.html.toLowerCase()).not.toContain('script')
+      expect(html.html.toLowerCase()).not.toContain('onclick')
+    } else {
+      expect(html.kind).toBe('html-blocked')
+    }
+  })
+
+  it('neutralizes javascript urls and remote images in HTML', () => {
+    const html = classifyNotebookOutput({
+      output_type: 'display_data',
+      data: {
+        'text/html':
+          '<a href="javascript:alert(1)">x</a><img src="https://evil.example/x.png"><p>hi</p>',
+      },
     })
+    if (html.kind === 'html') {
+      expect(html.html.toLowerCase()).not.toContain('javascript:')
+      expect(html.html.toLowerCase()).not.toContain('https://evil')
+      expect(html.html).toContain('hi')
+    } else {
+      expect(html.kind).toBe('html-blocked')
+    }
   })
 
   it('rejects forged PNG bytes', () => {

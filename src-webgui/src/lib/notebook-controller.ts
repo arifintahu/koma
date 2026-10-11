@@ -7,8 +7,10 @@ import {
   insertCell,
   moveCell,
   parseNotebook,
+  setCellOutputs,
   setCellSource,
   setCellType,
+  sliceCellOutputsJson,
 } from './notebook-document'
 import { bindCellIdentities, mintPersistedCellId, type CellIdentity } from './notebook-identity'
 import { NotebookHistory } from './notebook-history'
@@ -227,6 +229,52 @@ export class NotebookController {
     const from = this.identities.findIndex(i => i.runtimeId === runtimeId)
     if (from < 0) return false
     return this.withDoc('Move cell', doc => moveCell(doc, from, toIndex))
+  }
+
+  /**
+   * Rewrite outputs + execution_count for a code cell. Uses history when
+   * `recordHistory` is true; live streaming typically passes false and commits
+   * a single history entry at run start via clearCellOutputs.
+   */
+  setCellOutputs(
+    runtimeId: string,
+    outputs: unknown[],
+    executionCount: number | null,
+    recordHistory = false,
+  ): boolean {
+    const index = this.identities.findIndex(i => i.runtimeId === runtimeId)
+    if (index < 0) return false
+    if (!this.parse.ok) return false
+    try {
+      const outputsJson = JSON.stringify(outputs)
+      const apply = (doc: NotebookDocument) => setCellOutputs(doc, index, outputsJson, executionCount)
+      if (recordHistory) return this.withDoc('Update cell outputs', apply)
+      // Direct commit without history noise for streaming updates.
+      if (this.disposed) return false
+      const next = apply(this.parse.doc)
+      return this.commit(next.text, 'Update cell outputs', false)
+    } catch (e) {
+      this.lastError = e instanceof Error ? e.message : String(e)
+      this.emit()
+      return false
+    }
+  }
+
+  clearCellOutputs(runtimeId: string): boolean {
+    return this.setCellOutputs(runtimeId, [], null, true)
+  }
+
+  /** Raw outputs array for rendering (parsed). */
+  getCellOutputs(runtimeId: string): unknown[] {
+    const index = this.identities.findIndex(i => i.runtimeId === runtimeId)
+    if (index < 0 || !this.parse.ok) return []
+    try {
+      const raw = sliceCellOutputsJson(this.parse.doc, index)
+      const v = JSON.parse(raw) as unknown
+      return Array.isArray(v) ? v : []
+    } catch {
+      return []
+    }
   }
 
   undo(): boolean {
