@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { CHECK_LIST, UNORDERED_LIST } from '@lexical/markdown'
-import { composerTextPasteAction, loneHttpUrl, looksLikeComposerMarkdown, splitTaskListMarker } from './composerMarkdownPaste.ts'
+import { composerTextPasteAction, loneHttpUrl, looksLikeComposerMarkdown, sameLabelMarkdownLink, splitTaskListMarker } from './composerMarkdownPaste.ts'
 
 assert.equal(looksLikeComposerMarkdown('plain hello'), false)
 assert.equal(looksLikeComposerMarkdown('**bold**'), true)
@@ -16,6 +16,11 @@ assert.equal(composerTextPasteAction(`${'x'.repeat(150)}`), 'collapse')
 assert.equal(composerTextPasteAction(`1. ${'error log with `backticks` '.repeat(8)}`), 'collapse')
 assert.equal(loneHttpUrl('https://example.com/a'), 'https://example.com/a')
 assert.equal(loneHttpUrl('not a url'), null)
+assert.equal(
+  sameLabelMarkdownLink('[https://accounts.google.com/_/bscframe](https://accounts.google.com/_/bscframe)'),
+  'https://accounts.google.com/_/bscframe',
+)
+assert.equal(sameLabelMarkdownLink('[label](https://example.com)'), null)
 
 assert.deepEqual(splitTaskListMarker('[x] adasd'), { checked: true, rest: 'adasd' })
 assert.deepEqual(splitTaskListMarker('[ ] adadasd'), { checked: false, rest: 'adadasd' })

@@ -20,11 +20,13 @@ use wry::{PageLoadEvent, Rect, WebContext, WebView, WebViewBuilder};
 /// chrome webview reports its measured height so no black gap remains.
 const CHROME_H_DEFAULT: f64 = 70.0;
 
-/// Desktop Chrome UA so sites treat the page like a normal browser (not a bot/webview).
+/// Desktop browser UA so sites treat the page like a normal browser (not a bot/webview).
+/// macOS uses a Safari-shaped UA (we are WKWebView) so Google WebAuthn/passkey prompts
+/// align with the real engine; Chromium UA on Windows/Linux matches WebView2 / webkitgtk quirks less.
 fn chrome_user_agent() -> &'static str {
     #[cfg(target_os = "macos")]
     {
-        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.2 Safari/605.1.15"
     }
     #[cfg(target_os = "windows")]
     {
@@ -36,7 +38,7 @@ fn chrome_user_agent() -> &'static str {
     }
     #[cfg(not(any(target_os = "macos", target_os = "windows", target_os = "linux")))]
     {
-        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.2 Safari/605.1.15"
     }
 }
 

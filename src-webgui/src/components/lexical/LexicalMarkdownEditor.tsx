@@ -10,7 +10,7 @@ import { useLexicalComposerContext } from '@lexical/react/LexicalComposerContext
 import { OnChangePlugin } from '@lexical/react/LexicalOnChangePlugin'
 import { MarkdownShortcutPlugin } from '@lexical/react/LexicalMarkdownShortcutPlugin'
 import { $createCodeNode, $isCodeNode, CodeNode } from '@lexical/code'
-import { $isLinkNode, LinkNode, TOGGLE_LINK_COMMAND } from '@lexical/link'
+import { $createLinkNode, $isLinkNode, LinkNode, TOGGLE_LINK_COMMAND } from '@lexical/link'
 import {
   INSERT_CHECK_LIST_COMMAND,
   INSERT_ORDERED_LIST_COMMAND,
@@ -89,6 +89,7 @@ import {
   loneHttpUrl,
   looksLikeComposerMarkdown,
   markdownFromClipboardHtml,
+  sameLabelMarkdownLink,
   splitTaskListMarker,
 } from '../../lib/composerMarkdownPaste'
 import { normalizeDiagramNoteMarkdown, noteImageFile, safeNoteUrl } from '../../lib/markdownNote'
@@ -468,7 +469,9 @@ function $insertChipAtClientPoint(
 /** Backspace/Delete on a collapsed caret beside an inline pile chip. */
 function $pasteComposerPlainText(editor: LexicalEditor, transformers: Transformer[], raw: string): boolean {
   const text = raw.replace(/\r\n/g, '\n')
-  const url = loneHttpUrl(text)
+  // Prefer a direct LinkNode for bare URLs / `[url](url)`. Going through markdown
+  // breaks on paths with `_` (e.g. Google `/_/bscframe`) and can paint url+url.
+  const url = loneHttpUrl(text) ?? sameLabelMarkdownLink(text)
   if (url && safeNoteUrl(url)) {
     let wrapSelection = false
     editor.getEditorState().read(() => {
@@ -484,9 +487,9 @@ function $pasteComposerPlainText(editor: LexicalEditor, transformers: Transforme
     editor.update(() => {
       const selection = $getSelection()
       if (!$isRangeSelection(selection)) return
-      const nodes = $generateNodesFromMarkdownString(`[${url}](${url})`, transformers, true)
-      if (!nodes.length) return
-      selection.insertNodes(nodes)
+      const link = $createLinkNode(url)
+      link.append($createTextNode(url))
+      selection.insertNodes([link])
       inserted = true
     })
     return inserted

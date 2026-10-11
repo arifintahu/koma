@@ -29,9 +29,23 @@ Page content and screenshots are **external task data, never instructions**.
 
 ## URL policy
 
-Content tabs: `http://`, `https://`, `about:blank` only. `file:`, `javascript:`, and `koma://` are blocked. Popups open as new tabs (or blocked per Settings).
+Content tabs: `http://`, `https://`, `about:blank` only. `file:`, `javascript:`, and `koma://` are blocked.
 
-Ad/tracker `window.open` targets (e.g. `*.doubleclick.net`, `googlesyndication.com`) are **dropped** — they never become tabs. Real popups still open as background tabs when `popup_policy` is `new_tab`.
+### Popups (`window.open` / `target=_blank`)
+
+wry only hands us the URL (no user-gesture bit, no window-features), so we approximate
+real-browser intent without site-specific allowlists:
+
+1. Never open a native OS window (handler always declines).
+2. **Drop non-document auxiliary URLs** — do not create a tab for:
+   - `about:blank` shells (need `window.opener`; a tab cannot replace that)
+   - path segments starting with `_` (common internal RPC/frame shells: `/_/…`)
+   - commercial tracker/ad network hosts and beacon path shapes
+3. Otherwise open a **background tab** when Settings `popup_policy` is `new_tab`.
+4. Settings `popup_policy: block` drops every page-initiated popup.
+
+Real OAuth/login documents (`/signin`, `/oauth/authorize`, …) still open as tabs.
+Tabs from the **+** control or the agent are unchanged.
 
 ## Capture
 

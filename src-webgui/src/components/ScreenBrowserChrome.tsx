@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import {
   ArrowLeft,
-  ArrowRight, Globe, LoaderCircle, Plus, RefreshCw, Square, X,
+  ArrowRight, ChevronLeft, ChevronRight, Globe, LoaderCircle, Plus, RefreshCw, Square, X,
 } from 'lucide-react'
 import type { ScreenBrowserStatus, ScreenBrowserTab } from '../types/screenBrowser'
 
@@ -22,6 +22,19 @@ function applyPalette(palette: Record<string, string>) {
   }
 }
 
+const CHEVRON_ON =
+  'mb-0.5 flex h-6 w-5 flex-none items-center justify-center rounded text-koma-fg opacity-60 hover:bg-koma-hover hover:opacity-100'
+const CHEVRON_OFF =
+  'mb-0.5 flex h-6 w-5 flex-none items-center justify-center rounded text-koma-fg pointer-events-none opacity-0'
+
+function paintChevron(button: HTMLButtonElement | null, enabled: boolean) {
+  if (!button) return
+  button.disabled = !enabled
+  button.tabIndex = enabled ? 0 : -1
+  button.setAttribute('aria-hidden', enabled ? 'false' : 'true')
+  button.className = enabled ? CHEVRON_ON : CHEVRON_OFF
+}
+
 /**
  * Normal-browser chrome only: tabs + back/forward/reload + address bar.
  * Agent pause/stop live on the main koma titlebar / Settings — not here.
@@ -30,6 +43,10 @@ export function ScreenBrowserChrome() {
   const [status, setStatus] = useState<ScreenBrowserStatus | null>(window.__komaScreenBrowserInitial ?? null)
   const [urlDraft, setUrlDraft] = useState('')
   const inputRef = useRef<HTMLInputElement>(null)
+  const tabStripRef = useRef<HTMLDivElement>(null)
+  const leftChevronRef = useRef<HTMLButtonElement>(null)
+  const rightChevronRef = useRef<HTMLButtonElement>(null)
+  const overflowRef = useRef({ left: false, right: false })
 
   useEffect(() => {
     // Hard defaults so chrome never paints as empty white-on-white before palette arrives.
@@ -57,6 +74,34 @@ export function ScreenBrowserChrome() {
     setUrlDraft(active?.url ?? '')
   }, [status?.active_tab, status?.tabs])
 
+  // DOM-only overflow chevrons (same pattern as main TabBar — no setState).
+  useEffect(() => {
+    const el = tabStripRef.current
+    if (!el) return
+    const sync = () => {
+      const left = el.scrollLeft > 1
+      const right = el.scrollWidth - el.clientWidth - el.scrollLeft > 1
+      if (overflowRef.current.left === left && overflowRef.current.right === right) return
+      overflowRef.current = { left, right }
+      paintChevron(leftChevronRef.current, left)
+      paintChevron(rightChevronRef.current, right)
+    }
+    let raf = 0
+    const schedule = () => {
+      cancelAnimationFrame(raf)
+      raf = requestAnimationFrame(sync)
+    }
+    schedule()
+    el.addEventListener('scroll', schedule, { passive: true })
+    const ro = new ResizeObserver(schedule)
+    ro.observe(el)
+    return () => {
+      cancelAnimationFrame(raf)
+      el.removeEventListener('scroll', schedule)
+      ro.disconnect()
+    }
+  }, [status?.tabs?.length, status?.active_tab])
+
   const waiting = !!status?.waiting_human
   const tabs = status?.tabs ?? []
   const activeId = status?.active_tab ?? tabs.find(t => t.active)?.id ?? null
@@ -70,6 +115,12 @@ export function ScreenBrowserChrome() {
     setUrlDraft(url)
     post('navigate', { url, tab_id: activeId ?? undefined })
     inputRef.current?.blur()
+  }
+
+  const scrollTabs = (dir: -1 | 1) => {
+    const el = tabStripRef.current
+    if (!el) return
+    el.scrollBy({ left: dir * Math.max(120, el.clientWidth * 0.6), behavior: 'smooth' })
   }
 
   return (
@@ -93,12 +144,27 @@ export function ScreenBrowserChrome() {
         </div>
       )}
 
-      {/* Tab strip — + sits right after the last tab (Chrome-style), not far right */}
+      {/* Tab strip — chevrons like main koma TabBar; + after last tab */}
       <div
         className="flex min-h-0 flex-none items-end gap-0.5 border-b border-koma-border px-1 pt-1"
         style={{ background: 'color-mix(in srgb, var(--koma-fg, #c8d3f5) 4%, var(--koma-bg, #0b0e14))' }}
       >
-        <div className="flex min-w-0 flex-1 items-end gap-0.5 overflow-x-auto">
+        <button
+          ref={leftChevronRef}
+          type="button"
+          onClick={() => scrollTabs(-1)}
+          aria-label="Scroll tabs left"
+          title="Scroll tabs left"
+          aria-hidden="true"
+          tabIndex={-1}
+          className={CHEVRON_OFF}
+        >
+          <ChevronLeft size={14} />
+        </button>
+        <div
+          ref={tabStripRef}
+          className="flex min-w-0 flex-1 items-end gap-0.5 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+        >
           {tabs.length === 0 && (
             <div className="mb-0.5 px-2 py-1 text-[11px] opacity-50">New Tab</div>
           )}
@@ -121,6 +187,18 @@ export function ScreenBrowserChrome() {
             <Plus size={13} />
           </button>
         </div>
+        <button
+          ref={rightChevronRef}
+          type="button"
+          onClick={() => scrollTabs(1)}
+          aria-label="Scroll tabs right"
+          title="Scroll tabs right"
+          aria-hidden="true"
+          tabIndex={-1}
+          className={CHEVRON_OFF}
+        >
+          <ChevronRight size={14} />
+        </button>
       </div>
 
       {/* Navigation + address bar */}

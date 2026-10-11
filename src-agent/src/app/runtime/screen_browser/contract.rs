@@ -68,13 +68,58 @@ fn url_host_lower(url: &str) -> Option<String> {
     }
 }
 
-/// Ad / beacon / pixel targets that sites `window.open` — not real user popups.
-/// Opening these as tabs is pure noise (e.g. `*.fls.doubleclick.net` from Gmail).
+/// Path (+ empty) from an http(s) URL, lowercased, no query/fragment.
+fn url_path_lower(url: &str) -> Option<String> {
+    let u = url.trim();
+    let rest = u
+        .strip_prefix("https://")
+        .or_else(|| u.strip_prefix("http://"))
+        .or_else(|| u.strip_prefix("HTTPS://"))
+        .or_else(|| u.strip_prefix("HTTP://"))?;
+    let after_host = rest.split_once('/')?.1;
+    let path = after_host.split(['?', '#']).next().unwrap_or("");
+    Some(format!("/{}", path).to_ascii_lowercase())
+}
+
+/// True when this `window.open` URL is **not** a user-facing document.
+///
+/// Mirrors how browsers treat auxiliary browsing contexts without hard-coding
+/// any one site:
+/// - `about:blank` shells need `window.opener` (we are not a real popup host)
+/// - path segments starting with `_` are the widespread non-document convention
+///   (GWT/SPA RPC frames, “/_/…” internal endpoints) — never a tab the user wants
+/// - commercial ad/tracker network hosts (public suffix style), same class as
+///   browser tracking protection — not first-party app logins
+/// - common beacon path shapes (`/pagead/`, `/tr` pixels, …)
+///
+/// Real OAuth/login documents (`/signin`, `/oauth`, `/authorize`, …) do **not**
+/// match these rules and still open as background tabs when policy allows.
 pub fn is_noise_popup_url(url: &str) -> bool {
-    let Some(host) = url_host_lower(url) else {
+    let trimmed = url.trim();
+    if trimmed.is_empty() {
+        return true;
+    }
+    let lower = trimmed.to_ascii_lowercase();
+    if lower == "about:blank" || lower.starts_with("about:blank?") {
+        // about:blank popups exist only to inherit opener — promoting them to a
+        // tab breaks the site and leaves a useless empty tab.
+        return true;
+    }
+    if let Some(path) = url_path_lower(trimmed) {
+        // `/_foo`, `/_/bar`, `/x/_/y` — internal frame/RPC shells, not documents.
+        if path
+            .split('/')
+            .filter(|s| !s.is_empty())
+            .any(|seg| seg.starts_with('_'))
+        {
+            return true;
+        }
+    }
+    let Some(host) = url_host_lower(trimmed) else {
         return false;
     };
-    const SUFFIXES: &[&str] = &[
+    // Tracking / ads networks (suffix match). Site logins on accounts.* stay allowed.
+    const TRACKER_SUFFIXES: &[&str] = &[
         "doubleclick.net",
         "googlesyndication.com",
         "googleadservices.com",
@@ -100,22 +145,30 @@ pub fn is_noise_popup_url(url: &str) -> bool {
         "liadm.com",
         "ads-twitter.com",
         "facebook.net",
-        "fbcdn.net",
     ];
-    if SUFFIXES.iter().any(|s| host == *s || host.ends_with(&format!(".{s}"))) {
+    if TRACKER_SUFFIXES
+        .iter()
+        .any(|s| host == *s || host.ends_with(&format!(".{s}")))
+    {
         return true;
     }
-    // Path beacons on first-party-looking hosts.
-    let lower = url.to_ascii_lowercase();
     lower.contains("/pagead/")
         || lower.contains("/ads?")
-        || lower.contains("google.com/ads")
+        || lower.contains("/ads/")
         || lower.contains("facebook.com/tr")
+        || lower.contains("/pixel")
+        || lower.contains("/beacon")
 }
 
-/// Whether a page-initiated `window.open` should become a tab.
-/// `popup_policy`: `"block"` rejects all; `"new_tab"` (default) opens real popups
-/// and still drops tracker/ad noise.
+/// Whether a page-initiated `window.open` should become a **tab**.
+///
+/// Real browsers use user-activation + window-features (size/toolbar) to tell
+/// “popup” from “new tab”. wry only gives us the URL, so we:
+/// 1. honor `popup_policy: block`
+/// 2. drop non-document / tracker URLs ([`is_noise_popup_url`])
+/// 3. otherwise open as a **background** tab (caller must not steal focus)
+///
+/// We never create an OS window (handler always returns false upstream).
 pub fn allow_popup_url(url: &str, popup_policy: &str) -> bool {
     if popup_policy.eq_ignore_ascii_case("block") {
         return false;
@@ -447,12 +500,22 @@ mod tests {
     }
 
     #[test]
-    fn noise_popup_blocks_doubleclick_and_policy() {
+    fn noise_popup_blocks_helpers_not_login_documents() {
         let dc = "https://2507573.fls.doubleclick.net/activityi;dc_pre=x";
         assert!(is_noise_popup_url(dc));
         assert!(!allow_popup_url(dc, "new_tab"));
         assert!(!allow_popup_url("https://mail.google.com/", "block"));
-        assert!(allow_popup_url("https://mail.google.com/", "new_tab"));
+        // Real login document — still allowed as a tab.
+        assert!(allow_popup_url(
+            "https://accounts.google.com/v3/signin/identifier?continue=https://mail.google.com",
+            "new_tab"
+        ));
+        assert!(allow_popup_url("https://github.com/login/oauth/authorize?client_id=x", "new_tab"));
+        // Internal non-document path segments (`/_/…`) — any host, not a vendor list.
+        assert!(is_noise_popup_url("https://accounts.google.com/_/bscframe"));
+        assert!(is_noise_popup_url("https://example.com/_/rpc/frame"));
+        assert!(is_noise_popup_url("about:blank"));
+        assert!(!allow_popup_url("about:blank", "new_tab"));
         assert!(!is_noise_popup_url("https://workspace.google.com/"));
     }
 
