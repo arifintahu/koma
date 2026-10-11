@@ -237,7 +237,7 @@ impl BrowserWindow {
                 position: LogicalPosition::new(0.0, 0.0).into(),
                 size: LogicalSize::new(1100.0, CHROME_H_DEFAULT).into(),
             })
-            .with_background_color((0, 0, 0, 0))
+            .with_background_color((14, 17, 23, 255))
             .with_navigation_handler(|url| super::allow_webview_navigation(&url))
             .with_initialization_script(format!(
                 "window.__komaOS='{}';window.__komaScreenBrowserInitial={initial};window.__komaScreenBrowserPalette={palette};\
@@ -400,16 +400,39 @@ impl BrowserWindow {
         // strip cannot disappear under a content WKWebView after navigate/focus.
         #[cfg(target_os = "macos")]
         {
-            use objc2_app_kit::NSView;
+            use objc2_app_kit::{NSAutoresizingMaskOptions, NSView, NSWindowOrderingMode};
             use objc2_web_kit::WKWebView;
             use wry::WebViewExtMacOS;
             let chrome_wv = self.chrome.webview();
-            // WryWebView → WKWebView → NSView
-            let wk: &WKWebView = chrome_wv.as_ref();
-            let chrome_view: &NSView = wk.as_ref();
+            let chrome_wk: &WKWebView = chrome_wv.as_ref();
+            let chrome_view: &NSView = chrome_wk.as_ref();
             unsafe {
+                // Width-only flex; height stays the strip from set_bounds.
+                chrome_view.setAutoresizingMask(NSAutoresizingMaskOptions::ViewWidthSizable);
+                let active = self.active.as_deref();
+                for tab in &self.tabs {
+                    let tab_wv = tab.webview.webview();
+                    let tab_wk: &WKWebView = tab_wv.as_ref();
+                    let tab_view: &NSView = tab_wk.as_ref();
+                    // Freeze frame — layout() owns bounds. Stops page load stretching
+                    // the content child over the chrome strip (wry default MinYMargin).
+                    tab_view.setAutoresizingMask(NSAutoresizingMaskOptions::ViewNotSizable);
+                    if Some(tab.id.as_str()) == active {
+                        if let Some(parent) = chrome_view.superview() {
+                            parent.addSubview_positioned_relativeTo(
+                                chrome_view,
+                                NSWindowOrderingMode::Above,
+                                Some(tab_view),
+                            );
+                        }
+                    }
+                }
                 if let Some(parent) = chrome_view.superview() {
-                    parent.addSubview(chrome_view);
+                    parent.addSubview_positioned_relativeTo(
+                        chrome_view,
+                        NSWindowOrderingMode::Above,
+                        None,
+                    );
                 }
             }
         }
@@ -723,6 +746,8 @@ impl BrowserWindow {
                         }
                         t.error = None;
                     }
+                    // Load start re-stacks content WKWebView — pin chrome immediately.
+                    let _ = self.layout();
                     self.push_status();
                 }
             }
