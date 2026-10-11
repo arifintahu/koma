@@ -31,8 +31,8 @@ const selectClass = 'h-6 w-full min-w-0 bg-koma-panel2 pl-2 text-[11px]'
 const message = (e: unknown) => String(e instanceof Error ? e.message : e)
 
 /** Open Language Packs as a BottomPanel tab (not a floating dialog). */
-export function showCodingPacks(workspace?: WorkspaceRef) {
-  window.dispatchEvent(new CustomEvent('koma-coding-packs', { detail: { workspace } }))
+export function showCodingPacks(workspace?: WorkspaceRef, opts?: { notebook?: boolean }) {
+  window.dispatchEvent(new CustomEvent('koma-coding-packs', { detail: { workspace, notebook: opts?.notebook } }))
 }
 
 /**
@@ -48,6 +48,7 @@ export function CodingPacks({ visible: open }: { visible: boolean }) {
   const [executable, setExecutable] = useState('')
   const [server, setServer] = useState('')
   const [runtime, setRuntime] = useState(false)
+  const [notebook, setNotebook] = useState(false)
   const [plan, setPlan] = useState<Plan | null>(null)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
@@ -65,9 +66,13 @@ export function CodingPacks({ visible: open }: { visible: boolean }) {
       const state = useKoma.getState()
       const hostId = state.remoteState.hostId ?? 'local'
       const root = state.coding.activeRoot ?? state.settingsValues?.workdir?.[0]
-      const target = (event as CustomEvent<{ workspace?: WorkspaceRef }>).detail
+      const target = (event as CustomEvent<{ workspace?: WorkspaceRef; notebook?: boolean }>).detail
       if (target?.workspace) setWorkspace(target.workspace)
       else if (root) setWorkspace({ hostId, root })
+      if (target?.notebook) {
+        setPackId('python')
+        setNotebook(true)
+      }
       state.setBottomPanelTab('packs')
       setRefresh(n => n + 1)
     }
@@ -135,7 +140,13 @@ export function CodingPacks({ visible: open }: { visible: boolean }) {
     const gen = generation.current
     try {
       if (action === 'plan') {
-        const result = await codingRequest<Plan>(workspace, { op: 'packPlan', packId, runtime, server })
+        const result = await codingRequest<Plan>(workspace, {
+          op: 'packPlan',
+          packId,
+          runtime,
+          notebook: packId === 'python' ? notebook : false,
+          server,
+        })
         if (gen === generation.current) setPlan(result)
       } else if (action === 'apply' && plan) {
         const run = await codingRequest<CodingTaskRun>(workspace, { op: 'packApply', planId: plan.id })
@@ -280,6 +291,21 @@ export function CodingPacks({ visible: open }: { visible: boolean }) {
           />
           Include runtime
         </label>
+        {packId === 'python' && (
+          <label className="flex items-center gap-1 px-1 text-koma-dim" title="Installs ipykernel into the selected workspace Python (reviewed plan, not silent)">
+            <input
+              type="checkbox"
+              className="accent-koma-accent"
+              checked={notebook}
+              disabled={busy}
+              onChange={e => {
+                setNotebook(e.target.checked)
+                setPlan(null)
+              }}
+            />
+            Notebook kernel (ipykernel)
+          </label>
+        )}
         <button type="button" className={button} disabled={busy || !data} onClick={() => void act('plan')}>
           {busy ? <BrailleSpinner size={12} /> : null}
           Review install

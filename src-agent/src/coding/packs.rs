@@ -280,6 +280,7 @@ pub(super) fn plan(
     root: &Path,
     pack_id: &str,
     runtime: bool,
+    notebook: bool,
     server: Option<&str>,
 ) -> Result<Value> {
     let p = PACKS
@@ -316,6 +317,28 @@ pub(super) fn plan(
             vec!["coding-provision".into(), p.adapter.into()],
         ));
     }
+    // Notebook kernel dependency: install ipykernel into the *selected* workspace
+    // interpreter (not a managed tools venv). Reviewed only — PackApply runs it.
+    if notebook {
+        anyhow::ensure!(
+            p.id == "python",
+            "Notebook kernel (ipykernel) install is only available for the Python pack"
+        );
+        let python = super::environment::executable(
+            root,
+            if cfg!(windows) { "python" } else { "python3" },
+        )?;
+        commands.push(command(
+            &python.to_string_lossy(),
+            vec![
+                "-m".into(),
+                "pip".into(),
+                "install".into(),
+                "--disable-pip-version-check".into(),
+                "ipykernel".into(),
+            ],
+        ));
+    }
     for step in &mut commands {
         if step["command"] == exe {
             let mut env = super::environment::variables(root, p.runtime)?;
@@ -341,8 +364,15 @@ pub(super) fn plan(
             step["env"] = json!(env);
         }
     }
+    let notes = if notebook && p.id == "python" {
+        "ipykernel is installed into the workspace Python executable shown above (pip). Project packages stay project-owned. Koma never silent-pip-installs on notebook open."
+    } else if p.adapter == "lldb-dap" {
+        "LLVM's lldb-dap must be on PATH. Some distributions package it separately. Project test dependencies remain project-owned."
+    } else {
+        "Project test dependencies remain project-owned. PHP debugging requires Xdebug; Bash debugging requires bashdb."
+    };
     let id = uuid::Uuid::new_v4().to_string();
-    let result = json!({"id":id,"label":p.label,"commands":commands,"notes": if p.adapter=="lldb-dap" {"LLVM's lldb-dap must be on PATH. Some distributions package it separately. Project test dependencies remain project-owned."} else {"Project test dependencies remain project-owned. PHP debugging requires Xdebug; Bash debugging requires bashdb."}});
+    let result = json!({"id":id,"label":p.label,"commands":commands,"notes": notes});
     let mut registry = plans().lock().map_err(|_| {
         anyhow::anyhow!("Installation plan registry is poisoned; restart the coding service")
     })?;

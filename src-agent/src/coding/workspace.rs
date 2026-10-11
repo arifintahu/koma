@@ -173,12 +173,14 @@ pub(super) fn execute(request: &Request) -> Result<Value> {
         Operation::PackPlan {
             pack_id,
             runtime,
+            notebook,
             server,
         } => super::packs::plan(
             &request.workspace,
             &canonical,
             pack_id,
             *runtime,
+            *notebook,
             server.as_deref(),
         ),
         Operation::PackApply { plan_id } => {

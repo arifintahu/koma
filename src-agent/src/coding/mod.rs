@@ -159,6 +159,10 @@ pub(crate) enum Operation {
     PackPlan {
         pack_id: String,
         runtime: bool,
+        /// When true (Python pack), include a reviewed `pip install ipykernel` into the
+        /// selected workspace interpreter — never silent; runs only after PackApply.
+        #[serde(default)]
+        notebook: bool,
         #[serde(default)]
         server: Option<String>,
     },

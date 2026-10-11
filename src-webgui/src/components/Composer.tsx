@@ -1144,35 +1144,21 @@ export function Composer() {
           dragOver ? 'border-koma-accent bg-koma-hover' : 'border-koma-border'
         }`}
       >
-        {/* Persistent mascot: a small always-looping cat perched on the card's
-            top-right corner. Purely decorative — not gated on `working` — and
-            swaps to a different random cat on every send (see submit above). */}
-        <CatMascot swapTrigger={mascotSwap} />
-
-        {/* Thinking bubble: floats ABOVE the cat (not beside it), only while
-            `working`. The cat sits at -top-3/right-3 (h-12), so its top edge is
-            12px above the card and its box is 48px tall; anchoring the bubble at
-            -top-11 (-44px) puts its bottom edge ~8px above the cat's top edge (a
-            small gap), while `right-3` matches the cat's right edge exactly.
-            Only `right` is set (no `left`), so the pill still grows
-            leftward/from-the-right as its word content needs. The nearest
-            overflow-hidden ancestor is the shell's main content region
-            (routes/index.tsx `top-8 flex overflow-hidden`), which spans nearly
-            the full window height above the composer — the extra ~32px of
-            poke-up room this needs (vs. the cat's 12px) stays well inside that
-            box in any normal window size, so no portal is needed here (unlike
-            e.g. Select/Combobox menus, which portal to <body> because they can
-            open far down an overflow:auto list). Kept mounted (not conditionally
-            rendered) so opacity/translate can transition instead of popping. */}
+        {/* Mascot + thinking chip: one horizontal cluster on the card's top-right.
+            Bubble sits LEFT of the cat (not stacked above it). Cat is decorative
+            and always on; the chip only appears while `working`. */}
         <div
-          className={`pointer-events-none absolute -top-11 right-3 z-10 transition-all duration-300 ${
-            working ? 'translate-y-0 opacity-100' : 'translate-y-1 opacity-0'
-          }`}
+          className="pointer-events-none absolute -top-3 right-3 z-10 flex items-center gap-2"
           aria-hidden="true"
         >
-          <span className="whitespace-nowrap rounded-full border border-koma-border bg-koma-panel2 px-2.5 py-1 text-[11px] text-koma-dim shadow-sm">
-            {thinkingWord.toLowerCase()}…
+          <span
+            className={`whitespace-nowrap rounded-full border border-koma-border bg-koma-panel2 px-2.5 py-1 text-[11px] text-koma-dim shadow-sm transition-all duration-300 ${
+              working ? 'translate-x-0 opacity-100' : 'translate-x-1 opacity-0'
+            }`}
+          >
+            {thinkingWord ? `${thinkingWord.toLowerCase()}…` : '…'}
           </span>
+          <CatMascot swapTrigger={mascotSwap} />
         </div>
 
         {designChips.length > 0 && (

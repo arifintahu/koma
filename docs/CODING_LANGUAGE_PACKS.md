@@ -37,6 +37,14 @@ BottomPanel
     └── body: install plan commands (scroll) or empty hint
 ```
 
+## Notebook kernel (ipykernel)
+
+Python pack plans can include **Notebook kernel (ipykernel)** — a reviewed
+`{workspace python} -m pip install ipykernel` step (same Apply → Tasks path as
+LSP/debugpy). Koma never silent-pip-installs when a notebook opens. From a
+notebook missing-ipykernel strip, **Install ipykernel…** opens Language Packs
+with Python + the notebook checkbox already on.
+
 ## Behavior
 
 The workspace dropdown binds every action to its host and root. Status

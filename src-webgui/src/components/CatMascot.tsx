@@ -31,7 +31,7 @@ class MascotBoundary extends Component<{ children: ReactNode }, { failed: boolea
 export function CatMascot({ swapTrigger }: { swapTrigger: number }) {
   return (
     <div
-      className="pointer-events-none absolute -top-3 right-3 z-10 flex h-12 w-12 items-center justify-center overflow-hidden rounded-2xl border border-koma-border bg-koma-panel2 p-1.5 shadow-sm"
+      className="flex h-12 w-12 flex-none items-center justify-center overflow-hidden rounded-2xl border border-koma-border bg-koma-panel2 p-1.5 shadow-sm"
       aria-hidden="true"
     >
       <MascotBoundary>

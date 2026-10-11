@@ -939,9 +939,10 @@ function WorkspaceNotebook({ tab }: { tab: CodingTab }) {
           <button
             type="button"
             className="flex-none rounded border border-koma-border px-2 py-0.5 text-[11px] hover:bg-koma-hover"
-            onClick={() => showCodingPacks()}
+            title="Open Language Packs with Notebook kernel (ipykernel) checked — review then install via Tasks"
+            onClick={() => showCodingPacks(workspace, { notebook: true })}
           >
-            Language Packs
+            Install ipykernel…
           </button>
           <button
             type="button"

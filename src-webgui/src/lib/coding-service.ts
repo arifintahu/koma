@@ -26,7 +26,7 @@ export type CodingOperation =
   | { op: 'debugRequest'; sessionId: string; command: string; arguments: Record<string, unknown>; generation?: number }
   | { op: 'debugStop'; sessionId: string }
   | { op: 'packs' }
-  | { op: 'packPlan'; packId: string; runtime: boolean; server?: string }
+  | { op: 'packPlan'; packId: string; runtime: boolean; notebook?: boolean; server?: string }
   | { op: 'packApply'; planId: string }
   | { op: 'environmentSelect'; language: string; executable: string; fingerprint: string; server?: string }
   | { op: 'lspRestartWorkspace' | 'lspReleaseClient' }
