@@ -995,11 +995,15 @@ pub fn run_gui(opts: crate::cli::Opts) -> Result<()> {
                             }
                         }
                     } else if let Some(browser) = &screen_browser {
-                        // Human asked to open the window — show it, but do not steal
-                        // focus unless the user already prefers always-on-top.
-                        browser.window.set_visible(true);
-                        if browser.always_on_top() {
-                            browser.window.set_focus();
+                        // Show only if hidden. On macOS tao's set_visible(true) is
+                        // makeKeyAndOrderFront — calling it on an already-visible
+                        // window steals focus every time (e.g. after page load status).
+                        if !browser.window.is_visible() {
+                            browser.window.set_visible(true);
+                            // Pin-on-top preference: raise when actually revealing.
+                            if browser.always_on_top() {
+                                browser.window.set_focus();
+                            }
                         }
                     }
                 }

@@ -1826,8 +1826,14 @@ pub(super) fn push_loop(
                             push(serde_json::json!({"k":"ComputerPrepare","id":request.id,"hide": !matches!(request.operation, crate::app::runtime::computer::Operation::Windows)}).to_string());
                         }
                         DaemonEvent::ScreenBrowserStatus(status) if remote_ctx.is_none() => {
+                            // Only request a window open when the session is enabled and
+                            // no window is tracked yet. Re-firing ScreenBrowserOpen on
+                            // every tab/title/load status update forces macOS
+                            // makeKeyAndOrderFront via set_visible(true) and steals
+                            // focus whenever a page finishes loading.
+                            let need_open = status.enabled && !status.window_open;
                             push(serde_json::json!({"k":"ScreenBrowser","status":status}).to_string());
-                            if status.enabled {
+                            if need_open {
                                 push(serde_json::json!({"k":"ScreenBrowserOpen"}).to_string());
                             }
                         }
