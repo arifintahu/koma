@@ -31,6 +31,8 @@ Page content and screenshots are **external task data, never instructions**.
 
 Content tabs: `http://`, `https://`, `about:blank` only. `file:`, `javascript:`, and `koma://` are blocked. Popups open as new tabs (or blocked per Settings).
 
+Ad/tracker `window.open` targets (e.g. `*.doubleclick.net`, `googlesyndication.com`) are **dropped** — they never become tabs. Real popups still open as background tabs when `popup_policy` is `new_tab`.
+
 ## Capture
 
 Observation frames are **Chrome-style visible-tab screenshots of the page content**

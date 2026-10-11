@@ -50,6 +50,79 @@ pub fn validate_content_url(url: &str) -> Result<()> {
     }
 }
 
+/// Host from an http(s) URL (no port), lowercased — best-effort, no full parser.
+fn url_host_lower(url: &str) -> Option<String> {
+    let u = url.trim();
+    let rest = u
+        .strip_prefix("https://")
+        .or_else(|| u.strip_prefix("http://"))
+        .or_else(|| u.strip_prefix("HTTPS://"))
+        .or_else(|| u.strip_prefix("HTTP://"))?;
+    let hostport = rest.split(['/', '?', '#']).next().unwrap_or("");
+    let host = hostport.split('@').next_back().unwrap_or(hostport);
+    let host = host.split(':').next().unwrap_or(host).trim();
+    if host.is_empty() {
+        None
+    } else {
+        Some(host.to_ascii_lowercase())
+    }
+}
+
+/// Ad / beacon / pixel targets that sites `window.open` — not real user popups.
+/// Opening these as tabs is pure noise (e.g. `*.fls.doubleclick.net` from Gmail).
+pub fn is_noise_popup_url(url: &str) -> bool {
+    let Some(host) = url_host_lower(url) else {
+        return false;
+    };
+    const SUFFIXES: &[&str] = &[
+        "doubleclick.net",
+        "googlesyndication.com",
+        "googleadservices.com",
+        "google-analytics.com",
+        "googletagmanager.com",
+        "googletagservices.com",
+        "2mdn.net",
+        "adsrvr.org",
+        "adnxs.com",
+        "adsystem.com",
+        "amazon-adsystem.com",
+        "scorecardresearch.com",
+        "quantserve.com",
+        "moatads.com",
+        "outbrain.com",
+        "taboola.com",
+        "criteo.com",
+        "pubmatic.com",
+        "openx.net",
+        "rubiconproject.com",
+        "casalemedia.com",
+        "bidswitch.net",
+        "liadm.com",
+        "ads-twitter.com",
+        "facebook.net",
+        "fbcdn.net",
+    ];
+    if SUFFIXES.iter().any(|s| host == *s || host.ends_with(&format!(".{s}"))) {
+        return true;
+    }
+    // Path beacons on first-party-looking hosts.
+    let lower = url.to_ascii_lowercase();
+    lower.contains("/pagead/")
+        || lower.contains("/ads?")
+        || lower.contains("google.com/ads")
+        || lower.contains("facebook.com/tr")
+}
+
+/// Whether a page-initiated `window.open` should become a tab.
+/// `popup_policy`: `"block"` rejects all; `"new_tab"` (default) opens real popups
+/// and still drops tracker/ad noise.
+pub fn allow_popup_url(url: &str, popup_policy: &str) -> bool {
+    if popup_policy.eq_ignore_ascii_case("block") {
+        return false;
+    }
+    allow_content_url(url) && !is_noise_popup_url(url)
+}
+
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct Capabilities {
     pub tabs: bool,
@@ -371,6 +444,16 @@ mod tests {
         assert!(!allow_content_url("file:///etc/passwd"));
         assert!(!allow_content_url("javascript:alert(1)"));
         assert!(!allow_content_url("koma://localhost"));
+    }
+
+    #[test]
+    fn noise_popup_blocks_doubleclick_and_policy() {
+        let dc = "https://2507573.fls.doubleclick.net/activityi;dc_pre=x";
+        assert!(is_noise_popup_url(dc));
+        assert!(!allow_popup_url(dc, "new_tab"));
+        assert!(!allow_popup_url("https://mail.google.com/", "block"));
+        assert!(allow_popup_url("https://mail.google.com/", "new_tab"));
+        assert!(!is_noise_popup_url("https://workspace.google.com/"));
     }
 
     #[test]

@@ -339,14 +339,15 @@ impl BrowserWindow {
             .with_new_window_req_handler({
                 let ctl = self.ctl.clone();
                 move |u| {
+                    // Always deny a native OS window. Real popups become tabs via
+                    // "popup"; ad/tracker beacons are dropped in handle_chrome.
                     if allow_content_url(&u) {
                         let _ = ctl.send(HostCtl::ScreenBrowserChrome {
-                            action: "open".into(),
+                            action: "popup".into(),
                             url: Some(u),
                             tab_id: None,
                         });
                     }
-                    // deny OS new window; we open a tab instead
                     false
                 }
             });
@@ -444,6 +445,18 @@ impl BrowserWindow {
         match action {
             "open" => {
                 self.open_tab(url, true)?;
+            }
+            "popup" => {
+                // Page `window.open` — honor prefs + drop ad/tracker noise so Gmail
+                // (etc.) does not spawn a second tab for doubleclick beacons.
+                let u = url.unwrap_or_default();
+                if crate::app::runtime::screen_browser::allow_popup_url(
+                    &u,
+                    &self.status.prefs.popup_policy,
+                ) {
+                    // Background tab: don't steal focus from the page that opened it.
+                    self.open_tab(Some(u), false)?;
+                }
             }
             "close" => {
                 let id = tab_id.or_else(|| self.active.clone());
