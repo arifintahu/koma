@@ -8,7 +8,7 @@ import type { ScreenBrowserStatus, ScreenBrowserTab } from '../types/screenBrows
 type SbAction =
   | 'navigate' | 'open' | 'close' | 'select' | 'reload' | 'back' | 'forward' | 'stop'
   | 'shot' | 'shot_full'
-  | 'continue_human'
+  | 'continue_human' | 'chrome_ready'
   | 'win_drag' | 'win_min' | 'win_max' | 'win_close'
 
 function post(action: SbAction, extra?: { url?: string; tab_id?: string }) {
@@ -89,6 +89,13 @@ export function ScreenBrowserChrome() {
     if (document.activeElement === inputRef.current) return
     setUrlDraft(active?.url ?? '')
   }, [status?.active_tab, status?.tabs])
+
+  // Tell the host the real chrome strip is painted (tabs + toolbar), not the empty SPA shell.
+  useEffect(() => {
+    if (!status?.tabs?.length) return
+    const id = requestAnimationFrame(() => post('chrome_ready'))
+    return () => cancelAnimationFrame(id)
+  }, [status?.tabs?.length])
 
   useEffect(() => {
     const el = tabStripRef.current
@@ -375,7 +382,7 @@ export function ScreenBrowserChrome() {
 
 function isBlankTab(tab: ScreenBrowserTab): boolean {
   const u = (tab.url || '').trim().toLowerCase()
-  return !u || u === 'about:blank' || u.starts_with('about:blank?')
+  return !u || u === 'about:blank' || u.startsWith('about:blank?')
 }
 
 function TabChip({ tab, active, onSelect, onClose }: {

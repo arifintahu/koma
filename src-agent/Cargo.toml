@@ -115,6 +115,7 @@ objc2-app-kit = { version = "0.3", optional = true, default-features = false, fe
     "NSBitmapImageRep",
     "NSGraphics",
     "NSImageRep",
+    "NSView",
 ] }
 objc2-web-kit = { version = "0.3", optional = true, default-features = false, features = [
     "std",

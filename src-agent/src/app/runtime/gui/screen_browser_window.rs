@@ -158,6 +158,146 @@ struct Tab {
     error: Option<String>,
 }
 
+/// macOS WKWebView remote layers paint outside their frame after navigation
+/// (AppKit no longer clips by default). Wrap each page in a clipping NSView
+/// so it cannot cover the chrome strip even if WebKit resets the webview frame.
+#[cfg(target_os = "macos")]
+fn macos_wrap_tab_in_clip(webview: &WebView) -> Result<()> {
+    use objc2::MainThreadMarker;
+    use objc2_app_kit::{NSAutoresizingMaskOptions, NSView};
+    use objc2_web_kit::WKWebView;
+    use wry::WebViewExtMacOS;
+
+    let mtm = MainThreadMarker::new().context("screen-browser wrap needs main thread")?;
+    let wk_retain = webview.webview();
+    let wk: &WKWebView = wk_retain.as_ref();
+    let tab_view: &NSView = wk.as_ref();
+    unsafe {
+        let parent = tab_view
+            .superview()
+            .context("tab webview has no superview")?;
+        let current = tab_view.frame();
+        let clip = NSView::new(mtm);
+        clip.setFrame(current);
+        clip.setClipsToBounds(true);
+        clip.setWantsLayer(true);
+        clip.setAutoresizingMask(NSAutoresizingMaskOptions::ViewNotSizable);
+        parent.addSubview(&clip);
+        clip.addSubview(tab_view);
+        let mut inner = current;
+        inner.origin.x = 0.0;
+        inner.origin.y = 0.0;
+        tab_view.setFrame(inner);
+        tab_view.setAutoresizingMask(
+            NSAutoresizingMaskOptions::ViewWidthSizable
+                | NSAutoresizingMaskOptions::ViewHeightSizable,
+        );
+        tab_view.setClipsToBounds(true);
+    }
+    Ok(())
+}
+
+#[cfg(target_os = "macos")]
+fn macos_child_frame(
+    parent: &objc2_app_kit::NSView,
+    x: f64,
+    y: f64,
+    width: f64,
+    height: f64,
+) -> objc2_foundation::NSRect {
+    use objc2_foundation::{NSPoint, NSRect, NSSize};
+    let origin = if parent.isFlipped() {
+        NSPoint::new(x, y)
+    } else {
+        let pf = parent.frame();
+        NSPoint::new(x, pf.size.height - y - height)
+    };
+    NSRect::new(origin, NSSize::new(width, height))
+}
+
+#[cfg(target_os = "macos")]
+fn macos_layout_tab(
+    webview: &WebView,
+    chrome: &WebView,
+    visible: bool,
+    x: f64,
+    y: f64,
+    w: f64,
+    h: f64,
+) {
+    use objc2_app_kit::{NSAutoresizingMaskOptions, NSView};
+    use objc2_web_kit::WKWebView;
+    use wry::WebViewExtMacOS;
+
+    let tab_wk_owned = webview.webview();
+    let tab_wk: &WKWebView = tab_wk_owned.as_ref();
+    let tab_view: &NSView = tab_wk.as_ref();
+    let chrome_wk_owned = chrome.webview();
+    let chrome_wk: &WKWebView = chrome_wk_owned.as_ref();
+    let chrome_view: &NSView = chrome_wk.as_ref();
+    unsafe {
+        let Some(chrome_parent) = chrome_view.superview() else {
+            return;
+        };
+        let frame = macos_child_frame(&chrome_parent, x, y, w, h);
+        if let Some(tab_parent) = tab_view.superview() {
+            if !std::ptr::eq(&*tab_parent, &*chrome_parent) {
+                tab_parent.setFrame(frame);
+                tab_parent.setHidden(!visible);
+                tab_parent.setClipsToBounds(true);
+                tab_parent.setWantsLayer(true);
+                tab_parent.setAutoresizingMask(NSAutoresizingMaskOptions::ViewNotSizable);
+                tab_view.setFrame(tab_parent.bounds());
+                tab_view.setHidden(false);
+                return;
+            }
+        }
+        tab_view.setFrame(frame);
+        tab_view.setHidden(!visible);
+        tab_view.setClipsToBounds(true);
+        tab_view.setAutoresizingMask(NSAutoresizingMaskOptions::ViewNotSizable);
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn macos_pin_chrome(chrome: &WebView, tabs: &[Tab], active: Option<&str>) {
+    use objc2_app_kit::{NSAutoresizingMaskOptions, NSView, NSWindowOrderingMode};
+    use objc2_web_kit::WKWebView;
+    use wry::WebViewExtMacOS;
+
+    let chrome_retain = chrome.webview();
+    let chrome_wk: &WKWebView = chrome_retain.as_ref();
+    let chrome_view: &NSView = chrome_wk.as_ref();
+    unsafe {
+        chrome_view.setAutoresizingMask(NSAutoresizingMaskOptions::ViewWidthSizable);
+        chrome_view.setClipsToBounds(true);
+        let Some(parent) = chrome_view.superview() else {
+            return;
+        };
+        for tab in tabs {
+            let tab_retain = tab.webview.webview();
+            let tab_wk: &WKWebView = tab_retain.as_ref();
+            let tab_view: &NSView = tab_wk.as_ref();
+            if Some(tab.id.as_str()) != active {
+                continue;
+            }
+            let relative = tab_view
+                .superview()
+                .filter(|sv| !std::ptr::eq(&**sv, &*parent));
+            parent.addSubview_positioned_relativeTo(
+                chrome_view,
+                NSWindowOrderingMode::Above,
+                relative.as_deref(),
+            );
+        }
+        parent.addSubview_positioned_relativeTo(
+            chrome_view,
+            NSWindowOrderingMode::Above,
+            None,
+        );
+    }
+}
+
 pub(super) struct BrowserWindow {
     pub window: Window,
     chrome: WebView,
@@ -177,6 +317,8 @@ pub(super) struct BrowserWindow {
     ctl: std::sync::mpsc::Sender<HostCtl>,
     status: Status,
     always_on_top: bool,
+    /// Window stays hidden until chrome React posts chrome_ready / first .sb-chrome metrics.
+    chrome_shown: bool,
 }
 
 impl BrowserWindow {
@@ -208,7 +350,9 @@ impl BrowserWindow {
             .with_decorations(false)
             .with_transparent(true)
             .with_resizable(true)
-            .with_always_on_top(always_on_top);
+            .with_always_on_top(always_on_top)
+            // Hidden until chrome React has painted tabs (avoids empty "New Tab" flash).
+            .with_visible(false);
         if let Some(p) = &saved {
             if p.width >= 480 && p.width <= 4000 && p.height >= 320 && p.height <= 4000 {
                 builder = builder.with_inner_size(PhysicalSize::new(p.width, p.height));
@@ -227,7 +371,20 @@ impl BrowserWindow {
         }
         let window = builder.build(target)?;
         let mut context = WebContext::new(Some(profile_dir.clone()));
-        let initial = serde_json::to_string(status)?;
+        let mut boot_status = status.clone();
+        if boot_status.tabs.is_empty() {
+            boot_status.tabs.push(TabInfo {
+                id: "_boot".into(),
+                title: "New Tab".into(),
+                url: "about:blank".into(),
+                active: true,
+                loading: false,
+                favicon: None,
+                error: None,
+            });
+            boot_status.active_tab = Some("_boot".into());
+        }
+        let initial = serde_json::to_string(&boot_status)?;
         let ctl_chrome = ctl.clone();
         // Chrome is a *child* strip only — never a full-window webview (that painted
         // white over the page and made takeSnapshot look empty).
@@ -243,7 +400,7 @@ impl BrowserWindow {
                 "window.__komaOS='{}';window.__komaScreenBrowserInitial={initial};window.__komaScreenBrowserPalette={palette};\
                  window.addEventListener('koma-screen-browser',()=>{{}});\
                  document.addEventListener('DOMContentLoaded',()=>{{try{{window.dispatchEvent(new CustomEvent('koma-screen-browser',{{detail:window.__komaScreenBrowserInitial}}));window.dispatchEvent(new CustomEvent('koma-screen-browser-palette',{{detail:window.__komaScreenBrowserPalette}}));}}catch(e){{}}}});\
-                 (function(){{const report=()=>{{try{{const root=document.querySelector('main')||document.body; if(!root) return; const h=Math.ceil(root.getBoundingClientRect().height); if(h>0) window.ipc&&window.ipc.postMessage(JSON.stringify({{t:'sb',a:'chrome_metrics',h}}));}}catch(e){{}}}}; window.addEventListener('load',report); window.addEventListener('resize',report); new ResizeObserver(report).observe(document.documentElement); setTimeout(report,0); setTimeout(report,50); setTimeout(report,200);}})();",
+                 (function(){{const report=()=>{{try{{const root=document.querySelector('.sb-chrome'); if(!root) return; const h=Math.ceil(root.getBoundingClientRect().height); if(h>0) window.ipc&&window.ipc.postMessage(JSON.stringify({{t:'sb',a:'chrome_metrics',h}}));}}catch(e){{}}}}; window.addEventListener('load',report); window.addEventListener('resize',report); new ResizeObserver(report).observe(document.documentElement); setTimeout(report,0); setTimeout(report,50); setTimeout(report,200); setTimeout(report,500);}})();",
                 std::env::consts::OS
             ))
             .with_custom_protocol("koma".into(), |_, request| super::handle_koma_request(request))
@@ -305,6 +462,7 @@ impl BrowserWindow {
             ctl,
             status: status.clone(),
             always_on_top,
+            chrome_shown: false,
         };
         browser.open_tab(Some("about:blank".into()), true)?;
         browser.layout()?;
@@ -382,12 +540,25 @@ impl BrowserWindow {
         // Content first (lower z), chrome last (must stay above the page).
         for tab in &self.tabs {
             let is_active = Some(tab.id.as_str()) == active.as_deref();
-            let _ = tab.webview.set_visible(is_active);
-            if is_active {
-                let _ = tab.webview.set_bounds(Rect {
-                    position: LogicalPosition::new(0.0, chrome_h).into(),
-                    size: LogicalSize::new(logical_w.max(200.0), content_h).into(),
-                });
+            #[cfg(target_os = "macos")]
+            macos_layout_tab(
+                &tab.webview,
+                &self.chrome,
+                is_active,
+                0.0,
+                chrome_h,
+                logical_w.max(200.0),
+                content_h,
+            );
+            #[cfg(not(target_os = "macos"))]
+            {
+                let _ = tab.webview.set_visible(is_active);
+                if is_active {
+                    let _ = tab.webview.set_bounds(Rect {
+                        position: LogicalPosition::new(0.0, chrome_h).into(),
+                        size: LogicalSize::new(logical_w.max(200.0), content_h).into(),
+                    });
+                }
             }
         }
 
@@ -396,46 +567,8 @@ impl BrowserWindow {
             size: LogicalSize::new(logical_w.max(200.0), chrome_h).into(),
         });
         let _ = self.chrome.set_visible(true);
-        // macOS: later subviews paint above earlier ones. Re-add chrome so the
-        // strip cannot disappear under a content WKWebView after navigate/focus.
         #[cfg(target_os = "macos")]
-        {
-            use objc2_app_kit::{NSAutoresizingMaskOptions, NSView, NSWindowOrderingMode};
-            use objc2_web_kit::WKWebView;
-            use wry::WebViewExtMacOS;
-            let chrome_wv = self.chrome.webview();
-            let chrome_wk: &WKWebView = chrome_wv.as_ref();
-            let chrome_view: &NSView = chrome_wk.as_ref();
-            unsafe {
-                // Width-only flex; height stays the strip from set_bounds.
-                chrome_view.setAutoresizingMask(NSAutoresizingMaskOptions::ViewWidthSizable);
-                let active = self.active.as_deref();
-                for tab in &self.tabs {
-                    let tab_wv = tab.webview.webview();
-                    let tab_wk: &WKWebView = tab_wv.as_ref();
-                    let tab_view: &NSView = tab_wk.as_ref();
-                    // Freeze frame — layout() owns bounds. Stops page load stretching
-                    // the content child over the chrome strip (wry default MinYMargin).
-                    tab_view.setAutoresizingMask(NSAutoresizingMaskOptions::ViewNotSizable);
-                    if Some(tab.id.as_str()) == active {
-                        if let Some(parent) = chrome_view.superview() {
-                            parent.addSubview_positioned_relativeTo(
-                                chrome_view,
-                                NSWindowOrderingMode::Above,
-                                Some(tab_view),
-                            );
-                        }
-                    }
-                }
-                if let Some(parent) = chrome_view.superview() {
-                    parent.addSubview_positioned_relativeTo(
-                        chrome_view,
-                        NSWindowOrderingMode::Above,
-                        None,
-                    );
-                }
-            }
-        }
+        macos_pin_chrome(&self.chrome, &self.tabs, self.active.as_deref());
         Ok(())
     }
 
@@ -540,6 +673,8 @@ impl BrowserWindow {
         // (Chrome multi-tab style) and native takeSnapshot sees real page pixels.
         #[cfg(not(target_os = "linux"))]
         let webview = builder.build_as_child(&self.window)?;
+        #[cfg(target_os = "macos")]
+        macos_wrap_tab_in_clip(&webview)?;
 
         let loading = !crate::app::runtime::screen_browser::is_blank_url(&start);
         self.tabs.push(Tab {
@@ -801,6 +936,20 @@ impl BrowserWindow {
                         let _ = self.layout();
                     }
                 }
+                if !self.chrome_shown {
+                    self.chrome_shown = true;
+                    self.window.set_visible(true);
+                    let _ = self.layout();
+                }
+                self.push_status();
+            }
+            "chrome_ready" => {
+                if !self.chrome_shown {
+                    self.chrome_shown = true;
+                    self.window.set_visible(true);
+                    let _ = self.layout();
+                }
+                self.push_status();
             }
             // Manual chrome screenshots → stage into chat composer as [Image #N].
             "shot" | "shot_full" => {
