@@ -705,7 +705,7 @@ pub(super) fn push_loop(
                     action,
                     window: _,
                     prefs,
-                    url: _,
+                    url,
                     tab_id: _,
                     tabs,
                     active_tab,
@@ -714,6 +714,11 @@ pub(super) fn push_loop(
                 }) => {
                     if remote_ctx.is_some() {
                         push(serde_json::json!({"k":"ScreenBrowserError","message":"On-screen browser is limited to local GUI sessions"}).to_string());
+                    } else if action == "composer_attach" {
+                        // Manual chrome shot: path in `url` → daemon paste → composer chip.
+                        if let Some(path) = url.filter(|p| !p.trim().is_empty()) {
+                            let _ = req_tx.send(ClientRequest::Paste { text: path });
+                        }
                     } else {
                         use crate::app::runtime::screen_browser::{Capabilities, Control, Prefs};
                         let control = match action.as_str() {

@@ -1,12 +1,13 @@
 import { useEffect, useRef, useState, type MouseEvent, type ReactNode } from 'react'
 import {
   ArrowLeft,
-  ArrowRight, ChevronLeft, ChevronRight, LoaderCircle, Plus, RefreshCw, Square, X,
+  ArrowRight, Camera, ChevronLeft, ChevronRight, FileImage, LoaderCircle, Plus, RefreshCw, Square, X,
 } from 'lucide-react'
 import type { ScreenBrowserStatus, ScreenBrowserTab } from '../types/screenBrowser'
 
 type SbAction =
   | 'navigate' | 'open' | 'close' | 'select' | 'reload' | 'back' | 'forward' | 'stop'
+  | 'shot' | 'shot_full'
   | 'continue_human'
   | 'win_drag' | 'win_min' | 'win_max' | 'win_close'
 
@@ -335,6 +336,18 @@ export function ScreenBrowserChrome() {
           >
             Go
           </button>
+          <IconBtn
+            label="Screenshot visible page"
+            onClick={() => post('shot', { tab_id: activeId ?? undefined })}
+          >
+            <Camera size={13} />
+          </IconBtn>
+          <IconBtn
+            label="Screenshot full page"
+            onClick={() => post('shot_full', { tab_id: activeId ?? undefined })}
+          >
+            <FileImage size={13} />
+          </IconBtn>
         </form>
       </div>
 

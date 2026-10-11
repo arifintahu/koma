@@ -172,6 +172,8 @@ pub(super) struct BrowserWindow {
     profile_dir: std::path::PathBuf,
     /// `store::pwd_hash` of the workdir this profile belongs to.
     pwd_hash: String,
+    /// Project workdir (for `.screenshoot/` catalog + composer attach context).
+    workdir: std::path::PathBuf,
     ctl: std::sync::mpsc::Sender<HostCtl>,
     status: Status,
     always_on_top: bool,
@@ -299,6 +301,7 @@ impl BrowserWindow {
             preferences,
             profile_dir,
             pwd_hash: hash,
+            workdir: workdir.to_path_buf(),
             ctl,
             status: status.clone(),
             always_on_top,
@@ -774,6 +777,22 @@ impl BrowserWindow {
                     }
                 }
             }
+            // Manual chrome screenshots → stage into chat composer as [Image #N].
+            "shot" | "shot_full" => {
+                let full_page = action == "shot_full";
+                let path = self.capture_to_composer(tab_id.as_deref(), full_page)?;
+                let _ = self.ctl.send(HostCtl::ScreenBrowser {
+                    action: "composer_attach".into(),
+                    window: None,
+                    prefs: None,
+                    url: Some(path),
+                    tab_id: None,
+                    tabs: None,
+                    active_tab: None,
+                    window_open: true,
+                    reply: None,
+                });
+            }
             // Frameless window chrome (same contract as main koma titlebar).
             "win_drag" => {
                 let _ = self.window.drag_window();
@@ -991,6 +1010,51 @@ impl BrowserWindow {
             capture_quality: quality.into(),
         };
         Ok((obs, png))
+    }
+
+    /// Manual chrome button: capture page PNG, save under `.screenshoot/`, return
+    /// absolute path so the host can `Paste` it into the chat composer as an attachment.
+    fn capture_to_composer(&mut self, tab_id: Option<&str>, full_page: bool) -> Result<String> {
+        let (obs, png) = self.observe(tab_id, full_page)?;
+        let kind = if full_page { "full" } else { "view" };
+        let host = obs
+            .url
+            .trim()
+            .trim_start_matches("https://")
+            .trim_start_matches("http://")
+            .split(['/', '?', '#'])
+            .next()
+            .unwrap_or("page")
+            .chars()
+            .map(|c| {
+                if c.is_ascii_alphanumeric() || c == '.' || c == '-' {
+                    c
+                } else {
+                    '_'
+                }
+            })
+            .take(40)
+            .collect::<String>();
+        let host = if host.is_empty() {
+            "page".into()
+        } else {
+            host
+        };
+        let ts = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
+        let stem = format!("sb_{kind}_{host}_{ts}");
+        let dir = self.workdir.join(".screenshoot");
+        std::fs::create_dir_all(&dir).context("create .screenshoot")?;
+        let path = dir.join(format!("{stem}.png"));
+        std::fs::write(&path, &png).context("write screenshot png")?;
+        let _ = crate::model::screenshot_catalog::register_screenshot(
+            &self.workdir,
+            &stem,
+            &obs.url,
+        );
+        Ok(path.to_string_lossy().into_owned())
     }
 
     fn run_actions(&mut self, tab_id: Option<&str>, actions: &[Action]) -> Result<usize> {
