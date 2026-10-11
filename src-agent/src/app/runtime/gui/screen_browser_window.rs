@@ -16,9 +16,106 @@ use tao::{
 };
 use wry::{NewWindowResponse, PageLoadEvent, Rect, WebContext, WebView, WebViewBuilder};
 
+/// New-tab welcome (about:blank) — koma logo + short copy, no chrome border.
+fn welcome_html() -> String {
+    use base64::Engine;
+    let logo = base64::engine::general_purpose::STANDARD.encode(include_bytes!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../assets/icon-128.png"
+    )));
+    format!(
+        r##"<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>New Tab</title>
+<style>
+  :root {{
+    color-scheme: dark light;
+    --bg: #0b0e14;
+    --fg: #c8d3f5;
+    --dim: #8b93a7;
+    --accent: #39ff14;
+    --panel: #151922;
+  }}
+  @media (prefers-color-scheme: light) {{
+    :root {{
+      --bg: #f4f5f8;
+      --fg: #1a1d27;
+      --dim: #6b7280;
+      --accent: #1a9e2e;
+      --panel: #ffffff;
+    }}
+  }}
+  * {{ box-sizing: border-box; margin: 0; padding: 0; }}
+  html, body {{
+    height: 100%;
+    background: var(--bg);
+    color: var(--fg);
+    font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  }}
+  body {{
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 100%;
+    padding: 2rem;
+  }}
+  .card {{
+    text-align: center;
+    max-width: 28rem;
+  }}
+  .logo {{
+    width: 72px; height: 72px;
+    border-radius: 18px;
+    display: block;
+    margin: 0 auto 1.25rem;
+    box-shadow: 0 8px 28px color-mix(in srgb, var(--fg) 12%, transparent);
+  }}
+  h1 {{
+    font-size: 1.35rem;
+    font-weight: 650;
+    letter-spacing: -0.02em;
+    margin-bottom: 0.4rem;
+  }}
+  p {{
+    color: var(--dim);
+    font-size: 0.95rem;
+    line-height: 1.5;
+  }}
+  .hint {{
+    margin-top: 1.5rem;
+    font-size: 0.8rem;
+    color: var(--dim);
+    opacity: 0.85;
+  }}
+  kbd {{
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 0.78em;
+    padding: 0.12em 0.4em;
+    border-radius: 4px;
+    background: color-mix(in srgb, var(--fg) 8%, var(--bg));
+  }}
+</style>
+</head>
+<body>
+  <div class="card">
+    <img class="logo" width="72" height="72" alt="koma" src="data:image/png;base64,{logo}"/>
+    <h1>koma browser</h1>
+    <p>Type a URL or search in the address bar to get started.</p>
+    <p class="hint">New tab · <kbd>about:blank</kbd></p>
+  </div>
+</body>
+</html>
+"##
+    )
+}
+
 /// Fallback chrome strip height (tabs + address bar). Overwritten when the
 /// chrome webview reports its measured height so no black gap remains.
-const CHROME_H_DEFAULT: f64 = 70.0;
+/// Tabs-in-titlebar + address row (measured live via chrome_metrics).
+const CHROME_H_DEFAULT: f64 = 88.0;
 
 /// Desktop browser UA so sites treat the page like a normal browser (not a bot/webview).
 /// macOS uses a Safari-shaped UA (we are WKWebView) so Google WebAuthn/passkey prompts
@@ -105,6 +202,10 @@ impl BrowserWindow {
             .with_inner_size(PhysicalSize::new(1100, 760))
             .with_min_inner_size(PhysicalSize::new(480, 320))
             .with_focused(true)
+            // Match main koma: frameless + transparent so chrome owns the title tab bar.
+            .with_decorations(false)
+            .with_transparent(true)
+            .with_resizable(true)
             .with_always_on_top(always_on_top);
         if let Some(p) = &saved {
             if p.width >= 480 && p.width <= 4000 && p.height >= 320 && p.height <= 4000 {
@@ -134,13 +235,14 @@ impl BrowserWindow {
                 position: LogicalPosition::new(0.0, 0.0).into(),
                 size: LogicalSize::new(1100.0, CHROME_H_DEFAULT).into(),
             })
-            .with_background_color((11, 14, 20, 255))
+            .with_background_color((0, 0, 0, 0))
             .with_navigation_handler(|url| super::allow_webview_navigation(&url))
             .with_initialization_script(format!(
-                "window.__komaScreenBrowserInitial={initial};window.__komaScreenBrowserPalette={palette};\
+                "window.__komaOS='{}';window.__komaScreenBrowserInitial={initial};window.__komaScreenBrowserPalette={palette};\
                  window.addEventListener('koma-screen-browser',()=>{{}});\
-                 document.addEventListener('DOMContentLoaded',()=>{{try{{window.dispatchEvent(new CustomEvent('koma-screen-browser',{{detail:window.__komaScreenBrowserInitial}}));}}catch(e){{}}}});\
-                 (function(){{const report=()=>{{try{{const root=document.querySelector('main')||document.body; if(!root) return; const h=Math.ceil(root.getBoundingClientRect().height); if(h>0) window.ipc&&window.ipc.postMessage(JSON.stringify({{t:'sb',a:'chrome_metrics',h}}));}}catch(e){{}}}}; window.addEventListener('load',report); window.addEventListener('resize',report); new ResizeObserver(report).observe(document.documentElement); setTimeout(report,0); setTimeout(report,50); setTimeout(report,200);}})();"
+                 document.addEventListener('DOMContentLoaded',()=>{{try{{window.dispatchEvent(new CustomEvent('koma-screen-browser',{{detail:window.__komaScreenBrowserInitial}}));window.dispatchEvent(new CustomEvent('koma-screen-browser-palette',{{detail:window.__komaScreenBrowserPalette}}));}}catch(e){{}}}});\
+                 (function(){{const report=()=>{{try{{const root=document.querySelector('main')||document.body; if(!root) return; const h=Math.ceil(root.getBoundingClientRect().height); if(h>0) window.ipc&&window.ipc.postMessage(JSON.stringify({{t:'sb',a:'chrome_metrics',h}}));}}catch(e){{}}}}; window.addEventListener('load',report); window.addEventListener('resize',report); new ResizeObserver(report).observe(document.documentElement); setTimeout(report,0); setTimeout(report,50); setTimeout(report,200);}})();",
+                std::env::consts::OS
             ))
             .with_custom_protocol("koma".into(), |_, request| super::handle_koma_request(request))
             .with_ipc_handler(move |request| {
@@ -226,6 +328,13 @@ impl BrowserWindow {
         self.always_on_top
     }
 
+    /// Live theme push from the main GUI host (same palette as chat chrome).
+    pub fn palette(&self, palette: &serde_json::Value) {
+        let _ = self.chrome.evaluate_script(&format!(
+            "window.__komaScreenBrowserPalette={palette};window.dispatchEvent(new CustomEvent('koma-screen-browser-palette',{{detail:window.__komaScreenBrowserPalette}}));"
+        ));
+    }
+
     /// Project key this window's cookies/storage belong to (`store::pwd_hash`).
     pub fn pwd_hash(&self) -> &str {
         &self.pwd_hash
@@ -259,21 +368,46 @@ impl BrowserWindow {
         let scale = self.window.scale_factor();
         let logical_w = size.width as f64 / scale;
         let logical_h = size.height as f64 / scale;
-        let chrome_h = self.chrome_h.clamp(48.0, logical_h.max(48.0));
-        let _ = self.chrome.set_bounds(Rect {
-            position: LogicalPosition::new(0.0, 0.0).into(),
-            size: LogicalSize::new(logical_w, chrome_h.min(logical_h)).into(),
-        });
+        // Keep chrome strip tight: never more than ~1/3 of the window, never tiny.
+        let chrome_h = self
+            .chrome_h
+            .clamp(64.0, (logical_h * 0.35).clamp(64.0, 160.0));
+        self.chrome_h = chrome_h;
         let content_h = (logical_h - chrome_h).max(40.0);
         let active = self.active.clone();
+
+        // Content first (lower z), chrome last (must stay above the page).
         for tab in &self.tabs {
             let is_active = Some(tab.id.as_str()) == active.as_deref();
             let _ = tab.webview.set_visible(is_active);
             if is_active {
                 let _ = tab.webview.set_bounds(Rect {
                     position: LogicalPosition::new(0.0, chrome_h).into(),
-                    size: LogicalSize::new(logical_w, content_h).into(),
+                    size: LogicalSize::new(logical_w.max(200.0), content_h).into(),
                 });
+            }
+        }
+
+        let _ = self.chrome.set_bounds(Rect {
+            position: LogicalPosition::new(0.0, 0.0).into(),
+            size: LogicalSize::new(logical_w.max(200.0), chrome_h).into(),
+        });
+        let _ = self.chrome.set_visible(true);
+        // macOS: later subviews paint above earlier ones. Re-add chrome so the
+        // strip cannot disappear under a content WKWebView after navigate/focus.
+        #[cfg(target_os = "macos")]
+        {
+            use objc2_app_kit::NSView;
+            use objc2_web_kit::WKWebView;
+            use wry::WebViewExtMacOS;
+            let chrome_wv = self.chrome.webview();
+            // WryWebView → WKWebView → NSView
+            let wk: &WKWebView = chrome_wv.as_ref();
+            let chrome_view: &NSView = wk.as_ref();
+            unsafe {
+                if let Some(parent) = chrome_view.superview() {
+                    parent.addSubview(chrome_view);
+                }
             }
         }
         Ok(())
@@ -298,17 +432,27 @@ impl BrowserWindow {
         let logical_h = size.height as f64 / scale;
         let chrome_h = self.chrome_h;
         let content_h = (logical_h - chrome_h).max(40.0);
+        let blank = crate::app::runtime::screen_browser::is_blank_url(&start);
         // GPU compositing is on by default in WKWebView / WebView2 / WebKitGTK.
         // WebGPU is available when the OS webview supports it (Safari 17+ / Edge 113+).
-        let builder = WebViewBuilder::new_with_web_context(&mut self.context)
-            .with_url(&start)
+        let mut builder = WebViewBuilder::new_with_web_context(&mut self.context)
             .with_user_agent(chrome_user_agent())
-            .with_background_color((255, 255, 255, 255))
+            .with_background_color(if blank {
+                (11, 14, 20, 255)
+            } else {
+                (255, 255, 255, 255)
+            })
             .with_back_forward_navigation_gestures(true)
             .with_bounds(Rect {
                 position: LogicalPosition::new(0.0, chrome_h).into(),
                 size: LogicalSize::new(logical_w.max(200.0), content_h).into(),
-            })
+            });
+        builder = if blank {
+            builder.with_html(welcome_html())
+        } else {
+            builder.with_url(&start)
+        };
+        let builder = builder
             .with_navigation_handler(move |u| {
                 let ok = allow_content_url(&u);
                 if !ok {
@@ -371,16 +515,20 @@ impl BrowserWindow {
         #[cfg(not(target_os = "linux"))]
         let webview = builder.build_as_child(&self.window)?;
 
-        let loading = start != "about:blank";
+        let loading = !crate::app::runtime::screen_browser::is_blank_url(&start);
         self.tabs.push(Tab {
             id: id.clone(),
             webview,
-            title: if start == "about:blank" {
+            title: if crate::app::runtime::screen_browser::is_blank_url(&start) {
                 "New Tab".into()
             } else {
                 start.clone()
             },
-            url: start,
+            url: if crate::app::runtime::screen_browser::is_blank_url(&start) {
+                "about:blank".into()
+            } else {
+                start
+            },
             loading,
             error: None,
         });
@@ -489,24 +637,41 @@ impl BrowserWindow {
             "navigate" => {
                 let mut u = url.ok_or_else(|| anyhow::anyhow!("url required"))?;
                 // User address bar: bare hosts get https:// (same as chrome UI).
-                if !u.contains("://") && u != "about:blank" {
+                if !u.contains("://") && !crate::app::runtime::screen_browser::is_blank_url(&u) {
                     u = format!("https://{u}");
                 }
                 validate_content_url(&u)?;
+                let blank = crate::app::runtime::screen_browser::is_blank_url(&u);
                 let tab = self.tab_mut(tab_id.as_deref())?;
-                tab.url = u.clone();
-                tab.title = u.clone();
-                tab.loading = true;
+                tab.url = if blank {
+                    "about:blank".into()
+                } else {
+                    u.clone()
+                };
+                tab.title = if blank { "New Tab".into() } else { u.clone() };
+                tab.loading = !blank;
                 tab.error = None;
-                tab.webview.load_url(&u)?;
+                if blank {
+                    tab.webview.load_html(&welcome_html())?;
+                } else {
+                    tab.webview.load_url(&u)?;
+                }
+                let _ = self.layout();
                 self.push_status();
             }
             "reload" => {
                 let tab = self.tab_mut(tab_id.as_deref())?;
                 let u = tab.url.clone();
-                tab.loading = true;
+                let blank = crate::app::runtime::screen_browser::is_blank_url(&u);
+                tab.loading = !blank;
                 tab.error = None;
-                tab.webview.load_url(&u)?;
+                if blank {
+                    tab.webview.load_html(&welcome_html())?;
+                    tab.loading = false;
+                    tab.title = "New Tab".into();
+                } else {
+                    tab.webview.load_url(&u)?;
+                }
                 self.push_status();
             }
             "stop" => {
@@ -531,9 +696,27 @@ impl BrowserWindow {
             "page_started" => {
                 if let Some(id) = tab_id {
                     if let Some(t) = self.tabs.iter_mut().find(|t| t.id == id) {
-                        t.loading = true;
                         if let Some(u) = url.filter(|u| allow_content_url(u)) {
-                            t.url = u;
+                            // Keep about:blank as the canonical empty URL even if the
+                            // engine reports a data:/file: shell from load_html.
+                            if crate::app::runtime::screen_browser::is_blank_url(&u)
+                                || crate::app::runtime::screen_browser::is_blank_url(&t.url)
+                            {
+                                // Don't overwrite a real page URL with engine noise while
+                                // staying on welcome; only accept blank → blank.
+                                if crate::app::runtime::screen_browser::is_blank_url(&t.url) {
+                                    t.url = "about:blank".into();
+                                    t.loading = false;
+                                } else if !crate::app::runtime::screen_browser::is_blank_url(&u) {
+                                    t.url = u;
+                                    t.loading = true;
+                                }
+                            } else {
+                                t.url = u;
+                                t.loading = true;
+                            }
+                        } else if !crate::app::runtime::screen_browser::is_blank_url(&t.url) {
+                            t.loading = true;
                         }
                         t.error = None;
                     }
@@ -545,9 +728,23 @@ impl BrowserWindow {
                     if let Some(t) = self.tabs.iter_mut().find(|t| t.id == id) {
                         t.loading = false;
                         if let Some(u) = url.filter(|u| allow_content_url(u)) {
-                            t.url = u;
+                            if crate::app::runtime::screen_browser::is_blank_url(&u) {
+                                t.url = "about:blank".into();
+                                if t.title.trim().is_empty() {
+                                    t.title = "New Tab".into();
+                                }
+                            } else if !crate::app::runtime::screen_browser::is_blank_url(&t.url)
+                                || !u.is_empty()
+                            {
+                                // Prefer real navigations; ignore engine blank after welcome html.
+                                if !crate::app::runtime::screen_browser::is_blank_url(&u) {
+                                    t.url = u;
+                                }
+                            }
                         }
                     }
+                    // Page paint can reorder child WKWebViews — pin chrome on top.
+                    let _ = self.layout();
                     self.push_status();
                 }
             }
@@ -555,7 +752,12 @@ impl BrowserWindow {
                 if let Some(id) = tab_id {
                     if let Some(t) = self.tabs.iter_mut().find(|t| t.id == id) {
                         if let Some(title) = url.filter(|s| !s.trim().is_empty()) {
-                            t.title = title;
+                            // Welcome html title is "New Tab"; keep that for blank shells.
+                            if crate::app::runtime::screen_browser::is_blank_url(&t.url) {
+                                t.title = "New Tab".into();
+                            } else {
+                                t.title = title;
+                            }
                         }
                     }
                     self.push_status();
@@ -564,14 +766,25 @@ impl BrowserWindow {
             "chrome_metrics" => {
                 // `url` carries the measured height string from the IPC bridge.
                 if let Some(h) = url.and_then(|s| s.parse::<f64>().ok()) {
-                    // Clamp: toolbar is never tiny and never most of the window.
-                    let next = h.clamp(48.0, 160.0);
+                    // Clamp: title-tab strip + toolbar; never most of the window.
+                    let next = h.clamp(64.0, 200.0);
                     if (next - self.chrome_h).abs() >= 0.5 {
                         self.chrome_h = next;
                         let _ = self.layout();
                     }
                 }
             }
+            // Frameless window chrome (same contract as main koma titlebar).
+            "win_drag" => {
+                let _ = self.window.drag_window();
+            }
+            "win_min" => {
+                self.window.set_minimized(true);
+            }
+            "win_max" => {
+                self.window.set_maximized(!self.window.is_maximized());
+            }
+            // win_close is handled in the GUI event loop (drops BrowserWindow + stop).
             "pause" | "resume" | "take_over" | "stop_browser" | "continue_human" => {
                 let mapped = match action {
                     "stop_browser" => "stop",

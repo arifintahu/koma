@@ -1,31 +1,43 @@
-import { useEffect, useRef, useState, type ReactNode } from 'react'
+import { useEffect, useRef, useState, type MouseEvent, type ReactNode } from 'react'
 import {
   ArrowLeft,
-  ArrowRight, ChevronLeft, ChevronRight, Globe, LoaderCircle, Plus, RefreshCw, Square, X,
+  ArrowRight, ChevronLeft, ChevronRight, LoaderCircle, Plus, RefreshCw, Square, X,
 } from 'lucide-react'
 import type { ScreenBrowserStatus, ScreenBrowserTab } from '../types/screenBrowser'
 
 type SbAction =
   | 'navigate' | 'open' | 'close' | 'select' | 'reload' | 'back' | 'forward' | 'stop'
   | 'continue_human'
+  | 'win_drag' | 'win_min' | 'win_max' | 'win_close'
 
 function post(action: SbAction, extra?: { url?: string; tab_id?: string }) {
   window.ipc?.postMessage(JSON.stringify({ t: 'sb', a: action, ...extra }))
 }
 
-function applyPalette(palette: Record<string, string>) {
-  for (const key of ['bg', 'fg', 'dim', 'accent', 'panel', 'warn', 'success', 'info', 'error', 'border', 'hover', 'panel2']) {
+function applyPalette(palette: Record<string, unknown> | null | undefined) {
+  if (!palette || typeof palette !== 'object') return
+  // Same roles as main GUI `applyPaletteVars` (store/initial.ts) / ComputerViewer.
+  const root = document.documentElement.style
+  for (const key of ['bg', 'fg', 'dim', 'accent', 'panel', 'warn', 'success', 'info', 'error'] as const) {
     const color = palette[key]
     if (typeof color === 'string' && /^#[0-9a-fA-F]{6}$/.test(color)) {
-      document.documentElement.style.setProperty(`--koma-${key}`, color)
+      root.setProperty(`--koma-${key}`, color)
     }
+  }
+  if (typeof palette.dark === 'boolean') {
+    document.documentElement.dataset.theme = palette.dark ? 'dark' : 'light'
   }
 }
 
+function platformOs(): 'macos' | 'linux' | 'windows' {
+  const os = window.__komaOS
+  return os === 'macos' || os === 'windows' ? os : 'linux'
+}
+
 const CHEVRON_ON =
-  'mb-0.5 flex h-6 w-5 flex-none items-center justify-center rounded text-koma-fg opacity-60 hover:bg-koma-hover hover:opacity-100'
+  'mb-0 flex h-7 w-5 flex-none items-center justify-center rounded text-koma-fg opacity-60 hover:bg-koma-hover hover:opacity-100'
 const CHEVRON_OFF =
-  'mb-0.5 flex h-6 w-5 flex-none items-center justify-center rounded text-koma-fg pointer-events-none opacity-0'
+  'mb-0 flex h-7 w-5 flex-none items-center justify-center rounded text-koma-fg pointer-events-none opacity-0'
 
 function paintChevron(button: HTMLButtonElement | null, enabled: boolean) {
   if (!button) return
@@ -36,8 +48,8 @@ function paintChevron(button: HTMLButtonElement | null, enabled: boolean) {
 }
 
 /**
- * Normal-browser chrome only: tabs + back/forward/reload + address bar.
- * Agent pause/stop live on the main koma titlebar / Settings — not here.
+ * Frameless Chrome-like strip: traffic lights + tabs in the title drag region,
+ * then nav + address bar. Theme tokens come from the host palette.
  */
 export function ScreenBrowserChrome() {
   const [status, setStatus] = useState<ScreenBrowserStatus | null>(window.__komaScreenBrowserInitial ?? null)
@@ -47,34 +59,36 @@ export function ScreenBrowserChrome() {
   const leftChevronRef = useRef<HTMLButtonElement>(null)
   const rightChevronRef = useRef<HTMLButtonElement>(null)
   const overflowRef = useRef({ left: false, right: false })
+  const os = platformOs()
 
   useEffect(() => {
-    // Hard defaults so chrome never paints as empty white-on-white before palette arrives.
     document.documentElement.style.setProperty('--koma-bg', document.documentElement.style.getPropertyValue('--koma-bg') || '#0b0e14')
     document.documentElement.style.setProperty('--koma-fg', document.documentElement.style.getPropertyValue('--koma-fg') || '#c8d3f5')
+    document.documentElement.classList.add(`os-${os}`)
+    // Match main app canvas rounding on macOS frameless windows.
+    document.documentElement.style.background = 'transparent'
+    if (document.body) document.body.style.background = 'transparent'
     setStatus(window.__komaScreenBrowserInitial ?? null)
-    applyPalette(window.__komaScreenBrowserPalette ?? {})
+    applyPalette(window.__komaScreenBrowserPalette as Record<string, unknown> | undefined)
     const receive = (event: Event) => {
       const next = (event as CustomEvent<ScreenBrowserStatus>).detail
       setStatus(next ?? null)
     }
-    const palette = (event: Event) => applyPalette((event as CustomEvent<Record<string, string>>).detail)
+    const palette = (event: Event) => applyPalette((event as CustomEvent<Record<string, unknown>>).detail)
     window.addEventListener('koma-screen-browser', receive)
     window.addEventListener('koma-screen-browser-palette', palette)
     return () => {
       window.removeEventListener('koma-screen-browser', receive)
       window.removeEventListener('koma-screen-browser-palette', palette)
     }
-  }, [])
+  }, [os])
 
   useEffect(() => {
     const active = status?.tabs.find(t => t.id === status.active_tab) ?? status?.tabs.find(t => t.active)
-    // Don't clobber while the user is typing in the address bar.
     if (document.activeElement === inputRef.current) return
     setUrlDraft(active?.url ?? '')
   }, [status?.active_tab, status?.tabs])
 
-  // DOM-only overflow chevrons (same pattern as main TabBar — no setState).
   useEffect(() => {
     const el = tabStripRef.current
     if (!el) return
@@ -123,20 +137,46 @@ export function ScreenBrowserChrome() {
     el.scrollBy({ left: dir * Math.max(120, el.clientWidth * 0.6), behavior: 'smooth' })
   }
 
+  const openNewTab = () => {
+    post('open', { url: 'about:blank' })
+    setUrlDraft('')
+    queueMicrotask(() => {
+      inputRef.current?.focus()
+    })
+  }
+
+  /** Empty chrome / tab gutter starts a window drag (not buttons / inputs). */
+  function handleTitleDrag(e: MouseEvent<HTMLElement>) {
+    if (e.button !== 0) return
+    const target = e.target as HTMLElement
+    if (target.closest('button, a, input, [data-no-drag]')) return
+    if (e.detail === 2) {
+      post('win_max')
+      return
+    }
+    post('win_drag')
+  }
+
   return (
     <main
-      className="flex h-full flex-col overflow-hidden text-koma-fg select-none"
-      style={{ background: 'var(--koma-bg, #0b0e14)', color: 'var(--koma-fg, #c8d3f5)', height: 'fit-content' }}
+      className="sb-chrome flex flex-col overflow-hidden bg-koma-bg text-koma-fg select-none"
+      style={{
+        height: 'fit-content',
+        width: '100%',
+        borderTopLeftRadius: os === 'macos' ? 12 : 10,
+        borderTopRightRadius: os === 'macos' ? 12 : 10,
+      }}
     >
       {waiting && (
-        <div role="status" className="flex items-center gap-2 border-b border-koma-warn/40 bg-koma-warn/15 px-3 py-1.5 text-[11px]">
+        <div role="status" className="flex items-center gap-2 border-b border-koma-warn/40 bg-koma-warn/15 px-3 py-1.5 text-[11px] text-koma-fg">
           <span className="font-medium">Waiting for you</span>
-          <span className="min-w-0 flex-1 truncate opacity-70">
+          <span className="min-w-0 flex-1 truncate text-koma-dim">
             {status?.waiting_message || 'Finish login / CAPTCHA / 2FA, then continue.'}
           </span>
           <button
             type="button"
-            className="inline-flex items-center gap-1 rounded border border-koma-border bg-koma-panel px-2 py-0.5 text-[11px] hover:bg-koma-hover"
+            data-no-drag
+            className="inline-flex items-center gap-1 rounded border border-koma-border bg-koma-panel px-2 py-0.5 text-[11px] text-koma-fg hover:bg-koma-hover"
             onClick={() => post('continue_human')}
           >
             Continue
@@ -144,14 +184,37 @@ export function ScreenBrowserChrome() {
         </div>
       )}
 
-      {/* Tab strip — chevrons like main koma TabBar; + after last tab */}
+      {/* Title tab strip — gutter is the drag region; only chips/buttons block drag. */}
       <div
-        className="flex min-h-0 flex-none items-end gap-0.5 border-b border-koma-border px-1 pt-1"
-        style={{ background: 'color-mix(in srgb, var(--koma-fg, #c8d3f5) 4%, var(--koma-bg, #0b0e14))' }}
+        className="sb-titlebar flex min-h-0 flex-none items-end gap-1 bg-koma-panel2 px-1.5 pt-1.5"
+        onMouseDown={handleTitleDrag}
       >
+        <div
+          id="winctl"
+          className={`mb-1.5 flex flex-none items-center ${os === 'macos' ? 'order-first gap-2 pl-1 pr-2' : 'order-last gap-0.5 pl-1'}`}
+          data-no-drag
+        >
+          {os === 'macos'
+            ? (
+              <>
+                <button type="button" id="btn-close" className="sb-traffic sb-close" aria-label="Close" title="Close" onClick={() => post('win_close')} />
+                <button type="button" id="btn-min" className="sb-traffic sb-min" aria-label="Minimize" title="Minimize" onClick={() => post('win_min')} />
+                <button type="button" id="btn-max" className="sb-traffic sb-max" aria-label="Maximize" title="Maximize" onClick={() => post('win_max')} />
+              </>
+              )
+            : (
+              <>
+                <button type="button" className="sb-winbtn" aria-label="Minimize" title="Minimize" onClick={() => post('win_min')}>&#x2013;</button>
+                <button type="button" className="sb-winbtn" aria-label="Maximize" title="Maximize" onClick={() => post('win_max')}>&#x2610;</button>
+                <button type="button" className="sb-winbtn sb-winclose" aria-label="Close" title="Close" onClick={() => post('win_close')}>&#x2715;</button>
+              </>
+              )}
+        </div>
+
         <button
           ref={leftChevronRef}
           type="button"
+          data-no-drag
           onClick={() => scrollTabs(-1)}
           aria-label="Scroll tabs left"
           title="Scroll tabs left"
@@ -161,12 +224,14 @@ export function ScreenBrowserChrome() {
         >
           <ChevronLeft size={14} />
         </button>
+
+        {/* flex-1 strip: tabs hug content; leftover gray is window-drag (no data-no-drag). */}
         <div
           ref={tabStripRef}
-          className="flex min-w-0 flex-1 items-end gap-0.5 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+          className="flex min-w-0 flex-1 items-end gap-0 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
         >
           {tabs.length === 0 && (
-            <div className="mb-0.5 px-2 py-1 text-[11px] opacity-50">New Tab</div>
+            <div className="mb-0 px-3 py-1.5 text-[11px] text-koma-dim">New Tab</div>
           )}
           {tabs.map(tab => (
             <TabChip
@@ -181,15 +246,18 @@ export function ScreenBrowserChrome() {
             type="button"
             title="New tab"
             aria-label="New tab"
-            className="mb-0.5 flex h-6 w-6 flex-none items-center justify-center rounded opacity-70 hover:bg-koma-hover hover:opacity-100"
-            onClick={() => post('open', { url: 'about:blank' })}
+            data-no-drag
+            className="mb-1 ml-0.5 flex h-6 w-6 flex-none items-center justify-center rounded-md text-koma-dim hover:bg-koma-hover hover:text-koma-fg"
+            onClick={openNewTab}
           >
-            <Plus size={13} />
+            <Plus size={14} />
           </button>
         </div>
+
         <button
           ref={rightChevronRef}
           type="button"
+          data-no-drag
           onClick={() => scrollTabs(1)}
           aria-label="Scroll tabs right"
           title="Scroll tabs right"
@@ -201,11 +269,8 @@ export function ScreenBrowserChrome() {
         </button>
       </div>
 
-      {/* Navigation + address bar */}
-      <div
-        className="flex flex-none items-center gap-1 border-b border-koma-border px-1.5 py-1"
-        style={{ background: 'color-mix(in srgb, var(--koma-fg, #c8d3f5) 6%, var(--koma-bg, #0b0e14))' }}
-      >
+      {/* Navigation + address bar — sits on canvas bg like main content under TabBar */}
+      <div className="flex flex-none items-center gap-1 bg-koma-bg px-2 py-1.5">
         <IconBtn label="Back" onClick={() => post('back', { tab_id: activeId ?? undefined })}>
           <ArrowLeft size={13} />
         </IconBtn>
@@ -227,13 +292,19 @@ export function ScreenBrowserChrome() {
           className="flex min-w-0 flex-1 items-center gap-1"
           onSubmit={e => { e.preventDefault(); go() }}
         >
-          <div
-            className="flex min-w-0 flex-1 items-center gap-1.5 rounded-md border border-koma-border px-2 py-1"
-            style={{ background: 'var(--koma-bg, #0b0e14)' }}
-          >
+          <div className="flex min-w-0 flex-1 items-center gap-1.5 rounded-full bg-koma-panel2 px-3 py-1">
             {loading
               ? <LoaderCircle size={12} className="shrink-0 animate-spin text-koma-accent" />
-              : <Globe size={12} className="shrink-0 opacity-50" />}
+              : (
+                <img
+                  src="koma://localhost/product-icon.png"
+                  alt=""
+                  width={12}
+                  height={12}
+                  className="shrink-0 rounded-[3px] opacity-90"
+                  draggable={false}
+                />
+                )}
             <input
               ref={inputRef}
               value={urlDraft}
@@ -248,7 +319,7 @@ export function ScreenBrowserChrome() {
               }}
               spellCheck={false}
               autoComplete="off"
-              className="min-w-0 flex-1 bg-transparent text-[12px] outline-none placeholder:opacity-40"
+              className="min-w-0 flex-1 bg-transparent text-[12px] text-koma-fg outline-none ring-0 placeholder:text-koma-dim placeholder:opacity-70 focus:outline-none focus:ring-0"
               placeholder="Search or enter address"
               aria-label="Address bar"
             />
@@ -260,49 +331,86 @@ export function ScreenBrowserChrome() {
           </div>
           <button
             type="submit"
-            className="rounded-md border border-koma-border px-2 py-1 text-[11px] hover:bg-koma-hover"
-            style={{ background: 'color-mix(in srgb, var(--koma-fg, #c8d3f5) 6%, var(--koma-bg, #0b0e14))' }}
+            className="rounded-full bg-koma-panel px-3 py-1 text-[11px] text-koma-fg hover:bg-koma-hover"
           >
             Go
           </button>
         </form>
       </div>
+
+      <style>{`
+        .sb-traffic {
+          width: 12px; height: 12px; border-radius: 50%; border: none; padding: 0;
+          cursor: pointer; flex: none;
+        }
+        .sb-close { background: #ff5f57; }
+        .sb-min { background: #febc2e; }
+        .sb-max { background: #28c840; }
+        .sb-traffic:hover { filter: brightness(0.92); }
+        .sb-winbtn {
+          width: 34px; height: 24px; border: none; background: transparent;
+          color: var(--koma-fg, #c8d3f5); font-size: 13px; line-height: 1;
+          cursor: pointer; border-radius: 4px;
+          display: flex; align-items: center; justify-content: center;
+        }
+        .sb-winbtn:hover { background: var(--color-koma-hover); }
+        .sb-winclose:hover { background: #e81123; color: #fff; }
+      `}</style>
     </main>
   )
+}
+
+function isBlankTab(tab: ScreenBrowserTab): boolean {
+  const u = (tab.url || '').trim().toLowerCase()
+  return !u || u === 'about:blank' || u.starts_with('about:blank?')
 }
 
 function TabChip({ tab, active, onSelect, onClose }: {
   tab: ScreenBrowserTab; active: boolean; onSelect: () => void; onClose: () => void
 }) {
+  // Mirror main TabBar active language — no border/outline, just fill + hairline.
+  const blank = isBlankTab(tab)
   return (
     <div
       role="tab"
       aria-selected={active}
-      className={`group flex max-w-[14rem] flex-none items-center gap-1 rounded-t-md border border-b-0 px-2 py-1 text-[11px] ${
+      data-no-drag
+      className={`group relative flex min-w-[200px] max-w-[14rem] flex-none items-center gap-1.5 rounded-t-md px-2.5 py-1.5 text-[12px] transition-colors outline-none ring-0 ${
         active
-          ? 'border-koma-border bg-koma-panel'
-          : 'border-transparent opacity-60 hover:bg-koma-hover/60 hover:opacity-100'
+          ? 'z-[1] bg-koma-bg text-koma-fg'
+          : 'text-koma-dim hover:bg-koma-hover hover:text-koma-fg'
       }`}
-      style={active ? { background: 'color-mix(in srgb, var(--koma-fg, #c8d3f5) 6%, var(--koma-bg, #0b0e14))' } : undefined}
     >
-      {/* flex row: global `svg.animate-spin { display:block }` must sit beside the
-          title, not stack a new line above it (that grew the chrome strip). */}
+      {active && <span className="absolute inset-x-1 top-0 h-0.5 rounded-full bg-koma-fg/80" aria-hidden />}
       <button
         type="button"
-        className="flex min-w-0 flex-1 items-center gap-1 text-left"
+        className="flex min-w-0 flex-1 items-center gap-1.5 text-left outline-none ring-0 focus:outline-none"
         title={tab.url || tab.title}
         onClick={onSelect}
       >
-        {tab.loading && <LoaderCircle size={10} className="shrink-0 animate-spin text-koma-accent" />}
-        <span className="min-w-0 truncate">{tab.title || tab.url || 'New Tab'}</span>
+        {tab.loading
+          ? <LoaderCircle size={11} className="shrink-0 animate-spin text-koma-accent" />
+          : (
+            <img
+              src="koma://localhost/product-icon.png"
+              alt=""
+              width={12}
+              height={12}
+              className={`shrink-0 rounded-[3px] ${active ? 'opacity-95' : 'opacity-70'}`}
+              draggable={false}
+            />
+            )}
+        <span className="min-w-0 truncate">{blank ? (tab.title || 'New Tab') : (tab.title || tab.url || 'New Tab')}</span>
       </button>
       <button
         type="button"
         aria-label={`Close ${tab.title || 'tab'}`}
-        className="flex h-4 w-4 flex-none items-center justify-center rounded opacity-0 hover:bg-koma-hover group-hover:opacity-100"
+        className={`flex h-4 w-4 flex-none items-center justify-center rounded outline-none transition hover:bg-koma-hover hover:!opacity-100 focus:outline-none ${
+          active ? 'opacity-70' : 'opacity-0 group-hover:opacity-70'
+        }`}
         onClick={e => { e.stopPropagation(); onClose() }}
       >
-        <X size={10} />
+        <X size={11} />
       </button>
     </div>
   )
@@ -317,7 +425,7 @@ function IconBtn({ label, onClick, disabled, children }: {
       title={label}
       aria-label={label}
       disabled={disabled}
-      className="flex h-6 w-6 items-center justify-center rounded hover:bg-koma-hover disabled:cursor-not-allowed disabled:opacity-40"
+      className="flex h-7 w-7 items-center justify-center rounded-md hover:bg-koma-hover disabled:cursor-not-allowed disabled:opacity-40"
       onClick={onClick}
     >
       {children}

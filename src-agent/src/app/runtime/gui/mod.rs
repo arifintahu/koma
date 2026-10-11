@@ -116,6 +116,22 @@ fn handle_koma_request(request: Request<Vec<u8>>) -> Response<Cow<'static, [u8]>
         url_path
     };
 
+    // Product mark for chrome (browser tabs, welcome, etc.).
+    if url_path == "product-icon.png" || url_path == "icon-128.png" {
+        return Response::builder()
+            .status(StatusCode::OK)
+            .header("Content-Type", "image/png")
+            .header("Cache-Control", "private, max-age=86400")
+            .body(Cow::Borrowed(
+                include_bytes!(concat!(
+                    env!("CARGO_MANIFEST_DIR"),
+                    "/../assets/icon-128.png"
+                ))
+                .as_slice(),
+            ))
+            .unwrap_or_else(|_| internal_error_response());
+    }
+
     // `koma://localhost/image/<encoded_path>`: serve a local image file for
     // inline rendering in the React transcript. The path is URL-encoded to
     // handle spaces/special chars. Only image extensions are served; the
@@ -711,8 +727,12 @@ pub fn run_gui(opts: crate::cli::Opts) -> Result<()> {
                     usage_ticker.observe_push(&value);
                     if let Some(palette) = value.get("palette").filter(|v| v.is_object()) {
                         computer_palette = palette.clone();
+                        screen_browser_palette = palette.clone();
                         if let Some(viewer) = &computer_viewer {
                             viewer.palette(&computer_palette);
+                        }
+                        if let Some(browser) = &screen_browser {
+                            browser.palette(&screen_browser_palette);
                         }
                     }
                     let kind = value.get("k").and_then(|v| v.as_str());
@@ -811,6 +831,12 @@ pub fn run_gui(opts: crate::cli::Opts) -> Result<()> {
                         if let Some(p) = value.get("palette") {
                             computer_palette = p.clone();
                             screen_browser_palette = p.clone();
+                            if let Some(viewer) = &computer_viewer {
+                                viewer.palette(&computer_palette);
+                            }
+                            if let Some(browser) = &screen_browser {
+                                browser.palette(&screen_browser_palette);
+                            }
                         }
                     }
                     // Track primary workdir so the browser profile stays on the project
@@ -1188,7 +1214,10 @@ pub fn run_gui(opts: crate::cli::Opts) -> Result<()> {
                 }
             }
             Event::UserEvent(UserEvent::ScreenBrowserChrome { action, url, tab_id }) => {
-                if let Some(browser) = &mut screen_browser {
+                // Custom close from frameless chrome — same teardown as native X.
+                if action == "win_close" {
+                    let _ = proxy.send_event(UserEvent::Win(WinCmd::ScreenBrowserClose));
+                } else if let Some(browser) = &mut screen_browser {
                     if let Err(e) = browser.handle_chrome(&action, url, tab_id) {
                         pending_pushes.push_back(serde_json::json!({
                             "k": "ScreenBrowserError",

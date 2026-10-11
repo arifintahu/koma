@@ -31,7 +31,7 @@ pub fn allow_content_url(url: &str) -> bool {
         return false;
     }
     let lower = u.to_ascii_lowercase();
-    if lower == "about:blank" {
+    if lower == "about:blank" || lower.starts_with("about:blank?") {
         return true;
     }
     if lower.starts_with("https://") || lower.starts_with("http://") {
@@ -40,6 +40,12 @@ pub fn allow_content_url(url: &str) -> bool {
     } else {
         false
     }
+}
+
+/// True when the tab is the empty/new-tab shell (welcome page lives here).
+pub fn is_blank_url(url: &str) -> bool {
+    let lower = url.trim().to_ascii_lowercase();
+    lower.is_empty() || lower == "about:blank" || lower.starts_with("about:blank?")
 }
 
 pub fn validate_content_url(url: &str) -> Result<()> {
