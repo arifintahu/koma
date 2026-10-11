@@ -28,8 +28,17 @@ import {
   type NotebookKernelInfo,
   type NotebookNativeEvent,
 } from '../lib/notebook-runtime'
+import {
+  listPythonEnvironments,
+  readRememberedInterpreter,
+  rememberInterpreter,
+  shortInterpreterLabel,
+  type PythonEnvironment,
+} from '../lib/notebook-kernel-picker'
+import { showCodingPacks } from './CodingPacks'
 import { NotebookOutputs } from './NotebookOutputs'
 import { showCodingHistory } from './CodingHistory'
+import { showToast } from '../lib/toast'
 import { useKoma, type Tab } from '../store/koma'
 import { fileKey } from '../store/coding'
 import { BrailleSpinner } from './BrailleSpinner'
@@ -278,16 +287,19 @@ function UnavailablePill({ label, detail }: { label: string; detail: string }) {
 function KernelStatusPill({
   status,
   busy,
-  error,
+  needsKernel,
 }: {
   status: KernelStatus | null
   busy: boolean
-  error: string | null
+  needsKernel: boolean
 }) {
-  if (error) {
+  if (needsKernel) {
     return (
-      <span title={error} className="inline-flex items-center gap-1 rounded border border-koma-error/40 px-1.5 py-0.5 text-[10px] text-koma-error">
-        Kernel error
+      <span
+        title="Choose a Python environment with ipykernel"
+        className="inline-flex items-center gap-1 rounded border border-koma-error/40 px-1.5 py-0.5 text-[10px] text-koma-error"
+      >
+        Select Kernel
       </span>
     )
   }
@@ -326,14 +338,54 @@ function WorkspaceNotebook({ tab }: { tab: CodingTab }) {
 
   const [kernel, setKernel] = useState<NotebookKernelInfo | null>(null)
   const [kernelStatus, setKernelStatus] = useState<KernelStatus | null>(null)
-  const [kernelError, setKernelError] = useState<string | null>(null)
+  /** Sticky chrome action only — transient failures go through showToast. */
+  const [kernelAction, setKernelAction] = useState<null | { kind: 'select-kernel'; path: string }>(null)
   const [runBusy, setRunBusy] = useState(false)
   const [startingKernel, setStartingKernel] = useState(false)
+  // VS Code–style: selected Python environment (may lack ipykernel until run).
+  const [selectedInterpreter, setSelectedInterpreter] = useState<string | null>(() =>
+    readRememberedInterpreter(workspace, tab.path),
+  )
+  const [pickerOpen, setPickerOpen] = useState(false)
+  const [envs, setEnvs] = useState<PythonEnvironment[]>([])
+  const [envsLoading, setEnvsLoading] = useState(false)
+  const [envsError, setEnvsError] = useState<string | null>(null)
+  const [customPath, setCustomPath] = useState('')
+  const [probingPath, setProbingPath] = useState<string | null>(null)
+  const pickerRef = useRef<HTMLDivElement | null>(null)
   const liveOutputsRef = useRef<unknown[]>([])
   const liveParentRef = useRef<string | null>(null)
   const liveCellRef = useRef<string | null>(null)
   const kernelRef = useRef<NotebookKernelInfo | null>(null)
   kernelRef.current = kernel
+  const selectedInterpreterRef = useRef(selectedInterpreter)
+  selectedInterpreterRef.current = selectedInterpreter
+  const sessionId = useKoma(s => s.session.id)
+
+  /** Non-actionable → toast only. Missing ipykernel → sticky Select Kernel + toast. */
+  function reportKernel(message: string, opts?: { selectKernel?: string }) {
+    const text = message.trim() || 'Notebook kernel error'
+    if (opts?.selectKernel) {
+      const path = opts.selectKernel
+      setKernelAction({ kind: 'select-kernel', path })
+      showToast(`ipykernel missing in ${path}`, 'warn', { session: sessionId, source: 'coding' })
+      setPickerOpen(true)
+      return
+    }
+    // Native strings that mean "pick another env" still open the picker once.
+    if (/ipykernel/i.test(text) && /not available|missing|did not become ready/i.test(text)) {
+      const path = selectedInterpreterRef.current || shortInterpreterLabel(null)
+      setKernelAction({ kind: 'select-kernel', path: selectedInterpreterRef.current || 'python' })
+      showToast(text.length > 160 ? `ipykernel missing · Select Kernel` : text, 'warn', {
+        session: sessionId,
+        source: 'coding',
+      })
+      setPickerOpen(true)
+      return
+    }
+    setKernelAction(null)
+    showToast(text, 'error', { session: sessionId, source: 'coding' })
+  }
 
   // Obtain / dispose controller with the tab mount. Coding may retain the buffer.
   useEffect(() => {
@@ -372,7 +424,7 @@ function WorkspaceNotebook({ tab }: { tab: CodingTab }) {
       if (event.k === 'NotebookKernelState') {
         const st = event as { status?: KernelStatus; error?: string; generation?: number }
         if (st.status) setKernelStatus(st.status)
-        if (st.error) setKernelError(String(st.error))
+        if (st.error) reportKernel(String(st.error))
         if (st.generation != null && kernelRef.current) {
           setKernel(k => (k ? { ...k, generation: st.generation!, status: st.status ?? k.status } : k))
         }
@@ -402,7 +454,9 @@ function WorkspaceNotebook({ tab }: { tab: CodingTab }) {
         setRunBusy(false)
       }
     })
-  }, [workspace, tab.path, controller])
+    // reportKernel closes over sessionId; events only need workspace/path/controller.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [workspace, tab.path, controller, sessionId])
 
   useCodingAutosave(tab.root, tab.path, fileState, codingAutosave)
 
@@ -418,21 +472,102 @@ function WorkspaceNotebook({ tab }: { tab: CodingTab }) {
   const canSave = !!(canEdit && fileState?.dirty && !fileState.saving && !fileState.conflict)
   const canRevert = !!(fileState && (fileState.dirty || fileState.conflict) && !fileState.saving)
   const runnable = kernelIsRunnable(kernelStatus) && !!kernel && !startingKernel
+  const needsKernelPick = kernelAction?.kind === 'select-kernel'
+
+  // Close kernel picker on outside click / Escape.
+  useEffect(() => {
+    if (!pickerOpen) return
+    const onDoc = (e: MouseEvent) => {
+      if (pickerRef.current && !pickerRef.current.contains(e.target as Node)) {
+        setPickerOpen(false)
+      }
+    }
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setPickerOpen(false)
+    }
+    document.addEventListener('mousedown', onDoc)
+    document.addEventListener('keydown', onKey)
+    return () => {
+      document.removeEventListener('mousedown', onDoc)
+      document.removeEventListener('keydown', onKey)
+    }
+  }, [pickerOpen])
+
+  // Load Python environments when the picker opens (VS Code "Python Environments").
+  useEffect(() => {
+    if (!pickerOpen) return
+    const abort = new AbortController()
+    setEnvsLoading(true)
+    setEnvsError(null)
+    void listPythonEnvironments(workspace, abort.signal)
+      .then((list) => {
+        if (!abort.signal.aborted) setEnvs(list)
+      })
+      .catch((e) => {
+        if (!abort.signal.aborted) {
+          const msg = e instanceof Error ? e.message : String(e)
+          setEnvsError(msg)
+          showToast(msg, 'error', { session: sessionId, source: 'coding' })
+        }
+      })
+      .finally(() => {
+        if (!abort.signal.aborted) setEnvsLoading(false)
+      })
+    return () => abort.abort()
+  }, [pickerOpen, workspace, sessionId])
+
+  async function openKernelPicker() {
+    setPickerOpen(true)
+  }
+
+  async function chooseInterpreter(path: string) {
+    const trimmed = path.trim()
+    if (!trimmed) return
+    setProbingPath(trimmed)
+    try {
+      // Selecting an env is allowed even without ipykernel (VS Code lists them).
+      const probe = await probeIpykernel(workspace, trimmed)
+      const resolved = probe.interpreter || trimmed
+      setSelectedInterpreter(resolved)
+      rememberInterpreter(workspace, tab.path, resolved)
+      setCustomPath('')
+      if (kernelRef.current) {
+        void stopKernel(workspace, kernelRef.current.kernelId).catch(() => {})
+        setKernel(null)
+        setKernelStatus(null)
+      }
+      if (!probe.ipykernel) {
+        reportKernel(`ipykernel missing in ${resolved}`, { selectKernel: resolved })
+        return
+      }
+      setKernelAction(null)
+      setPickerOpen(false)
+      showToast(`Kernel environment · ${shortInterpreterLabel(resolved)}`, 'info', {
+        session: sessionId,
+        source: 'coding',
+      })
+    } catch (e) {
+      reportKernel(e instanceof Error ? e.message : String(e))
+    } finally {
+      setProbingPath(null)
+    }
+  }
 
   async function ensureKernel(): Promise<NotebookKernelInfo | null> {
     if (!controller) return null
     if (kernel && kernelIsRunnable(kernelStatus)) return kernel
     setStartingKernel(true)
-    setKernelError(null)
     try {
-      const probe = await probeIpykernel(workspace)
+      const preferred = selectedInterpreterRef.current ?? undefined
+      const probe = await probeIpykernel(workspace, preferred)
+      const interpreter = probe.interpreter || preferred || 'python3'
+      setSelectedInterpreter(interpreter)
+      rememberInterpreter(workspace, tab.path, interpreter)
       if (!probe.ipykernel) {
-        setKernelError(
-          'ipykernel is not available in the selected interpreter. Install it in that environment, then retry — Koma will not silently pip install.',
-        )
+        reportKernel(`ipykernel missing in ${interpreter}`, { selectKernel: interpreter })
         return null
       }
-      const interpreter = probe.interpreter || 'python3'
+      // First start: explicit consent (VS Code associates kernel after pick; we still gate process spawn).
       const ok = window.confirm(
         `Start a Python kernel for this notebook?\n\nInterpreter: ${interpreter}\nNotebook: ${tab.path}\n\nThe kernel runs on the workspace host and can execute code in this document.`,
       )
@@ -441,9 +576,14 @@ function WorkspaceNotebook({ tab }: { tab: CodingTab }) {
       const info = await startKernel(workspace, tab.path, controller.documentEpoch, interpreter)
       setKernel(info)
       setKernelStatus(info.status)
+      setKernelAction(null)
+      if (info.interpreter) {
+        setSelectedInterpreter(info.interpreter)
+        rememberInterpreter(workspace, tab.path, info.interpreter)
+      }
       return info
     } catch (e) {
-      setKernelError(e instanceof Error ? e.message : String(e))
+      reportKernel(e instanceof Error ? e.message : String(e))
       return null
     } finally {
       setStartingKernel(false)
@@ -459,7 +599,6 @@ function WorkspaceNotebook({ tab }: { tab: CodingTab }) {
     const info = await ensureKernel()
     if (!info) return
     setRunBusy(true)
-    setKernelError(null)
     liveOutputsRef.current = []
     liveCellRef.current = runtimeId
     liveParentRef.current = null
@@ -483,8 +622,7 @@ function WorkspaceNotebook({ tab }: { tab: CodingTab }) {
       )
       setKernelStatus('idle')
     } catch (e) {
-      setKernelError(e instanceof Error ? e.message : String(e))
-      setKernelStatus(s => s)
+      reportKernel(e instanceof Error ? e.message : String(e))
     } finally {
       setRunBusy(false)
       liveCellRef.current = null
@@ -497,9 +635,8 @@ function WorkspaceNotebook({ tab }: { tab: CodingTab }) {
       const index = state.identities.findIndex(i => i.runtimeId === id.runtimeId)
       const cell = state.parse.doc.cells[index!]
       if (cell?.cellType === 'code') {
-        // Re-read state each iteration would be better; sequential await is fine for v1.
         await runCell(id.runtimeId)
-        if (kernelError) break
+        if (kernelAction) break
       }
     }
   }
@@ -509,7 +646,7 @@ function WorkspaceNotebook({ tab }: { tab: CodingTab }) {
     try {
       await interruptKernel(workspace, kernel.kernelId)
     } catch (e) {
-      setKernelError(e instanceof Error ? e.message : String(e))
+      reportKernel(e instanceof Error ? e.message : String(e))
     }
   }
 
@@ -520,9 +657,9 @@ function WorkspaceNotebook({ tab }: { tab: CodingTab }) {
       const info = await restartKernel(workspace, kernel.kernelId)
       setKernel(info)
       setKernelStatus(info.status)
-      setKernelError(null)
+      setKernelAction(null)
     } catch (e) {
-      setKernelError(e instanceof Error ? e.message : String(e))
+      reportKernel(e instanceof Error ? e.message : String(e))
     } finally {
       setStartingKernel(false)
     }
@@ -603,8 +740,124 @@ function WorkspaceNotebook({ tab }: { tab: CodingTab }) {
         onRedo={() => controller.redo()}
         icon={<BookOpen size={13} className="flex-none text-koma-dim" />}
         trailing={
-          <div className="flex flex-none items-center gap-1">
-            <KernelStatusPill status={kernelStatus} busy={runBusy || startingKernel} error={kernelError} />
+          <div className="relative flex flex-none items-center gap-1" ref={pickerRef}>
+            {/* VS Code: Select Kernel (top-right). Opens Python Environments list. */}
+            <button
+              type="button"
+              title={selectedInterpreter ? selectedInterpreter : 'Select Kernel — choose a Python environment'}
+              aria-haspopup="listbox"
+              aria-expanded={pickerOpen}
+              disabled={readOnly || startingKernel}
+              onClick={() => (pickerOpen ? setPickerOpen(false) : void openKernelPicker())}
+              className={`flex h-6 max-w-[12rem] items-center gap-1 rounded border px-1.5 text-[11px] hover:bg-koma-hover disabled:opacity-30 ${
+                needsKernelPick
+                  ? 'border-koma-error/50 text-koma-error'
+                  : 'border-koma-border text-koma-dim hover:text-koma-fg'
+              }`}
+            >
+              <span className="min-w-0 truncate">
+                {selectedInterpreter || kernel?.interpreter
+                  ? shortInterpreterLabel(selectedInterpreter ?? kernel?.interpreter)
+                  : 'Select Kernel'}
+              </span>
+              <ChevronDown size={12} className="flex-none opacity-70" />
+            </button>
+            {pickerOpen && (
+              <div
+                role="listbox"
+                aria-label="Python environments"
+                className="absolute right-0 top-full z-50 mt-1 w-[min(22rem,calc(100vw-2rem))] rounded-md border border-koma-border bg-koma-panel p-1.5 text-[11px] text-koma-fg shadow-xl"
+              >
+                <div className="px-1.5 pb-1 text-[10px] uppercase tracking-wide text-koma-dim">
+                  Python Environments
+                </div>
+                {envsLoading && (
+                  <div className="flex items-center gap-1.5 px-1.5 py-2 text-koma-dim">
+                    <BrailleSpinner size={10} /> Discovering…
+                  </div>
+                )}
+                {envsError && <div className="px-1.5 py-1 text-koma-error">{envsError}</div>}
+                {!envsLoading && envs.length === 0 && !envsError && (
+                  <div className="px-1.5 py-2 text-koma-dim">
+                    No environments found. Enter a path below, or open Language Packs.
+                  </div>
+                )}
+                <ul className="max-h-56 overflow-auto">
+                  {envs.map((env) => {
+                    const active = selectedInterpreter === env.path
+                    return (
+                      <li key={env.path}>
+                        <button
+                          type="button"
+                          role="option"
+                          aria-selected={active}
+                          disabled={!!probingPath}
+                          title={env.path}
+                          onClick={() => void chooseInterpreter(env.path)}
+                          className={`flex w-full flex-col items-start gap-0.5 rounded px-1.5 py-1.5 text-left hover:bg-koma-hover disabled:opacity-50 ${
+                            active ? 'bg-koma-hover/80' : ''
+                          }`}
+                        >
+                          <span className="flex w-full items-center gap-1">
+                            <span className="min-w-0 flex-1 truncate font-medium">{env.label}</span>
+                            {probingPath === env.path && <BrailleSpinner size={10} />}
+                            {env.projectVenv && (
+                              <span className="flex-none text-[9px] text-koma-dim">venv</span>
+                            )}
+                            {env.workspaceDefault && (
+                              <span className="flex-none text-[9px] text-koma-dim">workspace</span>
+                            )}
+                          </span>
+                          <span className="w-full truncate text-[10px] text-koma-dim">{env.path}</span>
+                        </button>
+                      </li>
+                    )
+                  })}
+                </ul>
+                <div className="mt-1 border-t border-koma-border pt-1.5">
+                  <label className="flex flex-col gap-1 px-1">
+                    <span className="text-[10px] text-koma-dim">Enter interpreter path</span>
+                    <div className="flex gap-1">
+                      <input
+                        value={customPath}
+                        onChange={(e) => setCustomPath(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter') {
+                            e.preventDefault()
+                            void chooseInterpreter(customPath)
+                          }
+                        }}
+                        placeholder="/path/to/python"
+                        className="min-w-0 flex-1 rounded border border-koma-border bg-koma-bg px-1.5 py-1 text-[11px] text-koma-fg"
+                      />
+                      <button
+                        type="button"
+                        disabled={!customPath.trim() || !!probingPath}
+                        onClick={() => void chooseInterpreter(customPath)}
+                        className="rounded border border-koma-border px-1.5 py-1 text-koma-dim hover:bg-koma-hover hover:text-koma-fg disabled:opacity-30"
+                      >
+                        Use
+                      </button>
+                    </div>
+                  </label>
+                  <button
+                    type="button"
+                    className="mt-1 w-full rounded px-1.5 py-1 text-left text-[10px] text-koma-dim hover:bg-koma-hover hover:text-koma-fg"
+                    onClick={() => {
+                      setPickerOpen(false)
+                      showCodingPacks()
+                    }}
+                  >
+                    Language Packs… (workspace default / install)
+                  </button>
+                </div>
+              </div>
+            )}
+            <KernelStatusPill
+              status={kernelStatus}
+              busy={runBusy || startingKernel}
+              needsKernel={needsKernelPick}
+            />
             <button
               type="button"
               title={runnable ? 'Run all code cells' : 'Start kernel and run all'}
@@ -671,10 +924,32 @@ function WorkspaceNotebook({ tab }: { tab: CodingTab }) {
           <span className="min-w-0 flex-1">{state.lastError}</span>
         </div>
       )}
-      {kernelError && (
-        <div className="flex flex-none items-center gap-2 border-b border-koma-border bg-koma-error/10 px-3 py-1.5 text-[12px] text-koma-error">
-          <span className="min-w-0 flex-1">{kernelError}</span>
-          <button type="button" className="text-[11px] underline" onClick={() => setKernelError(null)}>Dismiss</button>
+      {kernelAction?.kind === 'select-kernel' && (
+        <div className="flex flex-none items-center gap-2 border-b border-koma-border bg-koma-warn/10 px-3 py-1.5 text-[12px] text-koma-fg">
+          <span className="min-w-0 flex-1 truncate">
+            ipykernel missing in <span className="font-mono text-[11px]">{kernelAction.path}</span>
+          </span>
+          <button
+            type="button"
+            className="flex-none rounded border border-koma-border px-2 py-0.5 text-[11px] hover:bg-koma-hover"
+            onClick={() => void openKernelPicker()}
+          >
+            Select Kernel
+          </button>
+          <button
+            type="button"
+            className="flex-none rounded border border-koma-border px-2 py-0.5 text-[11px] hover:bg-koma-hover"
+            onClick={() => showCodingPacks()}
+          >
+            Language Packs
+          </button>
+          <button
+            type="button"
+            className="flex-none text-[11px] text-koma-dim underline"
+            onClick={() => setKernelAction(null)}
+          >
+            Dismiss
+          </button>
         </div>
       )}
       {!state.parse.ok && state.mode === 'raw' && (

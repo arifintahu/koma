@@ -21,6 +21,8 @@ Related chrome (not CodingPanel itself):
 |---------|----------|
 | Terminal tabs | `TerminalTab.tsx`, tab `kind: 'terminal'` |
 | Language server install UI | Settings → Language servers; CLI `koma lsp …` |
+| Language packs / environments | **BottomPanel** tab `packs` (`CodingPacks.tsx`) — same dock signature as Tasks; **not** a floating dialog |
+| Tasks / Problems / LSP drawers | `BottomPanel.tsx` shared tablist |
 | Diff tabs | Explore / Git file-changed → Monaco **diff** (Monarch only; no LSP on that path) |
 
 Still **out of scope**:

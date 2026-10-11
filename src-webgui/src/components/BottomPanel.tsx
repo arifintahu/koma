@@ -3,6 +3,7 @@ import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { ChevronDown, X } from 'lucide-react'
 import { useKoma } from '../store/koma'
 import { CodingTasks } from './CodingTasks'
+import { CodingPacks } from './CodingPacks'
 import { LspDrawer } from './LspDrawer'
 import { ProblemsDrawer } from './ProblemsDrawer'
 
@@ -12,6 +13,7 @@ const tabs = [
   { id: 'tasks', label: 'Tasks' },
   { id: 'problems', label: 'Problems' },
   { id: 'lsp', label: 'Language Servers' },
+  { id: 'packs', label: 'Language Packs' },
 ] as const
 
 function savedHeight() {
@@ -124,7 +126,8 @@ export function BottomPanel() {
           }}
           className={`flex flex-none items-center gap-1.5 border-b-2 px-2 text-[11px] uppercase tracking-wide outline-none focus-visible:bg-koma-hover ${tab === item.id ? 'border-koma-accent text-koma-fg' : 'border-transparent text-koma-dim hover:text-koma-fg'}`}>
           {item.label}
-          {item.id !== 'tasks' && <span className="text-[10px] tabular-nums text-koma-dim">{item.id === 'lsp' ? servers.length : count}</span>}
+          {item.id === 'problems' && <span className="text-[10px] tabular-nums text-koma-dim">{count}</span>}
+          {item.id === 'lsp' && <span className="text-[10px] tabular-nums text-koma-dim">{servers.length}</span>}
         </button>)}
       </div>
       <button type="button" aria-label="Collapse workspace panel" title="Collapse panel"
@@ -134,7 +137,10 @@ export function BottomPanel() {
     </div>
     {tabs.map(item => <div key={item.id} role="tabpanel" id={`workspace-panel-${item.id}`} aria-labelledby={`workspace-tab-${item.id}`} tabIndex={tab === item.id ? 0 : -1}
       className={`${tab === item.id ? 'flex' : 'hidden'} min-h-0 min-w-0 flex-1 flex-col overflow-hidden`}>
-      {item.id === 'tasks' ? <CodingTasks visible={tab === 'tasks'} /> : item.id === 'lsp' ? <LspDrawer /> : <ProblemsDrawer />}
+      {item.id === 'tasks' ? <CodingTasks visible={tab === 'tasks'} />
+        : item.id === 'packs' ? <CodingPacks visible={tab === 'packs'} />
+        : item.id === 'lsp' ? <LspDrawer />
+        : <ProblemsDrawer />}
     </div>)}
   </section>
 }

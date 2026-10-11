@@ -9,7 +9,7 @@ Everyday `.ipynb` support in the Coding IDE. Document authority stays on the exi
 | M0 boundary | Shipped — no ordinary LSP / format-on-save / kernel on open |
 | M1 cell editor | Shipped — lossless span JSON, cells + raw fallback, autosave |
 | M2 analysis | **Unavailable** until `notebookDocumentSync` probe is green (`notebook-analysis.ts` + `coding::notebook_probe`) |
-| M3 kernel | **Shell/IOPub client + Run UI** — pure-Rust `zeromq`, HMAC wire, execute/interrupt, consent, secrets native-only |
+| M3 kernel | **Shell/IOPub + Select Kernel** — VS Code–style env picker (packs candidates), consent, secrets native-only |
 | M4 outputs | Policy + DOMPurify HTML via inert sandboxed `srcdoc` iframe; stream/error/text/md/png/jpeg |
 
 ## Architecture

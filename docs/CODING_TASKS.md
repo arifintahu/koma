@@ -7,6 +7,19 @@ The panel uses Koma's existing visual tokens and leaves the main workspace
 dropdown and editor panes intact. Escape or Close hides the panel; processes
 continue. The output selector retains previous runs, with status and exit code.
 
+### BottomPanel design signature
+
+Tasks define the dock pattern for workspace tooling (also Language Packs,
+Problems, Language Servers — see `CODING_LANGUAGE_PACKS.md`):
+
+- Content fills `#workspace-bottom-panel` tab panels; **no** floating
+  `absolute … shadow-xl` cards for the same job.
+- Shared tablist + collapse/close live on `BottomPanel`; child views do not
+  draw their own title bar with `X`.
+- Tool rows: `h-8` / compact `py-1`, `border-b border-koma-border`,
+  `KomaSelect` with `bg-koma-panel2`, icon buttons `h-6`.
+- `showCodingTasks()` only calls `setBottomPanelTab('tasks')`.
+
 The panel keeps its own explicit host/workspace selection. Switching the main
 workspace, chat session, or connected host does not retarget or stop existing
 tasks. Its dropdown remembers visited workspaces so you can inspect and stop
