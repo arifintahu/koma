@@ -337,13 +337,13 @@ export function ScreenBrowserChrome() {
             Go
           </button>
           <IconBtn
-            label="Screenshot visible page"
+            label="SS"
             onClick={() => post('shot', { tab_id: activeId ?? undefined })}
           >
             <Camera size={13} />
           </IconBtn>
           <IconBtn
-            label="Screenshot full page"
+            label="SS whole page"
             onClick={() => post('shot_full', { tab_id: activeId ?? undefined })}
           >
             <FileImage size={13} />

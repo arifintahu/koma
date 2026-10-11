@@ -1016,7 +1016,7 @@ impl BrowserWindow {
     /// absolute path so the host can `Paste` it into the chat composer as an attachment.
     fn capture_to_composer(&mut self, tab_id: Option<&str>, full_page: bool) -> Result<String> {
         let (obs, png) = self.observe(tab_id, full_page)?;
-        let kind = if full_page { "full" } else { "view" };
+        let kind = if full_page { "whole" } else { "ss" };
         let host = obs
             .url
             .trim()
