@@ -4,47 +4,7 @@
 //! what koma's client-side flow needs: endpoints, client id/scope, and the
 //! refresh-staleness windows.
 
-use crate::dto::openrouter::ModelInfo;
 use crate::model::app_config::OAuthProvider;
-
-/// Models a ChatGPT subscription can use via the codex backend.
-///
-/// Source of truth for the **picker list** (`codex_static_catalogue`). Effort /
-/// pricing for the same ids live in `models.json` under the Codex endpoint key
-/// (`https://chatgpt.com/backend-api/codex`) — keep those blocks in sync.
-///
-/// Aligned with OpenCode `ALLOWED_MODELS` (plain base ids; no bare `gpt-5.6`,
-/// which OpenCode denies). Effort is carried in `reasoning.effort`, never as an
-/// id suffix. 9router's `-high`/`-review`/`-none` ids are ITS OWN aliases and
-/// 404/entitlement-fail here.
-pub const CODEX_MODELS: &[&str] = &["gpt-5.5", "gpt-5.4", "gpt-5.4-mini", "gpt-5.3-codex-spark"];
-
-/// Synthesize a `GET /models`-shaped catalogue for Codex.
-///
-/// Prefers the OA-backed / curated overlay (`models_for_provider(Codex)`); falls
-/// back to the hardcoded [`CODEX_MODELS`] allowlist shape when the overlay is
-/// still empty (offline first boot before OA refresh).
-pub fn codex_static_catalogue() -> Vec<ModelInfo> {
-    let from_overlay = crate::service::catalogue_overlay::models_for_provider(
-        crate::model::app_config::OAuthProvider::Codex,
-    );
-    if !from_overlay.is_empty() {
-        return from_overlay;
-    }
-    CODEX_MODELS
-        .iter()
-        .map(|id| ModelInfo {
-            id: id.to_string(),
-            name: None,
-            supported_parameters: Vec::new(),
-            reasoning: None,
-            context_length: None,
-            top_provider: None,
-            pricing: None,
-            architecture: None,
-        })
-        .collect()
-}
 
 // --- Codex OAuth ---
 
@@ -168,8 +128,8 @@ pub struct OAuthProviderMeta {
     /// Base chat-completions endpoint, stashed on `Resolved::endpoint` once
     /// resolution wires OAuth connections in (a later wave).
     pub chat_endpoint: &'static str,
-    /// Model-catalogue endpoint for on-demand fetch; empty string means the
-    /// provider has no network catalogue (use a static list instead).
+    /// Legacy catalogue identity for capability metadata and static-key routes.
+    /// OAuth picker membership comes exclusively from the public OA catalogue.
     pub catalogue_endpoint: &'static str,
 }
 
@@ -224,10 +184,7 @@ pub fn meta(p: OAuthProvider) -> OAuthProviderMeta {
             chat_endpoint: "https://api.anthropic.com",
             catalogue_endpoint: "",
         },
-        // KomaRun: live-catalogue provider — the catalogue_endpoint drives
-        // `request_catalogue` on OAuth success (drains.rs) and the GUI
-        // ListModels live-fetch path so the model picker gets the real
-        // server-side list instead of only the static overlay seed.
+        // Keep the premium capability identity; picker membership is public OA.
         OAuthProvider::KomaRun => OAuthProviderMeta {
             chat_endpoint: "https://koma.run/api/v1",
             catalogue_endpoint: KOMA_PREMIUM_CHAT_ENDPOINT,
@@ -237,8 +194,7 @@ pub fn meta(p: OAuthProvider) -> OAuthProviderMeta {
         // — see `app::resolve::ext_conn_route` / `OAuthConn::ext_model_route`), NOT this
         // static table, which resolution bypasses for `Extension` conns. These stay empty
         // placeholders (only reached by any non-resolution `meta()` caller); the empty
-        // `catalogue_endpoint` also means the OAuth success drain never fires a catalogue
-        // fetch for an ext conn.
+        // `catalogue_endpoint` is only a legacy capability identity here.
         OAuthProvider::Extension => OAuthProviderMeta {
             chat_endpoint: "",
             catalogue_endpoint: "",
@@ -256,35 +212,10 @@ pub fn meta(p: OAuthProvider) -> OAuthProviderMeta {
 #[cfg(test)]
 mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used)]
-    use super::*;
 
     #[test]
-    fn codex_models_match_open_code_allowlist_shape() {
-        // No bare gpt-5.6; OpenCode denies bare 5.6 / pro modes.
-        assert!(!CODEX_MODELS.contains(&"gpt-5.6"));
-        assert!(!CODEX_MODELS.iter().any(|m| m.contains("-pro")));
-        // Required plain ids.
-        for id in ["gpt-5.5", "gpt-5.4", "gpt-5.4-mini", "gpt-5.3-codex-spark"] {
-            assert!(CODEX_MODELS.contains(&id), "CODEX_MODELS missing {id}");
-        }
-        // Fallback static catalogue (empty overlay in unit tests) mirrors CODEX_MODELS.
-        let cat = {
-            // Ensure we exercise the hardcoded fallback path.
-            CODEX_MODELS
-                .iter()
-                .map(|id| id.to_string())
-                .collect::<Vec<_>>()
-        };
-        assert_eq!(cat.len(), CODEX_MODELS.len());
-        for (i, id) in cat.iter().enumerate() {
-            assert_eq!(id, CODEX_MODELS[i]);
-        }
-    }
-
-    #[test]
-    fn bundled_codex_overlay_covers_static_picker_ids() {
-        // Offline bundled models.json remains a fallback effort authority until
-        // OA catalogues land; every hardcoded picker id must still appear there.
+    fn bundled_codex_overlay_retains_effort_metadata() {
+        // Bundled capability metadata remains independent of picker membership.
         let raw = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/../models.json")).trim();
         if raw.is_empty() {
             return;
@@ -297,16 +228,6 @@ mod tests {
             // OAuth blocks may move fully to OA — skip if absent.
             return;
         };
-        let ids: Vec<&str> = arr
-            .iter()
-            .filter_map(|m| m.get("id").and_then(|i| i.as_str()))
-            .collect();
-        for id in CODEX_MODELS {
-            assert!(
-                ids.contains(id),
-                "models.json Codex block missing picker id {id} (have {ids:?})"
-            );
-        }
         for m in arr {
             let Some(efforts) = m
                 .pointer("/reasoning/supported_efforts")

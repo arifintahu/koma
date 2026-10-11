@@ -6,6 +6,7 @@ import { useEffect, useRef, useState } from 'react'
 import { File, Search, Terminal, X } from 'lucide-react'
 import { useKoma } from '../store/koma'
 import { codingRequest } from '../lib/coding-service'
+import { showNewNotebook } from './NotebookCreateDialog'
 import { BrailleSpinner } from './BrailleSpinner'
 import { showCodingHistory } from './CodingHistory'
 import { showCodingPacks } from './CodingPacks'
@@ -14,6 +15,7 @@ import { KomaSelect } from './KomaSelect'
 
 type Command = { id: string; title: string; shortcut?: string; editor?: boolean }
 const commands: Command[] = [
+  { id: 'newNotebook', title: 'New Notebook' },
   { id: 'files', title: 'Go to File', shortcut: 'Ctrl/Cmd+P' },
   { id: 'editor.action.quickOutline', title: 'Go to Symbol in Editor', shortcut: 'Ctrl/Cmd+Shift+O', editor: true },
   { id: 'koma.outline', title: 'Toggle Document Outline', editor: true },
@@ -144,7 +146,10 @@ export function CodingPalette() {
     if (command.id === 'files') { setMode('files'); setQuery(''); return }
     setMode(null)
     const store = useKoma.getState()
-    if (command.id === 'projectSettings') {
+    if (command.id === 'newNotebook') {
+      showNewNotebook(scope && scope !== '*' ? scope : undefined)
+    }
+    else if (command.id === 'projectSettings') {
       const root = store.coding.activeRoot ?? store.settingsValues?.workdir?.[0]
       if (root) {
         const workspace = { hostId, root }

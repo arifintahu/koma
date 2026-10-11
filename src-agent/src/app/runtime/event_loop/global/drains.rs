@@ -202,7 +202,6 @@ pub(super) fn drain_oauth(state: &mut AppState, handle: &tokio::runtime::Handle)
                 });
                 let conn_uuid = conn.uuid.clone();
                 let conn_provider = conn.provider;
-                let conn_token = conn.access_token.clone();
                 state.rest.config.oauth_conns.push(conn);
                 let save_err = state.rest.config.save().err().map(|e| e.to_string());
                 let drafts =
@@ -240,14 +239,6 @@ pub(super) fn drain_oauth(state: &mut AppState, handle: &tokio::runtime::Handle)
                             op.result_sel = 0;
                         }
                     }
-                }
-                // Prime any provider's live catalogue after persistence. This applies
-                // equally to Settings and onboarding; the endpoint guard keeps static
-                // OAuth providers (Codex/Claude) unchanged.
-                if should_prime_catalogue(conn_provider, save_err.is_none()) {
-                    let ep =
-                        crate::service::oauth::registry::meta(conn_provider).catalogue_endpoint;
-                    state.rest.request_catalogue(ep, &conn_token, &conn_uuid);
                 }
                 state.rest.oauth_task = None;
                 // GUI side-channel: terminal `success` push (conns are rebuilt hub-side
@@ -1010,16 +1001,6 @@ pub(super) fn drain_warm(state: &mut AppState) -> bool {
     dirty
 }
 
-fn should_prime_catalogue(
-    provider: crate::model::app_config::OAuthProvider,
-    save_succeeded: bool,
-) -> bool {
-    save_succeeded
-        && !crate::service::oauth::registry::meta(provider)
-            .catalogue_endpoint
-            .is_empty()
-}
-
 /// Limit a background catalogue failure to a log-safe diagnostic. Request
 /// headers are never part of `reqwest` errors, but redact bearer-shaped words
 /// defensively before persisting the message.
@@ -1091,9 +1072,8 @@ pub(super) fn fetch_catalogue_debounced(
             let conn = crate::service::openrouter::Conn {
                 endpoint: &endpoint,
                 api_key: &api_key,
-                // Catalogue fetch is OpenAI-compatible. `oauth_uuid` is threaded
-                // through so an OAuth-backed catalogue (e.g. Kilo Code) refreshes
-                // its bearer via `fresh_key`; empty for a static-key provider.
+                // Native catalogues are static-key only; OAuth list requests
+                // are rejected by `request_catalogue`.
                 api_type: crate::model::app_config::ApiType::OpenAiCompatible,
                 account_id: "",
                 oauth_uuid: &oauth_uuid,

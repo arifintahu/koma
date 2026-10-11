@@ -110,3 +110,54 @@ fn oa_and_details_survive_base_refresh_in_either_order() {
         assert_eq!(state.table["cc"][0], fixture("haiku", &["max", "xhigh"]));
     }
 }
+
+#[test]
+fn oauth_picker_excludes_bundled_and_detail_only_models() {
+    let provider = OAuthProvider::Codex;
+    let key = catalogue_key("", Some(provider));
+    let mut state = OverlayState::default();
+    state.replace_base(HashMap::from([(
+        key.clone(),
+        vec![fixture("bundled", &[])],
+    )]));
+    assert!(oa_membership(&state.oa, provider).is_empty());
+    state.merge_oa(HashMap::from([(
+        key.clone(),
+        vec![fixture("public", &["high"])],
+    )]));
+    upsert_model(&mut state.details, &key, fixture("detail-only", &["low"]));
+    state.apply_details();
+    state.replace_base(HashMap::from([(
+        key.clone(),
+        vec![fixture("bundled", &[])],
+    )]));
+    let models = oa_membership(&state.oa, provider);
+    assert_eq!(
+        models.iter().map(|m| m.id.as_str()).collect::<Vec<_>>(),
+        ["public"]
+    );
+    state.merge_oa(HashMap::from([(key, Vec::new())]));
+    assert!(oa_membership(&state.oa, provider).is_empty());
+}
+
+#[test]
+fn oauth_picker_merges_only_public_koma_tiers() {
+    use crate::service::oauth::registry;
+    let table = HashMap::from([
+        (
+            registry::meta(OAuthProvider::KomaRun)
+                .chat_endpoint
+                .to_string(),
+            vec![fixture("free", &[]), fixture("shared", &[])],
+        ),
+        (
+            registry::KOMA_PREMIUM_CHAT_ENDPOINT.to_string(),
+            vec![fixture("premium", &[]), fixture("shared", &[])],
+        ),
+    ]);
+    let models = oa_membership(&table, OAuthProvider::KomaRun);
+    assert_eq!(
+        models.iter().map(|m| m.id.as_str()).collect::<Vec<_>>(),
+        ["premium", "shared", "free"]
+    );
+}

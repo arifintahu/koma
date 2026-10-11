@@ -33,7 +33,7 @@ impl AppStateRest {
     /// The model omnisearch calls this on every query keystroke / provider change
     /// / field focus for whatever provider is being edited. It is cheap and
     /// idempotent:
-    /// - empty `endpoint` → no-op (nothing to fetch against);
+    /// - empty `endpoint` or OAuth uuid → no-op (OAuth uses public OA);
     /// - the cache already holds this endpoint (`models_cache_endpoint` matches)
     ///   AND the fetch succeeded → no-op (filter locally);
     /// - a fetch for this endpoint is already in flight → no-op (don't double-fire);
@@ -46,7 +46,8 @@ impl AppStateRest {
     /// lands via the `warm_rx` drain, which sets `models_cache` +
     /// `models_cache_endpoint` and clears `catalogue_fetching`.
     pub fn request_catalogue(&mut self, endpoint: &str, api_key: &str, oauth_uuid: &str) {
-        if endpoint.is_empty() {
+        // OAuth list requests are never sent to native provider endpoints.
+        if endpoint.is_empty() || !oauth_uuid.is_empty() {
             return;
         }
         if self.models_cache_endpoint.as_deref() == Some(endpoint) && self.models_cache.is_some() {

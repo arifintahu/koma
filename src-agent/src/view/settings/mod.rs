@@ -170,17 +170,14 @@ pub fn draw(
             if let Some(modal) = st.model_modal.as_ref() {
                 let omni = st.mm_provider_omnisearchable();
                 let is_or = st.mm_provider_is_openrouter();
-                let is_codex = st.mm_selected_is_codex();
                 let is_static_overlay = st.mm_selected_is_static_overlay();
-                let static_cache = if is_codex {
-                    crate::service::oauth::registry::codex_static_catalogue()
-                } else if is_static_overlay {
+                let static_cache = if is_static_overlay {
                     st.mm_static_overlay_catalogue()
                 } else {
                     Vec::new()
                 };
                 let (cache, cache_matches): (&[crate::dto::openrouter::ModelInfo], bool) =
-                    if is_codex || is_static_overlay {
+                    if is_static_overlay {
                         (&static_cache, true)
                     } else {
                         let cm = st

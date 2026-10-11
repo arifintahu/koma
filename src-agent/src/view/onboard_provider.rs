@@ -4,9 +4,8 @@
 //! border-style convention. The Login step REUSES the `/settings` OAuth connect-flow
 //! sub-renderers (picker / wait / paste / failed); the ModelSelect step renders a
 //! type-to-filter model list. The filtered candidate ids are recomputed here from the
-//! on-demand catalogue (`candidate_model_ids`), exactly as the `/settings` model
-//! omnisearch does — so both the local TUI (live cache) and the thin client (projected
-//! `models_cache` + compiled-in Codex static list) render identically.
+//! cached public OA catalogue (`candidate_model_ids`), shared with selection.
+//! Native provider caches and bundled model lists do not supply candidates.
 
 use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},

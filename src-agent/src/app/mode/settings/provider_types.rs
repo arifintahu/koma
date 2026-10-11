@@ -83,10 +83,8 @@ pub struct OAuthDraft {
     /// see [`OAuthDraft::from_config`] for exactly how this is built.
     pub label: String,
     pub provider: OAuthProvider,
-    /// Snapshot of the access token, carried so `mm_provider_conn` can return it
-    /// alongside the catalogue endpoint without a second config/oauth_conns
-    /// lookup — same trust model as `ProviderDraft::api_key` (it already crosses
-    /// the client wire in `ProviderDraftSnapshot`).
+    /// Token snapshot retained for draft/wire compatibility; public model
+    /// catalogue requests never use it.
     pub key: String,
     /// Display status computed at build time from `expires_at`: `"active"` /
     /// `"renews in Nd"` / `"expired"` (Codex) or `"no expiry"` (Kilo Code, which

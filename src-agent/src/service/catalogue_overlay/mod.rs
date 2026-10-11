@@ -239,10 +239,8 @@ pub fn overlay_cost(
 /// `context_length_for`. Empty vec if the endpoint has no overlay entries (or
 /// [`init`] hasn't run — callers must not assume this is non-empty).
 ///
-/// Consumer: the GUI/TUI model-id suggestion paths (`ListModels` hub handler,
-/// its un-attached `host.rs` mirror, and the TUI's `candidate_model_ids`) fall
-/// back to this for OAuth-conn providers (Codex/Claude have no live `/models`
-/// endpoint at all) and for any live fetch that comes back empty.
+/// Static-key picker fallback and shared model capability metadata. OAuth
+/// picker membership uses [`oauth_catalogue`] instead.
 pub fn models_for(endpoint: &str) -> Vec<ModelInfo> {
     let Some(lock) = OVERLAY.get() else {
         return Vec::new();
@@ -268,10 +266,8 @@ pub fn models_for(endpoint: &str) -> Vec<ModelInfo> {
 /// appended, deduped by model id. This also preserves bundled OAuth rows while
 /// providers migrate from chat keys to catalogue keys.
 ///
-/// The single merge implementation every candidate-list call site (onboard model
-/// select, the GUI Connector model picker, the daemon `ListModels` handler, the
-/// `/effort` capability lookup) should call instead of `models_for(meta(p).chat_endpoint)`
-/// directly, so a future third koma tier only needs a change here.
+/// Shared capability lookup across provider catalogue aliases and tiers.
+/// OAuth picker membership deliberately uses [`oauth_catalogue`] instead.
 pub fn models_for_provider(provider: OAuthProvider) -> Vec<ModelInfo> {
     let base = crate::service::oauth::registry::meta(provider).chat_endpoint;
     let key = catalogue_key(base, Some(provider));
@@ -293,12 +289,42 @@ pub fn models_for_provider(provider: OAuthProvider) -> Vec<ModelInfo> {
     models
 }
 
+/// OAuth picker membership comes only from public OA responses (live refresh
+/// or its disk cache). Keep bundled metadata and individually fetched details
+/// available for capabilities without letting them add picker candidates.
+pub fn oauth_catalogue(provider: OAuthProvider) -> Vec<ModelInfo> {
+    let Some(lock) = OVERLAY.get() else {
+        return Vec::new();
+    };
+    let Ok(guard) = lock.read() else {
+        return Vec::new();
+    };
+    oa_membership(&guard.oa, provider)
+}
+
+fn oa_membership(table: &OverlayTable, provider: OAuthProvider) -> Vec<ModelInfo> {
+    let base = crate::service::oauth::registry::meta(provider).chat_endpoint;
+    let key = catalogue_key(base, Some(provider));
+    let mut keys = vec![key.as_str()];
+    if provider == OAuthProvider::KomaRun && base != key {
+        keys.push(base);
+    }
+    let mut models = Vec::<ModelInfo>::new();
+    for key in keys {
+        for model in table.get(key).into_iter().flatten() {
+            if !models.iter().any(|existing| existing.id == model.id) {
+                models.push(model.to_model_info());
+            }
+        }
+    }
+    models
+}
+
 /// Fast membership check: is `model_id` a premium-tier KomaRun model?
 ///
 /// Returns true if the id is in the static premium overlay (e.g. `koma/peach`)
 /// OR is not found in the base-tier overlay — i.e. it must have come from the
-/// live `GET …/koma-premium/models` fetch and therefore routes to the premium
-/// endpoint. Used by `resolve.rs` to route requests to the premium endpoint
+/// public OA catalogue and therefore routes to the premium endpoint. Used by `resolve.rs` to route requests to the premium endpoint
 /// instead of the base endpoint.
 pub fn is_premium_model(model_id: &str) -> bool {
     // 1. Explicit static premium overlay hit (koma/peach + curated premium ids).
@@ -309,8 +335,8 @@ pub fn is_premium_model(model_id: &str) -> bool {
         return true;
     }
     // 2. Not a known base-tier KomaRun id → treat as premium.
-    //    Live catalogue is sole-sourced from koma-premium/models, so any id
-    //    that isn't in the base overlay must hit the premium chat endpoint.
+    //    OA refresh splits tier metadata into the base/premium keys, so any
+    //    id that isn't in the base overlay hits the premium chat endpoint.
     !models_for(
         crate::service::oauth::registry::meta(crate::model::app_config::OAuthProvider::KomaRun)
             .chat_endpoint,

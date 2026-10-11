@@ -6,7 +6,7 @@ import type { WorkspaceRef } from './coding-service'
 // All save entry points (including Save All and autosave) share this pipeline.
 export async function formatBeforeSave(workspace: WorkspaceRef, path: string, content: string): Promise<string> {
   // A broken configuration must remain fixable from its own editor.
-  if (path === '.koma/coding.json') return content
+  if (path === '.koma/coding.json' || /\.ipynb$/i.test(path)) return content
   const config = await getCodingConfig(workspace)
   const { languageIdForPath, flushPendingLspDidChange } = await import('./monaco-lsp')
   const settings = editorPreferences(config, languageIdForPath(path))

@@ -20,6 +20,7 @@ import { CodingPalette } from '../components/CodingPalette'
 import { CodingPacks } from '../components/CodingPacks'
 import { CodingTransactions } from '../components/CodingTransactions'
 import { CodingHistory } from '../components/CodingHistory'
+import { NotebookCreateDialog } from '../components/NotebookCreateDialog'
 import { CodingRefactor } from '../components/CodingRefactor'
 import { startCodingDiskMonitor } from '../lib/coding-disk'
 import { SwitchingOverlay } from '../components/SwitchingOverlay'
@@ -447,6 +448,7 @@ function RootLayout() {
       <CodingDebug />
       <CodingTests />
       <CodingHistory />
+      <NotebookCreateDialog />
       <CodingTransactions />
       <CodingRefactor />
       <SwitchingOverlay

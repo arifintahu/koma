@@ -57,21 +57,18 @@ pub(super) fn handle_model_form(
     let mut modal_action = Action::None;
 
     if search_mode {
-        let is_codex = s.mm_selected_is_codex();
         let is_static_overlay = s.mm_selected_is_static_overlay();
-        let static_cache = if is_codex {
-            crate::service::oauth::registry::codex_static_catalogue()
-        } else if is_static_overlay {
+        let static_cache = if is_static_overlay {
             s.mm_static_overlay_catalogue()
         } else {
             Vec::new()
         };
-        let cache: &[crate::dto::openrouter::ModelInfo] = if is_codex || is_static_overlay {
+        let cache: &[crate::dto::openrouter::ModelInfo] = if is_static_overlay {
             &static_cache
         } else {
             rest.models_cache.as_deref().unwrap_or(&[])
         };
-        let effective_cache_matches = cache_matches || is_codex || is_static_overlay;
+        let effective_cache_matches = cache_matches || is_static_overlay;
         let filtered: Vec<usize> = if effective_cache_matches {
             filter_models(cache, &query)
         } else {

@@ -43,8 +43,7 @@ impl SettingsState {
     }
 
     /// `true` when the Model field should be a live omnisearch: a real provider
-    /// with a non-empty endpoint, OR any OAuth draft (Kilo has a live catalogue;
-    /// Codex serves the static `CODEX_MODELS` list — both get the omnisearch UI).
+    /// with a non-empty endpoint, OR any OAuth draft (public OA catalogue).
     pub fn mm_provider_omnisearchable(&self) -> bool {
         match self.mm_selected_provider() {
             Some(SelectedProvider::Provider(p)) => !p.endpoint.trim().is_empty(),
@@ -53,20 +52,12 @@ impl SettingsState {
         }
     }
 
-    /// The edited provider's `(endpoint, api_key)` for the on-demand catalogue
-    /// fetch, or `None` when no modal is open. For an OAuth-backed provider the
-    /// endpoint is its CATALOGUE endpoint (`registry::meta(..).catalogue_endpoint`,
-    /// empty for Codex — no network catalogue, see the static-list mechanism below)
-    /// and the key is the OAuth draft's snapshotted access token.
+    /// Static-key providers retain their native catalogue connection. OAuth
+    /// membership is supplied exclusively by the public OA catalogue.
     pub fn mm_provider_conn(&self) -> Option<(String, String)> {
         match self.mm_selected_provider()? {
             SelectedProvider::Provider(p) => Some((p.endpoint.clone(), p.api_key.clone())),
-            SelectedProvider::OAuth(d) => {
-                let ep = crate::service::oauth::registry::meta(d.provider)
-                    .catalogue_endpoint
-                    .to_string();
-                Some((ep, d.key.clone()))
-            }
+            SelectedProvider::OAuth(_) => None,
         }
     }
 
@@ -87,8 +78,8 @@ impl SettingsState {
     }
 
     /// The OAuth uuid backing the model modal's selected provider, or `""` when it
-    /// is a plain (non-OAuth) provider / no modal is open. Threaded onto the
-    /// catalogue-fetch `Conn` so `fresh_key` can refresh a near-expiry token.
+    /// is a plain (non-OAuth) provider / no modal is open. Native catalogue
+    /// requests with this uuid are rejected; OAuth membership is public OA.
     pub fn mm_provider_oauth_uuid(&self) -> String {
         match self.mm_selected_provider() {
             Some(SelectedProvider::OAuth(d)) => d.uuid.clone(),
@@ -96,50 +87,19 @@ impl SettingsState {
         }
     }
 
-    /// `true` when the model modal's selected provider is the Codex OAuth draft —
-    /// gates the static-list short-circuit (no network catalogue for Codex).
-    pub fn mm_selected_is_codex(&self) -> bool {
+    /// OAuth pickers use the locally cached public OA membership list, never
+    /// a native provider request or a bundled client-side fallback.
+    pub fn mm_selected_is_static_overlay(&self) -> bool {
         matches!(
             self.mm_selected_provider(),
-            Some(SelectedProvider::OAuth(d)) if d.provider == crate::model::app_config::OAuthProvider::Codex
+            Some(SelectedProvider::OAuth(_))
         )
     }
 
-    /// `true` when the model modal's selected provider is an OAuth draft whose
-    /// `registry::meta(provider).catalogue_endpoint` is empty (no network
-    /// catalogue) and it is NOT the Codex case (Codex has its own dedicated
-    /// static-list mechanism — [`Self::mm_selected_is_codex`] /
-    /// `codex_static_catalogue`). Gates the curated
-    /// `catalogue_overlay::models_for_provider` short-circuit for the OTHER
-    /// empty-catalogue-endpoint OAuth providers (currently ClaudeAI, KomaRun,
-    /// Extension): same idea as Codex's static list — an instant local
-    /// candidate list, no network fetch, no "searching models…" spinner.
-    pub fn mm_selected_is_static_overlay(&self) -> bool {
-        match self.mm_selected_provider() {
-            Some(SelectedProvider::OAuth(d)) => {
-                d.provider != crate::model::app_config::OAuthProvider::Codex
-                    && crate::service::oauth::registry::meta(d.provider)
-                        .catalogue_endpoint
-                        .is_empty()
-            }
-            _ => false,
-        }
-    }
-
-    /// The curated overlay catalogue for the model modal's currently selected
-    /// provider, when [`Self::mm_selected_is_static_overlay`] is true; an empty
-    /// vec otherwise. Mirrors `codex_static_catalogue()`'s role for Codex, but
-    /// sourced from the shared `models.json` curated table
-    /// (`catalogue_overlay::models_for_provider`) instead of a hardcoded list.
-    ///
-    /// An empty result here (the overlay has no entries for this provider) is a
-    /// legitimate "no matches" state, NOT "still fetching" — callers must treat
-    /// a static-overlay provider's cache as always resolved (matched), same as
-    /// they do for Codex.
     pub fn mm_static_overlay_catalogue(&self) -> Vec<crate::dto::openrouter::ModelInfo> {
         match self.mm_selected_provider() {
-            Some(SelectedProvider::OAuth(d)) if self.mm_selected_is_static_overlay() => {
-                crate::service::catalogue_overlay::models_for_provider(d.provider)
+            Some(SelectedProvider::OAuth(d)) => {
+                crate::service::catalogue_overlay::oauth_catalogue(d.provider)
             }
             _ => Vec::new(),
         }
@@ -583,6 +543,52 @@ impl SettingsState {
     pub fn mm_result_down(&mut self, max: usize) {
         if let Some(m) = self.model_modal.as_mut() {
             m.result_sel = (m.result_sel + 1).min(max);
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::app::mode::settings::OAuthDraft;
+    use crate::model::{
+        app_config::{AppConfig, OAuthProvider},
+        conversation::Conversation,
+        session::Session,
+        settings::Settings,
+    };
+
+    #[test]
+    fn every_oauth_picker_uses_public_membership_without_native_connection() {
+        let session = Session::new(
+            "test".into(),
+            std::env::temp_dir().join("koma-oa-picker"),
+            "pwd".into(),
+            Settings::default(),
+            Conversation::from_messages(vec![]),
+        );
+        let mut ui = SettingsState::from(&session, &AppConfig::default());
+        for provider in [
+            OAuthProvider::Codex,
+            OAuthProvider::ClaudeAI,
+            OAuthProvider::Kilocode,
+            OAuthProvider::KomaRun,
+            OAuthProvider::Xai,
+            OAuthProvider::CommandCode,
+            OAuthProvider::Extension,
+        ] {
+            ui.oauth_drafts = vec![OAuthDraft {
+                uuid: "oauth".into(),
+                label: "oauth".into(),
+                provider,
+                key: "token".into(),
+                status: "active".into(),
+            }];
+            ui.open_model_modal_add(false);
+            ui.model_modal.as_mut().unwrap().provider_idx = ui.providers.len();
+            assert!(ui.mm_provider_omnisearchable());
+            assert!(ui.mm_selected_is_static_overlay());
+            assert!(ui.mm_provider_conn().is_none());
         }
     }
 }

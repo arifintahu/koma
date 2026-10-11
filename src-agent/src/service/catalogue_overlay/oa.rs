@@ -312,12 +312,9 @@ fn apply_provider_rows(provider: OAuthProvider, rows: Vec<OaRow>, patch: &mut Ov
         }
         // Free apple on base endpoint; everything else (peach + gateway) on premium.
         let base_ep = registry::meta(OAuthProvider::KomaRun).chat_endpoint;
-        if !base_rows.is_empty() {
-            patch.insert(base_ep.to_string(), base_rows);
-        }
-        if !premium_rows.is_empty() {
-            patch.insert(KOMA_PREMIUM_CHAT_ENDPOINT.to_string(), premium_rows);
-        }
+        // Empty lists are authoritative too: a refresh may remove a whole tier.
+        patch.insert(base_ep.to_string(), base_rows);
+        patch.insert(KOMA_PREMIUM_CHAT_ENDPOINT.to_string(), premium_rows);
         return;
     }
 
@@ -326,9 +323,7 @@ fn apply_provider_rows(provider: OAuthProvider, rows: Vec<OaRow>, patch: &mut Ov
         return;
     }
     let models: Vec<OverlayModel> = rows.into_iter().map(OverlayModel::from).collect();
-    if !models.is_empty() {
-        patch.insert(endpoint, models);
-    }
+    patch.insert(endpoint, models);
 }
 
 fn is_fresh(path: &std::path::Path) -> bool {
@@ -360,6 +355,16 @@ fn atomic_write(path: &std::path::Path, bytes: &[u8]) -> std::io::Result<()> {
 mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used)]
     use super::*;
+
+    #[test]
+    fn empty_public_catalogue_replaces_both_koma_tiers() {
+        let mut patch = OverlayTable::new();
+        apply_provider_rows(OAuthProvider::KomaRun, Vec::new(), &mut patch);
+        assert!(patch[registry::meta(OAuthProvider::KomaRun).chat_endpoint].is_empty());
+        assert!(patch[KOMA_PREMIUM_CHAT_ENDPOINT].is_empty());
+        apply_provider_rows(OAuthProvider::Xai, Vec::new(), &mut patch);
+        assert!(patch[registry::meta(OAuthProvider::Xai).chat_endpoint].is_empty());
+    }
 
     #[test]
     fn detail_url_preserves_model_segments_and_encodes_reserved_chars() {

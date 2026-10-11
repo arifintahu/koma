@@ -161,44 +161,29 @@ fn reasoning_caps_ready_preserve_efforts_and_default_selection() {
 }
 
 #[test]
-fn oauth_gateway_oa_first_then_real_native_catalogue_once() {
-    let mut state = state(OAuthProvider::Kilocode, "effort-kilo-native-unique", false);
-    assert!(matches!(
-        derive_effort_menu(&mut state),
-        EffortMenu::Loading(_)
-    ));
-    assert!(state.rest.catalogue_pending.is_none());
-    let identity = (
-        "https://api.kilo.ai/api/gateway".into(),
-        "effort-kilo-native-unique".into(),
-    );
-    state.rest.oa_detail_completed.insert(identity, false);
-    assert!(matches!(
-        derive_effort_menu(&mut state),
-        EffortMenu::Loading(_)
-    ));
-    assert_eq!(
-        state.rest.catalogue_pending.as_ref().unwrap().endpoint,
-        "https://api.kilo.ai/api/gateway"
-    );
-    state.rest.catalogue_pending = None;
-    state.rest.models_cache_endpoint = Some("https://api.kilo.ai/api/gateway".into());
-    state.rest.models_cache = Some(vec![serde_json::from_value(serde_json::json!({
-        "id": "effort-kilo-native-unique", "reasoning": { "supported_efforts": ["high"] }
-    }))
-    .unwrap()]);
-    assert!(matches!(
-        derive_effort_menu(&mut state),
-        EffortMenu::Ready { .. }
-    ));
-    // Another provider replaces the one-slot cache. Never retry this gateway
-    // implicitly just because its catalogue fell out of that cache.
-    state.rest.models_cache_endpoint = Some("https://another.example".into());
-    assert!(matches!(
-        derive_effort_menu(&mut state),
-        EffortMenu::Unsupported(_)
-    ));
-    assert!(state.rest.catalogue_pending.is_none());
+fn oauth_gateways_never_fall_back_to_native_catalogues() {
+    for provider in [
+        OAuthProvider::Codex,
+        OAuthProvider::ClaudeAI,
+        OAuthProvider::Kilocode,
+        OAuthProvider::KomaRun,
+        OAuthProvider::Xai,
+        OAuthProvider::CommandCode,
+    ] {
+        let mut state = state(provider, "effort-oa-only-unique", false);
+        assert!(matches!(
+            derive_effort_menu(&mut state),
+            EffortMenu::Loading(_)
+        ));
+        assert!(state.rest.catalogue_pending.is_none());
+        let (key, _, model) = state.rest.oa_detail_pending[0].clone();
+        state.rest.oa_detail_completed.insert((key, model), false);
+        assert!(matches!(
+            derive_effort_menu(&mut state),
+            EffortMenu::Unsupported(_)
+        ));
+        assert!(state.rest.catalogue_pending.is_none());
+    }
 }
 
 #[test]

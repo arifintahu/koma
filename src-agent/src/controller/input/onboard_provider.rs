@@ -21,7 +21,6 @@ use crate::app::mode::onboard_provider::{
 use crate::app::mode::settings::OAuthFlowState;
 use crate::app::state::AppStateRest;
 use crate::model::app_config::OAuthProvider;
-use crate::service::oauth::registry;
 
 /// Handle a key press while the guided provider wizard is active.
 pub fn handle_onboard_provider(
@@ -184,42 +183,12 @@ fn handle_model_select(
         }
         KeyCode::Backspace => {
             s.backspace_query();
-            arm_catalogue(s, rest);
             Action::None
         }
         KeyCode::Char(c) if !key.modifiers.contains(KeyModifiers::CONTROL) => {
             s.push_query_char(c);
-            arm_catalogue(s, rest);
             Action::None
         }
         _ => Action::None,
-    }
-}
-
-/// Arm the on-demand catalogue fetch for a NETWORK OAuth provider (debounced).
-/// No-op for Codex (static list), when the provider has no catalogue endpoint, or
-/// when the just-created connection can't be resolved.
-pub(crate) fn arm_catalogue(s: &OnboardProviderState, rest: &mut AppStateRest) {
-    let Some(provider) = s.provider else {
-        return;
-    };
-    if provider == OAuthProvider::Codex {
-        return;
-    }
-    let endpoint = registry::meta(provider).catalogue_endpoint;
-    if endpoint.is_empty() {
-        return;
-    }
-    // The catalogue GET refreshes its bearer via the OAuth uuid; the access token
-    // seeds the immediate request. Resolve the token first so the immutable borrow of
-    // `rest.config` ends before the `request_catalogue` mutable borrow.
-    let token = rest
-        .config
-        .oauth_conns
-        .iter()
-        .find(|c| c.uuid == s.new_conn_uuid)
-        .map(|c| c.access_token.clone());
-    if let Some(token) = token {
-        rest.request_catalogue(endpoint, &token, &s.new_conn_uuid);
     }
 }

@@ -195,7 +195,7 @@ pub(crate) fn derive_effort_menu(state: &mut AppState) -> EffortMenu {
     let Some(route) = main else {
         return EffortMenu::Unsupported("model capabilities unavailable".into());
     };
-    let is_or = is_live_openrouter(&route.endpoint);
+    let is_or = route.oauth_uuid.is_empty() && is_live_openrouter(&route.endpoint);
     if !is_or {
         use crate::service::catalogue_overlay;
         let provider = route_provider(&state.rest.config, &route);
@@ -236,18 +236,11 @@ pub(crate) fn derive_effort_menu(state: &mut AppState) -> EffortMenu {
             .rest
             .oa_detail_completed
             .contains_key(&(key.clone(), route.model_id.clone()));
-        // OA is preferred for OAuth gateways; a single terminal detail attempt
-        // may fall back to genuine native reasoning. Static gateways can use
-        // their native catalogue first. CC has no native effort probe, ever.
+        // OAuth uses OA detail only, including after a terminal detail failure.
+        // Static-key gateways retain their native catalogue capability lookup.
         let native = match provider {
-            Some(crate::model::app_config::OAuthProvider::CommandCode) => None,
-            Some(crate::model::app_config::OAuthProvider::Extension) | None => {
-                native_effort_endpoint(&route.endpoint)
-            }
-            Some(p) => {
-                let endpoint = crate::service::oauth::registry::meta(p).catalogue_endpoint;
-                (!endpoint.is_empty()).then(|| endpoint.to_string())
-            }
+            None => native_effort_endpoint(&route.endpoint),
+            Some(_) => None,
         };
         if provider.is_none() || completed {
             if let Some(endpoint) = native {

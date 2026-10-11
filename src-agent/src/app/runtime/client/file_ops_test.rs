@@ -46,6 +46,63 @@ fn json_for_request(sink: &Arc<Mutex<Vec<String>>>, request_id: &str) -> serde_j
 }
 
 #[test]
+fn notebook_create_initializes_only_new_notebook_paths() {
+    let (dir, root, workdirs) = temp_workspace("notebook-create");
+    let created = exec_file_create(&root, "new.IPYNB", "file", "create", &workdirs);
+    assert!(created.error.is_none(), "{:?}", created.error);
+    assert!(created.mutated);
+    let read = exec_file_read(&root, "new.IPYNB", "read", &workdirs);
+    let content = read.content.unwrap();
+    let notebook: serde_json::Value = serde_json::from_str(&content).unwrap();
+    assert_eq!(notebook["nbformat"], 4);
+    assert_eq!(notebook["nbformat_minor"], 5);
+    assert_eq!(notebook["metadata"]["language_info"]["name"], "python");
+    assert!(notebook["metadata"].get("kernelspec").is_none());
+    let cell = &notebook["cells"][0];
+    assert_eq!(cell["cell_type"], "code");
+    assert_eq!(cell["id"], "cell-0");
+    assert!(cell["execution_count"].is_null());
+    assert_eq!(cell["source"], serde_json::json!([]));
+    assert_eq!(cell["outputs"], serde_json::json!([]));
+    // Existing fingerprint saves reuse the exact bytes, including metadata.
+    let saved = exec_file_save(
+        &root,
+        "new.IPYNB",
+        &content,
+        &read.fingerprint,
+        "save",
+        &workdirs,
+    );
+    assert!(saved.error.is_none(), "{:?}", saved.error);
+    assert_eq!(
+        std::fs::read_to_string(dir.join("new.IPYNB")).unwrap(),
+        content
+    );
+    assert!(
+        exec_file_create(&root, "new.IPYNB", "file", "again", &workdirs)
+            .error
+            .is_some()
+    );
+    std::fs::write(dir.join("invalid.ipynb"), "not a notebook").unwrap();
+    assert!(
+        exec_file_create(&root, "invalid.ipynb", "file", "existing", &workdirs)
+            .error
+            .is_some()
+    );
+    assert_eq!(
+        std::fs::read_to_string(dir.join("invalid.ipynb")).unwrap(),
+        "not a notebook"
+    );
+    assert!(
+        exec_file_create(&root, "plain.ipynb.txt", "file", "plain", &workdirs)
+            .error
+            .is_none()
+    );
+    assert_eq!(std::fs::read(dir.join("plain.ipynb.txt")).unwrap(), b"");
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
 fn fingerprint_is_stable_for_unchanged_file() {
     let dir = std::env::temp_dir().join(format!("koma-fileops-fp-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);

@@ -8,9 +8,8 @@
 /// UN-ATTACHED GUI model-picker fetch (a [`super::HostCtl::ListModels`] serviced by the
 /// swapper): load the GLOBAL config and resolve the provider by uuid. A `config.providers`
 /// entry gets a live `GET {endpoint}/models`, falling back to the curated `catalogue_overlay`
-/// if that comes back empty; a `config.oauth_conns` entry (Codex/Claude/xAI) has no live
-/// fetch worth making and resolves via `catalogue_overlay::models_for_provider(conn.provider)`
-/// (for KomaRun this merges the base and koma-premium catalogue keys). Returns an EMPTY list
+/// if that comes back empty; every `config.oauth_conns` entry resolves exclusively
+/// via the cached public `catalogue_overlay::oauth_catalogue`. Returns an EMPTY list
 /// on an unknown provider OR any fetch error — the caller ALWAYS pushes a reply, so the React
 /// picker's spinner clears. Mirrors the daemon's attached-path `ClientRequest::ListModels`
 /// handler (`hub::requests_read`), but sources the provider from disk since the swapper holds
@@ -41,37 +40,7 @@ pub(super) async fn fetch_models_for_provider(provider: &str) -> Vec<String> {
         return models;
     }
     if let Some(conn) = cfg.oauth_conns.iter().find(|c| c.uuid == provider) {
-        if conn.provider == crate::model::app_config::OAuthProvider::KomaRun
-            && !conn.access_token.is_empty()
-        {
-            // KomaRun: live-fetch from GET …/koma-premium/models with the
-            // OAuth bearer, falling back to the curated overlay on error/empty.
-            let endpoint = crate::service::oauth::registry::KOMA_PREMIUM_CHAT_ENDPOINT;
-            let c = crate::app::runtime::session_mgmt::build_client();
-            let conn = crate::service::openrouter::Conn {
-                endpoint,
-                api_key: &conn.access_token,
-                api_type: crate::model::app_config::ApiType::OpenAiCompatible,
-                account_id: "",
-                oauth_uuid: &conn.uuid,
-                install_id: "",
-            };
-            let mut models = c
-                .list_models(conn)
-                .await
-                .map(|v| v.into_iter().map(|m| m.id).collect::<Vec<_>>())
-                .unwrap_or_default();
-            if models.is_empty() {
-                models = crate::service::catalogue_overlay::models_for_provider(
-                    crate::model::app_config::OAuthProvider::KomaRun,
-                )
-                .into_iter()
-                .map(|m| m.id)
-                .collect();
-            }
-            return models;
-        }
-        return crate::service::catalogue_overlay::models_for_provider(conn.provider)
+        return crate::service::catalogue_overlay::oauth_catalogue(conn.provider)
             .into_iter()
             .map(|m| m.id)
             .collect();
