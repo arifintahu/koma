@@ -20,6 +20,7 @@ mod problems;
 mod process_group;
 pub(crate) mod provision;
 mod pty;
+mod notebook;
 mod resources;
 mod sync;
 mod tasks;
@@ -53,6 +54,7 @@ pub(crate) fn shutdown() {
     transport::shutdown();
     tasks::shutdown();
     debug::shutdown();
+    notebook::shutdown();
     watch::shutdown();
     language::shutdown();
 }
@@ -261,6 +263,41 @@ pub(crate) enum Operation {
     HistoryRead {
         checkpoint: i64,
     },
+    /// Explicit consent bound to workspace + interpreter + document epoch (no auto-start on open).
+    NotebookConsent {
+        path: String,
+        interpreter: String,
+        document_epoch: u64,
+    },
+    NotebookKernelStart {
+        path: String,
+        document_epoch: u64,
+        #[serde(default)]
+        interpreter: Option<String>,
+        /// Must be empty; notebook kernelspec.argv is rejected server-side.
+        #[serde(default)]
+        kernelspec_argv: Vec<String>,
+    },
+    NotebookKernelStop {
+        kernel_id: String,
+    },
+    NotebookKernelInterrupt {
+        kernel_id: String,
+    },
+    NotebookKernelRestart {
+        kernel_id: String,
+    },
+    NotebookKernelRelease {
+        kernel_id: String,
+    },
+    NotebookKernelStatus {
+        #[serde(default)]
+        kernel_id: Option<String>,
+    },
+    NotebookIpykernelProbe {
+        #[serde(default)]
+        interpreter: Option<String>,
+    },
 }
 
 impl Operation {
@@ -419,7 +456,7 @@ fn execute(request: &Request) -> Result<Value, String> {
             SERVICE_DRAIN.store(true, std::sync::atomic::Ordering::Release);
         }
         return Ok(
-            serde_json::json!({"version":env!("CARGO_PKG_VERSION"),"build":service_build(),"upgradePending":SERVICE_DRAIN.load(std::sync::atomic::Ordering::Acquire),"clients":SERVICE_CLIENTS.load(std::sync::atomic::Ordering::Acquire),"activeJobs":tasks::has_active()||debug::has_active()}),
+            serde_json::json!({"version":env!("CARGO_PKG_VERSION"),"build":service_build(),"upgradePending":SERVICE_DRAIN.load(std::sync::atomic::Ordering::Acquire),"clients":SERVICE_CLIENTS.load(std::sync::atomic::Ordering::Acquire),"activeJobs":tasks::has_active()||debug::has_active()||notebook::has_active()}),
         );
     }
     if let Operation::Notifications { request } = &request.operation {
@@ -475,6 +512,7 @@ fn worker_stdio() -> anyhow::Result<()> {
             SHUTTING_DOWN.store(true, std::sync::atomic::Ordering::Release);
             tasks::shutdown();
             debug::shutdown();
+            notebook::shutdown();
             watch::shutdown();
             language::shutdown();
         }

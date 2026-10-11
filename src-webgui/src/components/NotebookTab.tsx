@@ -12,6 +12,7 @@ import {
 } from '../lib/notebook-controller'
 import { isNotebookPath } from '../lib/notebook-workspace'
 import { NOTEBOOK_EDITABLE_MAX_CHARS, type NotebookCellType } from '../lib/notebook-document'
+import { notebookAnalysisLabel } from '../lib/notebook-analysis'
 import { showCodingHistory } from './CodingHistory'
 import { useKoma, type Tab } from '../store/koma'
 import { fileKey } from '../store/coding'
@@ -386,8 +387,8 @@ function WorkspaceNotebook({ tab }: { tab: CodingTab }) {
         icon={<BookOpen size={13} className="flex-none text-koma-dim" />}
         trailing={
           <div className="flex flex-none items-center gap-1">
-            <UnavailablePill label="Run" detail="Python kernel runs land in a later milestone. Opening never starts a kernel." />
-            <UnavailablePill label="Analysis" detail="Cell-aware analysis requires a real notebook LSP capability (unproven)." />
+            <UnavailablePill label="Run" detail="Python kernel runs land after native containment proofs. Opening never starts a kernel. RPC ops exist but Run stays disabled." />
+            <UnavailablePill label="Analysis" detail={notebookAnalysisLabel()} />
             <button
               type="button"
               title={showCells ? 'Edit raw notebook JSON' : 'Return to cells'}

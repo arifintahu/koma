@@ -55,6 +55,11 @@ export type CodingOperation =
   | { op: 'checkpoint'; path: string; content: string; reason: string }
   | { op: 'history'; path: string }
   | { op: 'historyRead'; checkpoint: number }
+  | { op: 'notebookConsent'; path: string; interpreter: string; documentEpoch: number }
+  | { op: 'notebookKernelStart'; path: string; documentEpoch: number; interpreter?: string; kernelspecArgv?: string[] }
+  | { op: 'notebookKernelStop' | 'notebookKernelInterrupt' | 'notebookKernelRestart' | 'notebookKernelRelease'; kernelId: string }
+  | { op: 'notebookKernelStatus'; kernelId?: string }
+  | { op: 'notebookIpykernelProbe'; interpreter?: string }
 
 export type CodingConfig = {
   version: 1

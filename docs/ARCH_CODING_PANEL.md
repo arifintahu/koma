@@ -29,6 +29,8 @@ Still **out of scope**:
 - Merge / 3-way conflict UI
 - Terminal *embedded inside* the Coding sidebar (use Terminal tabs)
 
+Notebooks (`.ipynb`) keep `kind: 'codingFile'` and route to `NotebookTab` — see [`CODING_NOTEBOOKS.md`](./CODING_NOTEBOOKS.md) for M0–M4 boundary, lossless editor, kernel containment, and output policy.
+
 ## File structure (current)
 
 ```text
@@ -36,10 +38,13 @@ src-webgui/src/
 ├── lib/
 │   ├── monaco-setup.ts       shared Monaco worker / theme / Monarch langs
 │   ├── monaco-lsp.ts         Monaco ↔ host LSP providers
-│   └── lsp-bridge.ts         pending request map + URI helpers
+│   ├── lsp-bridge.ts         pending request map + URI helpers
+│   ├── notebook-*.ts         .ipynb document / controller / output / analysis
+│   └── coding-autosave.ts    shared dirty-document autosave
 ├── components/
 │   ├── panels/CodingPanel.tsx
 │   ├── CodeEditorTab.tsx     editable Monaco + LSP attach
+│   ├── NotebookTab.tsx       cell editor for .ipynb (no ordinary LSP)
 │   ├── ProblemsDrawer.tsx
 │   ├── LspDrawer.tsx
 │   └── TerminalTab.tsx       sibling feature
@@ -47,8 +52,9 @@ src-webgui/src/
 
 src-agent/src/
 ├── lsp/                      catalog, install, resolve, JSON-RPC client
+├── coding/notebook.rs        owned kernel supervisor (containment spike)
 └── app/runtime/client/
-    ├── file_ops.rs           tree / read / save / create / delete / rename
+    ├── file_ops.rs           tree / read / save / create / delete / rename (+ ipynb create)
     └── lsp_host.rs           install/status + drain LSP replies → GUI
 ```
 

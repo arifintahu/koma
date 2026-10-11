@@ -55,6 +55,18 @@ pub(super) fn execute(request: &Request) -> Result<Value> {
         Operation::TaskOutput { run_id, after } => {
             return super::tasks::output(&request.workspace, run_id, *after)
         }
+        Operation::NotebookKernelStop { kernel_id } => {
+            return super::notebook::stop(&request.workspace, kernel_id)
+        }
+        Operation::NotebookKernelInterrupt { kernel_id } => {
+            return super::notebook::interrupt(&request.workspace, kernel_id)
+        }
+        Operation::NotebookKernelRelease { kernel_id } => {
+            return super::notebook::release(&request.workspace, kernel_id)
+        }
+        Operation::NotebookKernelStatus { kernel_id } => {
+            return super::notebook::status(&request.workspace, kernel_id.as_deref())
+        }
         _ => {}
     }
     let canonical = root(request)?;
@@ -67,7 +79,7 @@ pub(super) fn execute(request: &Request) -> Result<Value> {
             anyhow::bail!("Notification requests use registered session IDs, not workspace paths")
         }
         Operation::Hello => Ok(json!({"protocol":1,"root":canonical.to_string_lossy(),
-            "capabilities":["paths","read","save","config","tasks","packs","debug"], "version":env!("CARGO_PKG_VERSION")})),
+            "capabilities":["paths","read","save","config","tasks","packs","debug","notebook"], "version":env!("CARGO_PKG_VERSION")})),
         Operation::TaskDefinitions => super::tasks::definitions(&canonical),
         Operation::TaskStart {
             task_id,
@@ -308,6 +320,34 @@ pub(super) fn execute(request: &Request) -> Result<Value> {
         Operation::Lsp { body } => {
             super::language::dispatch(&request.workspace, body).map_err(anyhow::Error::msg)
         }
+        Operation::NotebookConsent {
+            path,
+            interpreter,
+            document_epoch,
+        } => super::notebook::consent(&request.workspace, interpreter, path, *document_epoch),
+        Operation::NotebookKernelStart {
+            path,
+            document_epoch,
+            interpreter,
+            kernelspec_argv,
+        } => super::notebook::start(
+            &request.workspace,
+            &canonical,
+            path,
+            *document_epoch,
+            interpreter.as_deref(),
+            kernelspec_argv,
+        ),
+        Operation::NotebookKernelRestart { kernel_id } => {
+            super::notebook::restart(&request.workspace, &canonical, kernel_id)
+        }
+        Operation::NotebookIpykernelProbe { interpreter } => {
+            super::notebook::probe_ipykernel(&canonical, interpreter.as_deref())
+        }
+        Operation::NotebookKernelStop { .. }
+        | Operation::NotebookKernelInterrupt { .. }
+        | Operation::NotebookKernelRelease { .. }
+        | Operation::NotebookKernelStatus { .. } => unreachable!(),
         _ => anyhow::bail!("Operation is not a workspace operation"),
     }
 }
