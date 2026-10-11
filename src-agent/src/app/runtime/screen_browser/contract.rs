@@ -294,7 +294,7 @@ pub struct Prefs {
     pub always_on_top: bool,
     #[serde(default = "yes")]
     pub auto_screenshot: bool,
-    #[serde(default)]
+    #[serde(default = "yes")]
     pub stop_on_close: bool,
     #[serde(default)]
     pub allow_eval: bool,

@@ -60,7 +60,8 @@ export type ScreenBrowserStatus = {
 export const DEFAULT_SCREEN_BROWSER_PREFS: ScreenBrowserPrefs = {
   always_on_top: false,
   auto_screenshot: true,
-  stop_on_close: false,
+  // Window X matches the titlebar Stop control (no silent re-spawn).
+  stop_on_close: true,
   allow_eval: false,
   download_dir: null,
   popup_policy: 'new_tab',

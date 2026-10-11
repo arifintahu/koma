@@ -91,7 +91,7 @@ export function ScreenBrowserSettings() {
       <div className="mt-3 space-y-3">
         <ToggleRow label="Always on top" desc="Keep the browser window above other apps. Off by default — agent control does not raise the window." checked={!!prefs.always_on_top} onChange={v => setPref('always_on_top', v)} disabled={!available} />
         <ToggleRow label="Auto screenshot" desc="Capture a fresh observation after model actions." checked={prefs.auto_screenshot !== false} onChange={v => setPref('auto_screenshot', v)} disabled={!available} />
-        <ToggleRow label="Stop on close" desc="Turn the browser off when its window is closed." checked={!!prefs.stop_on_close} onChange={v => setPref('stop_on_close', v)} disabled={!available} />
+        <ToggleRow label="Stop on close" desc="Turn the browser off when its window is closed (same as Stop). Always on for window close." checked={!!prefs.stop_on_close} onChange={v => setPref('stop_on_close', v)} disabled={!available} />
         <ToggleRow label="Allow page evaluate" desc="Let the model run JavaScript in page context (powerful; use carefully)." checked={!!prefs.allow_eval} onChange={v => setPref('allow_eval', v)} disabled={!available} />
       </div>
       <div className="mt-4 flex flex-wrap gap-2">

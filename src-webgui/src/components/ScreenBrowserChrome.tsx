@@ -207,9 +207,16 @@ function TabChip({ tab, active, onSelect, onClose }: {
       }`}
       style={active ? { background: 'color-mix(in srgb, var(--koma-fg, #c8d3f5) 6%, var(--koma-bg, #0b0e14))' } : undefined}
     >
-      <button type="button" className="min-w-0 flex-1 truncate text-left" title={tab.url || tab.title} onClick={onSelect}>
-        {tab.loading && <LoaderCircle size={10} className="mr-1 inline animate-spin" />}
-        {tab.title || tab.url || 'New Tab'}
+      {/* flex row: global `svg.animate-spin { display:block }` must sit beside the
+          title, not stack a new line above it (that grew the chrome strip). */}
+      <button
+        type="button"
+        className="flex min-w-0 flex-1 items-center gap-1 text-left"
+        title={tab.url || tab.title}
+        onClick={onSelect}
+      >
+        {tab.loading && <LoaderCircle size={10} className="shrink-0 animate-spin text-koma-accent" />}
+        <span className="min-w-0 truncate">{tab.title || tab.url || 'New Tab'}</span>
       </button>
       <button
         type="button"

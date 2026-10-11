@@ -74,7 +74,6 @@ pub(super) struct BrowserWindow {
     ctl: std::sync::mpsc::Sender<HostCtl>,
     status: Status,
     always_on_top: bool,
-    stop_on_close: bool,
 }
 
 impl BrowserWindow {
@@ -193,7 +192,6 @@ impl BrowserWindow {
             ctl,
             status: status.clone(),
             always_on_top,
-            stop_on_close: status.prefs.stop_on_close,
         };
         browser.open_tab(Some("about:blank".into()), true)?;
         browser.layout()?;
@@ -203,7 +201,6 @@ impl BrowserWindow {
 
     pub fn apply_status(&mut self, status: Status) {
         self.status = status.clone();
-        self.stop_on_close = status.prefs.stop_on_close;
         if status.always_on_top != self.always_on_top {
             self.always_on_top = status.always_on_top;
             self.window.set_always_on_top(self.always_on_top);
@@ -215,10 +212,6 @@ impl BrowserWindow {
         if !status.enabled {
             // Host will drop the window.
         }
-    }
-
-    pub fn stop_on_close(&self) -> bool {
-        self.stop_on_close
     }
 
     pub fn always_on_top(&self) -> bool {

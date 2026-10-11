@@ -1014,7 +1014,7 @@ pub fn run_gui(opts: crate::cli::Opts) -> Result<()> {
                                     },
                                     "prefs": {
                                         "always_on_top": false, "auto_screenshot": true,
-                                        "stop_on_close": false, "allow_eval": false,
+                                        "stop_on_close": true, "allow_eval": false,
                                         "popup_policy": "new_tab"
                                     },
                                     "tabs": [],
@@ -1063,32 +1063,35 @@ pub fn run_gui(opts: crate::cli::Opts) -> Result<()> {
                 }
             Event::WindowEvent { window_id, event: WindowEvent::CloseRequested, .. }
                 if screen_browser.as_ref().is_some_and(|v| v.window.id() == window_id) => {
-                    let stop = screen_browser.as_ref().is_some_and(|b| b.stop_on_close());
+                    // Closing the window = Stop (same as the titlebar Power control):
+                    // tear down + disable so the browser does not re-spawn.
                     screen_browser = None;
-                    if stop {
-                        let _ = screen_browser_ctl.send(crate::app::runtime::client::HostCtl::ScreenBrowser {
-                            action: "stop".into(),
-                            window: None,
-                            prefs: None,
-                            url: None,
-                            tab_id: None,
-                            tabs: None,
-                            active_tab: None,
-                            window_open: false,
-                            reply: None,
-                        });
-                    } else {
-                        let _ = screen_browser_ctl.send(crate::app::runtime::client::HostCtl::ScreenBrowser {
-                            action: "window_state".into(),
-                            window: None,
-                            prefs: None,
-                            url: None,
-                            tab_id: None,
-                            tabs: Some(Vec::new()),
-                            active_tab: None,
-                            window_open: false,
-                            reply: None,
-                        });
+                    let _ = screen_browser_ctl.send(crate::app::runtime::client::HostCtl::ScreenBrowser {
+                        action: "stop".into(),
+                        window: None,
+                        prefs: None,
+                        url: None,
+                        tab_id: None,
+                        tabs: None,
+                        active_tab: None,
+                        window_open: false,
+                        reply: None,
+                    });
+                    // Optimistic UI: grey the globe immediately (mirror ScreenBrowserClose).
+                    if let Some(status) = screen_browser_status.as_mut() {
+                        status.enabled = false;
+                        status.window_open = false;
+                        status.busy = false;
+                        status.paused = false;
+                        status.waiting_human = false;
+                        status.tabs.clear();
+                        status.active_tab = None;
+                        status.observation = None;
+                        status.message = "Stopped".into();
+                        pending_pushes.push_back(
+                            serde_json::json!({"k":"ScreenBrowser","status":status}).to_string(),
+                        );
+                        next_push_at = Some(Instant::now());
                     }
                 }
             Event::WindowEvent { window_id, event: WindowEvent::Resized(_), .. }
