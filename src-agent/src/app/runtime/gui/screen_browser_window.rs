@@ -3,8 +3,9 @@ use super::proto::UserEvent;
 use crate::app::runtime::{
     client::HostCtl,
     screen_browser::{
+        act::{action_js, wait_is_delay},
         allow_content_url, duckduckgo_search_url, resolve_omnibox_input, validate_content_url,
-        webview_can_load_url, Action, Observation, Operation, Request, Reply, Status, TabInfo,
+        webview_can_load_url, Action, Observation, Operation, Reply, Request, Status, TabInfo,
         Transform, Viewport, MAX_TABS,
     },
 };
@@ -291,11 +292,7 @@ fn macos_pin_chrome(chrome: &WebView, tabs: &[Tab], active: Option<&str>) {
                 relative.as_deref(),
             );
         }
-        parent.addSubview_positioned_relativeTo(
-            chrome_view,
-            NSWindowOrderingMode::Above,
-            None,
-        );
+        parent.addSubview_positioned_relativeTo(chrome_view, NSWindowOrderingMode::Above, None);
     }
 }
 
@@ -340,8 +337,8 @@ impl BrowserWindow {
             .as_ref()
             .and_then(|p| std::fs::read(p).ok())
             .and_then(|v| serde_json::from_slice::<Placement>(&v).ok());
-        let always_on_top = status.prefs.always_on_top
-            || saved.as_ref().map(|s| s.always_on_top).unwrap_or(false);
+        let always_on_top =
+            status.prefs.always_on_top || saved.as_ref().map(|s| s.always_on_top).unwrap_or(false);
         let mut builder = WindowBuilder::new()
             .with_title("Koma · Browser")
             .with_inner_size(PhysicalSize::new(1100, 760))
@@ -787,8 +784,7 @@ impl BrowserWindow {
         if !webview_can_load_url(url) {
             bail!("invalid url");
         }
-        match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| tab.webview.load_url(url)))
-        {
+        match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| tab.webview.load_url(url))) {
             Ok(Ok(())) => Ok(()),
             Ok(Err(e)) => Err(anyhow::anyhow!("{e}")),
             Err(_) => bail!("webview rejected url"),
@@ -1049,10 +1045,7 @@ impl BrowserWindow {
             "nav_blocked" => {
                 if let Some(id) = tab_id {
                     if let Some(t) = self.tabs.iter_mut().find(|t| t.id == id) {
-                        t.error = Some(format!(
-                            "Blocked navigation: {}",
-                            url.unwrap_or_default()
-                        ));
+                        t.error = Some(format!("Blocked navigation: {}", url.unwrap_or_default()));
                         t.loading = false;
                     }
                     self.push_status();
@@ -1084,7 +1077,9 @@ impl BrowserWindow {
                         }
                         "close" => self.handle_chrome("close", None, tab_id.clone())?,
                         "select" => self.handle_chrome("select", None, tab_id.clone())?,
-                        "navigate" => self.handle_chrome("navigate", url.clone(), tab_id.clone())?,
+                        "navigate" => {
+                            self.handle_chrome("navigate", url.clone(), tab_id.clone())?
+                        }
                         "reload" => self.handle_chrome("reload", None, tab_id.clone())?,
                         "stop" => self.handle_chrome("stop", None, tab_id.clone())?,
                         "back" => self.handle_chrome("back", None, tab_id.clone())?,
@@ -1139,10 +1134,8 @@ impl BrowserWindow {
                 } => {
                     let tab = self.tab_mut(tab_id.as_deref())?;
                     // Return value via wry's JSON callback (works macOS/Windows/Linux).
-                    let result = capture::js_eval(
-                        &tab.webview,
-                        &format!("(function(){{\n{script}\n}})()"),
-                    )?;
+                    let result =
+                        capture::js_eval(&tab.webview, &format!("(function(){{\n{script}\n}})()"))?;
                     if result.contains("\"__koma_err\"") {
                         reply.error = Some(result);
                     } else {
@@ -1274,11 +1267,7 @@ impl BrowserWindow {
             })
             .take(40)
             .collect::<String>();
-        let host = if host.is_empty() {
-            "page".into()
-        } else {
-            host
-        };
+        let host = if host.is_empty() { "page".into() } else { host };
         let ts = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .map(|d| d.as_secs())
@@ -1288,11 +1277,8 @@ impl BrowserWindow {
         std::fs::create_dir_all(&dir).context("create .screenshoot")?;
         let path = dir.join(format!("{stem}.png"));
         std::fs::write(&path, &png).context("write screenshot png")?;
-        let _ = crate::model::screenshot_catalog::register_screenshot(
-            &self.workdir,
-            &stem,
-            &obs.url,
-        );
+        let _ =
+            crate::model::screenshot_catalog::register_screenshot(&self.workdir, &stem, &obs.url);
         Ok(path.to_string_lossy().into_owned())
     }
 
@@ -1306,8 +1292,15 @@ impl BrowserWindow {
             } = action
             {
                 let ms = timeout_ms.unwrap_or(5000);
-                let deadline = std::time::Instant::now()
-                    + std::time::Duration::from_millis(ms);
+                let deadline = std::time::Instant::now() + std::time::Duration::from_millis(ms);
+                if wait_is_delay(selector, url_contains) {
+                    // Delay: keep pumping the GUI loop. Never bail.
+                    while std::time::Instant::now() < deadline {
+                        capture::pump_brief();
+                    }
+                    completed += 1;
+                    continue;
+                }
                 let sel = selector.clone().unwrap_or_default();
                 let urlc = url_contains.clone().unwrap_or_default();
                 loop {
@@ -1318,7 +1311,8 @@ impl BrowserWindow {
                          return false; }})()"
                     );
                     let tab = self.tab_mut(tab_id)?;
-                    let raw = capture::js_eval(&tab.webview, &expr).unwrap_or_else(|_| "false".into());
+                    let raw =
+                        capture::js_eval(&tab.webview, &expr).unwrap_or_else(|_| "false".into());
                     if raw.contains("true") {
                         break;
                     }
@@ -1330,17 +1324,19 @@ impl BrowserWindow {
                 completed += 1;
                 continue;
             }
-            let script = action_script(action)?;
+            let script = action_js(action)?;
             // Run as expression that returns true so js_eval confirms completion.
             let expr = format!("(function(){{ {script}; return true; }})()");
-            {
+            let raw = {
                 let tab = self.tab_mut(tab_id)?;
-                let _ = capture::js_eval(&tab.webview, &expr).or_else(
-                    |_| -> Result<String> {
-                        tab.webview.evaluate_script(&script)?;
-                        Ok("true".into())
-                    },
-                )?;
+                capture::js_eval(&tab.webview, &expr).or_else(|_| -> Result<String> {
+                    tab.webview.evaluate_script(&script)?;
+                    Ok("true".into())
+                })?
+            };
+            // js_eval catch returns {__koma_err} as a successful JSON string.
+            if raw.contains("\"__koma_err\"") {
+                bail!("act js: {raw}");
             }
             completed += 1;
             // Brief settle so layout/scroll finishes before the next act or observe.
@@ -1377,7 +1373,8 @@ impl BrowserWindow {
         let raw = capture::js_eval(&tab.webview, &expression)?;
         // wry returns a JSON string; unwrap string literals for text modes.
         if matches!(mode, "text" | "markdown" | "html") {
-            if let Ok(serde_json::Value::String(s)) = serde_json::from_str::<serde_json::Value>(&raw)
+            if let Ok(serde_json::Value::String(s)) =
+                serde_json::from_str::<serde_json::Value>(&raw)
             {
                 return Ok(s);
             }
@@ -1396,116 +1393,14 @@ impl BrowserWindow {
     }
 }
 
-fn action_script(action: &Action) -> Result<String> {
-    match action {
-        Action::Click {
-            selector,
-            x,
-            y,
-            button,
-        } => {
-            let btn = match button {
-                crate::app::runtime::screen_browser::ClickButton::Right => "contextmenu",
-                crate::app::runtime::screen_browser::ClickButton::Double => "dblclick",
-                _ => "click",
-            };
-            if let Some(sel) = selector {
-                Ok(format!(
-                    r#"(function(){{const el=document.querySelector({sel:?}); if(!el) throw new Error('not found'); el.scrollIntoView({{block:'center'}}); el.dispatchEvent(new MouseEvent('{btn}',{{bubbles:true,cancelable:true,view:window}})); if({btn:?}==='click'&&typeof el.click==='function') el.click();}})();"#
-                ))
-            } else {
-                let x = x.ok_or_else(|| anyhow::anyhow!("click needs selector or x,y"))?;
-                let y = y.ok_or_else(|| anyhow::anyhow!("click needs selector or x,y"))?;
-                Ok(format!(
-                    r#"(function(){{const el=document.elementFromPoint({x},{y}); if(!el) throw new Error('no element'); el.dispatchEvent(new MouseEvent('{btn}',{{bubbles:true,cancelable:true,clientX:{x},clientY:{y},view:window}}));}})();"#
-                ))
-            }
-        }
-        Action::Dblclick { selector, x, y } => action_script(&Action::Click {
-            selector: selector.clone(),
-            x: *x,
-            y: *y,
-            button: crate::app::runtime::screen_browser::ClickButton::Double,
-        }),
-        Action::Hover { selector, x, y } => {
-            if let Some(sel) = selector {
-                Ok(format!(
-                    r#"(function(){{const el=document.querySelector({sel:?}); if(!el) throw new Error('not found'); el.dispatchEvent(new MouseEvent('mouseover',{{bubbles:true}})); el.dispatchEvent(new MouseEvent('mouseenter',{{bubbles:true}}));}})();"#
-                ))
-            } else {
-                let x = x.unwrap_or(0.0);
-                let y = y.unwrap_or(0.0);
-                Ok(format!(
-                    r#"(function(){{const el=document.elementFromPoint({x},{y}); if(el){{el.dispatchEvent(new MouseEvent('mouseover',{{bubbles:true,clientX:{x},clientY:{y}}}));}}}})();"#
-                ))
-            }
-        }
-        Action::Scroll {
-            selector,
-            delta,
-            to,
-            ..
-        } => {
-            if let Some(t) = to {
-                Ok(format!(
-                    r#"(function(){{const el=document.querySelector({t:?}); if(el) el.scrollIntoView({{block:'center'}});}})();"#
-                ))
-            } else if let Some(sel) = selector {
-                let d = delta.unwrap_or(3);
-                Ok(format!(
-                    r#"(function(){{const el=document.querySelector({sel:?})||document.scrollingElement; el.scrollBy(0, {d}*40);}})();"#
-                ))
-            } else {
-                let d = delta.unwrap_or(3);
-                Ok(format!(
-                    r#"(function(){{(document.scrollingElement||document.body).scrollBy(0,{d}*40);}})();"#
-                ))
-            }
-        }
-        Action::Type { text, selector } => {
-            let t = text.replace('\\', "\\\\").replace('\'', "\\'");
-            if let Some(sel) = selector {
-                Ok(format!(
-                    r#"(function(){{const el=document.querySelector({sel:?}); if(!el) throw new Error('not found'); el.focus(); el.value='{t}'; el.dispatchEvent(new Event('input',{{bubbles:true}})); el.dispatchEvent(new Event('change',{{bubbles:true}}));}})();"#
-                ))
-            } else {
-                Ok(format!(
-                    r#"(function(){{const el=document.activeElement; if(!el) throw new Error('no focus'); if('value' in el){{el.value=(el.value||'')+'{t}'; el.dispatchEvent(new Event('input',{{bubbles:true}}));}} else {{document.execCommand('insertText',false,'{t}');}}}})();"#
-                ))
-            }
-        }
-        Action::Key { keys } => {
-            let key = keys.last().cloned().unwrap_or_default();
-            Ok(format!(
-                r#"(function(){{const el=document.activeElement||document.body; el.dispatchEvent(new KeyboardEvent('keydown',{{key:{key:?},bubbles:true}})); el.dispatchEvent(new KeyboardEvent('keyup',{{key:{key:?},bubbles:true}}));}})();"#
-            ))
-        }
-        Action::Wait {
-            selector,
-            url_contains,
-            timeout_ms,
-        } => {
-            // Poll in Rust, not a busy JS while-loop (that freezes the page).
-            let ms = timeout_ms.unwrap_or(5000);
-            let sel = selector.clone().unwrap_or_default();
-            let urlc = url_contains.clone().unwrap_or_default();
-            Ok(format!(
-                "(function(){{ const sel={sel:?}; const urlc={urlc:?}; \
-                 if(sel && document.querySelector(sel)) return true; \
-                 if(urlc && location.href.includes(urlc)) return true; \
-                 return false; /* host polls up to {ms}ms */ }})()"
-            ))
-        }
-    }
-}
-
 fn image_size(png: &[u8]) -> Option<(u32, u32)> {
     let img = image::load_from_memory(png).ok()?;
     Some((img.width(), img.height()))
 }
 
 fn resize_png(png: &[u8], w: u32, h: u32) -> Result<Vec<u8>> {
-    let img = image::load_from_memory(png)?.resize_exact(w, h, image::imageops::FilterType::Triangle);
+    let img =
+        image::load_from_memory(png)?.resize_exact(w, h, image::imageops::FilterType::Triangle);
     let mut out = Vec::new();
     img.write_to(&mut std::io::Cursor::new(&mut out), image::ImageFormat::Png)?;
     Ok(out)
@@ -1594,10 +1489,7 @@ mod capture {
         }
         let cropped = img.crop_imm(0, top_px, img.width(), img.height() - top_px);
         let mut out = Vec::new();
-        cropped.write_to(
-            &mut std::io::Cursor::new(&mut out),
-            image::ImageFormat::Png,
-        )?;
+        cropped.write_to(&mut std::io::Cursor::new(&mut out), image::ImageFormat::Png)?;
         Ok(out)
     }
 
@@ -1710,8 +1602,9 @@ mod capture {
         pub fn snapshot_tab(webview: &WebView, full_page: bool) -> Result<Vec<u8>> {
             use objc2::rc::Retained;
 
-            let mtm = MainThreadMarker::new()
-                .ok_or_else(|| anyhow::anyhow!("page screenshot must run on the GUI main thread"))?;
+            let mtm = MainThreadMarker::new().ok_or_else(|| {
+                anyhow::anyhow!("page screenshot must run on the GUI main thread")
+            })?;
             let wk = webview.webview();
             let as_wk: &WKWebView = wk.as_ref();
             let slot: SnapshotSlot = Rc::new(RefCell::new(None));
@@ -1781,13 +1674,9 @@ mod capture {
                 .TIFFRepresentation()
                 .ok_or_else(|| anyhow::anyhow!("NSImage has no TIFF representation"))?;
             let bytes = tiff.to_vec();
-            let img = image::load_from_memory(&bytes)
-                .context("decode WKWebView TIFF snapshot")?;
+            let img = image::load_from_memory(&bytes).context("decode WKWebView TIFF snapshot")?;
             let mut out = Vec::new();
-            img.write_to(
-                &mut std::io::Cursor::new(&mut out),
-                image::ImageFormat::Png,
-            )?;
+            img.write_to(&mut std::io::Cursor::new(&mut out), image::ImageFormat::Png)?;
             Ok(out)
         }
     }
@@ -1822,15 +1711,14 @@ mod capture {
                 .map_err(|e| anyhow::anyhow!("CoreWebView2: {e}"))?;
 
             let method: Vec<u16> = "Page.captureScreenshot\0".encode_utf16().collect();
-            let params: Vec<u16> =
-                "{\"format\":\"png\",\"captureBeyondViewport\":true}\0"
-                    .encode_utf16()
-                    .collect();
+            let params: Vec<u16> = "{\"format\":\"png\",\"captureBeyondViewport\":true}\0"
+                .encode_utf16()
+                .collect();
 
             let done = Arc::new(Mutex::new(None::<Result<String, String>>));
             let flag = Arc::clone(&done);
-            let handler = CallDevToolsProtocolMethodCompletedHandler::create(Box::new(
-                move |err, json| {
+            let handler =
+                CallDevToolsProtocolMethodCompletedHandler::create(Box::new(move |err, json| {
                     let res = if err.is_ok() {
                         Ok(json)
                     } else {
@@ -1838,8 +1726,7 @@ mod capture {
                     };
                     *flag.lock().unwrap_or_else(|e| e.into_inner()) = Some(res);
                     Ok(())
-                },
-            ));
+                }));
 
             unsafe {
                 core.CallDevToolsProtocolMethod(
@@ -1861,8 +1748,8 @@ mod capture {
                 super::pump_main_events();
             };
 
-            let v: serde_json::Value = serde_json::from_str(&json)
-                .context("parse CDP captureScreenshot JSON")?;
+            let v: serde_json::Value =
+                serde_json::from_str(&json).context("parse CDP captureScreenshot JSON")?;
             let b64 = v
                 .get("data")
                 .and_then(|d| d.as_str())
@@ -1877,15 +1764,15 @@ mod capture {
         }
 
         fn snapshot_preview(webview: &WebView) -> Result<Vec<u8>> {
+            use webview2_com::CapturePreviewCompletedHandler;
             use webview2_com::Microsoft::Web::WebView2::Win32::{
                 ICoreWebView2, COREWEBVIEW2_CAPTURE_PREVIEW_IMAGE_FORMAT_PNG,
             };
-            use webview2_com::CapturePreviewCompletedHandler;
             use windows::core::{Interface, PCWSTR};
-            use windows::Win32::UI::Shell::SHCreateStreamOnFileEx;
             use windows::Win32::System::Com::{
                 IStream, STGM_CREATE, STGM_READWRITE, STGM_SHARE_EXCLUSIVE,
             };
+            use windows::Win32::UI::Shell::SHCreateStreamOnFileEx;
 
             let controller = webview.controller();
             let core: ICoreWebView2 = unsafe { controller.CoreWebView2() }

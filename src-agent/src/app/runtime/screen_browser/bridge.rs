@@ -56,10 +56,7 @@ pub fn dispatch(state: &mut AppState, index: usize, call: &ToolCall) {
             "wait_human" => "wait_human",
             other => anyhow::bail!("unknown screen_browser tool suffix: {other}"),
         };
-        obj.insert(
-            "kind".into(),
-            serde_json::Value::String(kind_tag.into()),
-        );
+        obj.insert("kind".into(), serde_json::Value::String(kind_tag.into()));
         let operation: Operation = serde_json::from_value(serde_json::Value::Object(obj))?;
         rt.screen_browser.begin(call.id.clone(), operation)
     })();

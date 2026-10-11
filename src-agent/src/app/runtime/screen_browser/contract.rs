@@ -83,12 +83,11 @@ pub fn webview_can_load_url(url: &str) -> bool {
 
 #[cfg(any(feature = "gui", test))]
 pub fn duckduckgo_search_url(query: &str) -> String {
-    crate::model::settings::build_search_url(OMNIBOX_DDG, query.trim())
-        .unwrap_or_else(|_| {
-            let encoded: String =
-                url::form_urlencoded::byte_serialize(query.trim().as_bytes()).collect();
-            format!("https://duckduckgo.com/?q={encoded}")
-        })
+    crate::model::settings::build_search_url(OMNIBOX_DDG, query.trim()).unwrap_or_else(|_| {
+        let encoded: String =
+            url::form_urlencoded::byte_serialize(query.trim().as_bytes()).collect();
+        format!("https://duckduckgo.com/?q={encoded}")
+    })
 }
 
 /// RFC-ish DNS label: `a`, `a1`, `a-b` — not empty, not leading/trailing hyphen.
@@ -691,7 +690,10 @@ mod tests {
             "https://accounts.google.com/v3/signin/identifier?continue=https://mail.google.com",
             "new_tab"
         ));
-        assert!(allow_popup_url("https://github.com/login/oauth/authorize?client_id=x", "new_tab"));
+        assert!(allow_popup_url(
+            "https://github.com/login/oauth/authorize?client_id=x",
+            "new_tab"
+        ));
         // Internal non-document path segments (`/_/…`) — any host, not a vendor list.
         assert!(is_noise_popup_url("https://accounts.google.com/_/bscframe"));
         assert!(is_noise_popup_url("https://example.com/_/rpc/frame"));

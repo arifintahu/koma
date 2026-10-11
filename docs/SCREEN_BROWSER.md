@@ -75,6 +75,20 @@ the PNG. Grant screen-recording permission only if the macOS window-id fallback 
 All three desktop OSes share the same wry `evaluate_script_with_callback` path for
 read/eval/act confirmation.
 
+### Act details
+
+- **wait** with no `selector` and no `url_contains` is a delay of `timeout_ms`
+  (default 5s). It always succeeds; the GUI loop is pumped so the page stays
+  live. With a selector and/or `url_contains`, it polls until true or times out
+  (a timeout drops the rest of the act batch).
+- **scroll** `delta` is CSS pixels (default 400). `to: "bottom"` / `"top"`
+  (case-insensitive) scroll that axis; any other `to` is a CSS selector for
+  `scrollIntoView`. If the document root does not overflow, the largest
+  `overflow-y: auto|scroll|overlay` descendant is used (capped at ~500 nodes).
+- **key** `End` / `Home` / `PageDown` / `PageUp` / `Space` / arrows apply real
+  scroll on that same node. Other keys dispatch `KeyboardEvent` (browsers do
+  not apply default scroll for synthetic key events).
+
 ## Always on top
 
 Default **off**. Agent control uses the webview API and does **not** raise the
