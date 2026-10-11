@@ -32,10 +32,11 @@ import { showCodingRefactor } from './CodingRefactor'
 import { undoWorkspaceEdit } from '../lib/coding-edits'
 import { showCodingHistory } from './CodingHistory'
 import { isMarkdownPath } from '../lib/markdownPreview'
+import { useCodingAutosave } from '../lib/coding-autosave'
+import { isNotebookPath } from '../lib/notebook-workspace'
 
 type CodingTab = Extract<Tab, { kind: 'codingFile' }>
 
-const AUTOSAVE_MS = 750
 // Diagnostics / CodeLens can lag typing; completion flushes pending didChange
 // immediately via registerLspDidChangeFlusher so the server stays current.
 const LSP_CHANGE_MS = 120
@@ -59,7 +60,6 @@ function WorkspaceCodeEditor({ tab }: { tab: CodingTab }) {
   // while applyGenRef !== 0 (sync) AND until the matching clear runs after Monaco
   // flushes. A plain boolean + rAF was still losing races on split/layout.
   const applyGenRef = useRef(0)
-  const autosaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const lspChangeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const lspOpenedRef = useRef(false)
 
@@ -132,50 +132,7 @@ function WorkspaceCodeEditor({ tab }: { tab: CodingTab }) {
     return 'Saved'
   }, [fileState, codingAutosave])
 
-  useEffect(() => {
-    if (autosaveTimerRef.current) {
-      clearTimeout(autosaveTimerRef.current)
-      autosaveTimerRef.current = null
-    }
-    if (!codingAutosave || fileState?.manualSaveRequired) return
-    if (!fileState?.dirty) return
-    if (fileState.content == null) return
-    if (fileState.saving || fileState.conflict || fileState.binary || fileState.tooLarge || fileState.error) {
-      return
-    }
-    if (fileState.content === (fileState.savedContent ?? '')) return
-
-    autosaveTimerRef.current = setTimeout(() => {
-      autosaveTimerRef.current = null
-      const cur = useKoma.getState().coding.files[fileKey(tab.root, tab.path)]
-      if (!cur?.dirty || cur.content == null || cur.saving || cur.conflict || cur.manualSaveRequired) return
-      if (cur.binary || cur.tooLarge || cur.error) return
-      if (cur.content === (cur.savedContent ?? '')) return
-      if (!useKoma.getState().settingsValues?.codingAutosave) return
-      useKoma.getState().saveCodingFile(tab.root, tab.path)
-    }, AUTOSAVE_MS)
-
-    return () => {
-      if (autosaveTimerRef.current) {
-        clearTimeout(autosaveTimerRef.current)
-        autosaveTimerRef.current = null
-      }
-    }
-  }, [
-    codingAutosave,
-    fileState?.manualSaveRequired,
-    fileState?.dirty,
-    fileState?.content,
-    fileState?.savedContent,
-    fileState?.saving,
-    fileState?.conflict,
-    fileState?.binary,
-    fileState?.tooLarge,
-    fileState?.error,
-    tab.root,
-    tab.path,
-  ])
-
+  useCodingAutosave(tab.root, tab.path, fileState, codingAutosave)
   useEffect(() => {
     const host = containerRef.current
     if (!host) return
@@ -530,6 +487,8 @@ function WorkspaceCodeEditor({ tab }: { tab: CodingTab }) {
   // without remounting the tab, so this effect must re-run and send LspDidOpen.
   useEffect(() => {
     if (lspOpenedRef.current) return
+    // Notebooks use NotebookTab and must never open ordinary text-document LSP.
+    if (isNotebookPath(tab.path)) return
     if (
       !fileState ||
       fileState.content == null ||

@@ -68,7 +68,10 @@ export function tabActions(set: StoreSet, get: StoreGet): Pick<KomaState, 'openD
     }
     if (closingCoding) {
       if (opts?.force) forgetCodingDraft({ hostId: get().remoteState.hostId ?? 'local', root: closingCoding.root }, closingCoding.path)
-      get().req({ r: 'LspDidClose', root: closingCoding.root, path: closingCoding.path })
+      // Notebooks never open ordinary text-document LSP; skip LspDidClose noise.
+      if (!/\.ipynb$/i.test(closingCoding.path)) {
+        get().req({ r: 'LspDidClose', root: closingCoding.root, path: closingCoding.path })
+      }
       // Close-without-save must drop the dirty buffer + Monaco model; otherwise
       // reopen restores unsaved edits (reduceFileRead refuses to clobber dirty).
       if (opts?.force) {
@@ -79,6 +82,9 @@ export function tabActions(set: StoreSet, get: StoreGet): Pick<KomaState, 'openD
           .catch(() => {
             /* monaco not loaded yet */
           })
+        void import('../../lib/notebook-controller')
+          .then((m) => m.disposeNotebookController(get().remoteState.hostId ?? 'local', root, path))
+          .catch(() => {})
       }
     }
     const closedAnalytics = id === 'analytics'

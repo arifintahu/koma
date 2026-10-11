@@ -7,6 +7,7 @@ import { designTabId } from '../../lib/design'
 import { diagramTabId, isDiagramPath } from '../../lib/diagram'
 import { consumeQuietMiss, diagramFolder, expectMissingFileOp } from '../../lib/diagramNotes'
 import { codingTabId } from '../../lib/markdownPreview'
+import { isNotebookPath } from '../../lib/notebook-workspace'
 import { beginDesignSeed } from '../actions/design'
 import { beginDiagramSeed } from '../actions/diagram'
 import type { StoreGet, StoreSet } from '../api'
@@ -283,17 +284,19 @@ export function pushCoding(set: StoreSet, get: StoreGet, env: PushEnvelope): boo
             content: saved.content, savedContent: saved.savedContent, fingerprint: saved.fingerprint,
           })
           else forgetCodingDraft(workspace, env.path)
-          get().req({
-            r: 'LspDidSave',
-            root: env.root,
-            path: env.path,
-            text: pending.content,
-          })
-          // didSave describes disk, but the open LSP document may already be
-          // newer. Reassert that buffer after the save notification.
-          const latest = get().coding.files[key]?.content
-          if (latest != null && latest !== pending.content) {
-            get().req({ r: 'LspDidChange', root: env.root, path: env.path, text: latest })
+          if (!isNotebookPath(env.path)) {
+            get().req({
+              r: 'LspDidSave',
+              root: env.root,
+              path: env.path,
+              text: pending.content,
+            })
+            // didSave describes disk, but the open LSP document may already be
+            // newer. Reassert that buffer after the save notification.
+            const latest = get().coding.files[key]?.content
+            if (latest != null && latest !== pending.content) {
+              get().req({ r: 'LspDidChange', root: env.root, path: env.path, text: latest })
+            }
           }
           if (before.saveQueued && get().coding.files[key]?.dirty) {
             get().saveCodingFile(env.root, env.path)

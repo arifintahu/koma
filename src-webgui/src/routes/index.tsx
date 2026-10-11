@@ -1,5 +1,6 @@
 import { isExternalFileDrag } from '../lib/externalFileDrag'
 import { pagePoint } from '../lib/uiScale'
+import { isNotebookPath } from '../lib/notebook-workspace'
 import { CodingTests } from '../components/CodingTests'
 import { CodingDebug } from '../components/CodingDebug'
 import { createRootRoute, createRoute, Outlet } from '@tanstack/react-router'
@@ -536,6 +537,7 @@ const InstalledExtensionTab = lazy(() => import('../components/InstalledExtensio
 
 // Coding panel Monaco editor — lazy so its chunk only loads when a file is opened.
 const CodeEditorTab = lazy(() => import('../components/CodeEditorTab'))
+const NotebookTab = lazy(() => import('../components/NotebookTab'))
 const LocalFileTab = lazy(() => import('../components/LocalFileTab'))
 const MarkdownPreviewTab = lazy(() => import('../components/MarkdownPreviewTab'))
 
@@ -590,7 +592,7 @@ function TabBody({ tab, visible }: { tab: Exclude<Tab, { kind: 'chat' }>; visibl
       ) : tab.kind === 'extension' ? (
         <ExtensionPanelFrame extId={tab.extId} panelId={tab.panelId} title={tab.title} />
       ) : tab.kind === 'codingFile' ? (
-        tab.preview ? <MarkdownPreviewTab tab={tab} /> : <CodeEditorTab tab={tab} />
+        tab.preview ? <MarkdownPreviewTab tab={tab} /> : isNotebookPath(tab.path) ? <NotebookTab tab={tab} /> : <CodeEditorTab tab={tab} />
       ) : tab.kind === 'localFile' ? (
         <LocalFileTab tab={tab} />
       ) : tab.kind === 'terminal' ? (
