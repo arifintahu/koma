@@ -91,7 +91,75 @@ pub fn duckduckgo_search_url(query: &str) -> String {
         })
 }
 
-/// Address-bar input → content URL. Anything wry cannot load becomes a DDG search.
+/// RFC-ish DNS label: `a`, `a1`, `a-b` — not empty, not leading/trailing hyphen.
+#[cfg(any(feature = "gui", test))]
+fn is_dns_label(label: &str) -> bool {
+    let b = label.as_bytes();
+    if b.is_empty() || b.len() > 63 {
+        return false;
+    }
+    if !b[0].is_ascii_alphanumeric() || !b[b.len() - 1].is_ascii_alphanumeric() {
+        return false;
+    }
+    b.iter().all(|c| c.is_ascii_alphanumeric() || *c == b'-')
+}
+
+/// Chrome-style host check: IP, localhost, or at least two DNS labels (`example.com`).
+/// A single word (`hello`) is a search, even if `https://hello` parses as a URL.
+/// A numeric port on a single label (`host:3000`) is treated as a LAN URL.
+#[cfg(any(feature = "gui", test))]
+fn host_is_navigable(host: &str, has_port: bool) -> bool {
+    let host = host.trim();
+    if host.is_empty() {
+        return false;
+    }
+    if host.parse::<std::net::IpAddr>().is_ok() {
+        return true;
+    }
+    if host.eq_ignore_ascii_case("localhost") {
+        return true;
+    }
+    let labels: Vec<&str> = host.trim_end_matches('.').split('.').collect();
+    if labels.len() < 2 {
+        return has_port && is_dns_label(host);
+    }
+    labels.iter().copied().all(is_dns_label)
+}
+
+#[cfg(any(feature = "gui", test))]
+fn has_http_scheme(raw: &str) -> bool {
+    raw.get(..8)
+        .is_some_and(|s| s.eq_ignore_ascii_case("https://"))
+        || raw
+            .get(..7)
+            .is_some_and(|s| s.eq_ignore_ascii_case("http://"))
+}
+
+/// Parse as a real http(s) page URL. `None` → caller should search instead.
+#[cfg(any(feature = "gui", test))]
+fn navigable_http_url(raw: &str) -> Option<String> {
+    if raw.chars().any(|c| c.is_whitespace() || c.is_control()) {
+        return None;
+    }
+    let candidate = if has_http_scheme(raw) {
+        raw.to_string()
+    } else if raw.contains("://") {
+        return None;
+    } else {
+        format!("https://{raw}")
+    };
+    let parsed = url::Url::parse(&candidate).ok()?;
+    if !matches!(parsed.scheme(), "http" | "https") {
+        return None;
+    }
+    let host = parsed.host_str()?;
+    if !host_is_navigable(host, parsed.port().is_some()) {
+        return None;
+    }
+    Some(candidate)
+}
+
+/// Address-bar input → content URL. Not a URL → DuckDuckGo search.
 #[cfg(any(feature = "gui", test))]
 pub fn resolve_omnibox_input(raw: &str) -> Result<String> {
     let raw = raw.trim();
@@ -101,14 +169,8 @@ pub fn resolve_omnibox_input(raw: &str) -> Result<String> {
     if is_blank_url(raw) {
         return Ok("about:blank".into());
     }
-    if webview_can_load_url(raw) {
-        return Ok(raw.to_string());
-    }
-    if !raw.contains("://") {
-        let https = format!("https://{raw}");
-        if webview_can_load_url(&https) {
-            return Ok(https);
-        }
+    if let Some(url) = navigable_http_url(raw) {
+        return Ok(url);
     }
     Ok(duckduckgo_search_url(raw))
 }
@@ -567,6 +629,14 @@ mod tests {
         assert!(!allow_content_url("koma://localhost"));
     }
 
+    fn assert_ddg(input: &str) {
+        let u = resolve_omnibox_input(input).unwrap();
+        assert!(
+            u.starts_with("https://duckduckgo.com/?q="),
+            "expected DDG for {input:?}, got {u}"
+        );
+    }
+
     #[test]
     fn omnibox_urls_pass_through() {
         assert_eq!(
@@ -581,25 +651,33 @@ mod tests {
             resolve_omnibox_input("localhost:3000").unwrap(),
             "https://localhost:3000"
         );
+        assert_eq!(
+            resolve_omnibox_input("127.0.0.1").unwrap(),
+            "https://127.0.0.1"
+        );
         assert_eq!(resolve_omnibox_input("about:blank").unwrap(), "about:blank");
+        assert_eq!(
+            resolve_omnibox_input("github.com/koma").unwrap(),
+            "https://github.com/koma"
+        );
     }
 
     #[test]
     fn omnibox_non_url_goes_to_duckduckgo() {
-        let u = resolve_omnibox_input("hello world").unwrap();
-        assert!(u.starts_with("https://duckduckgo.com/?q="), "{u}");
-        assert!(u.contains("hello+world"), "{u}");
-        let spaced = resolve_omnibox_input("https://hello world").unwrap();
-        assert!(
-            spaced.starts_with("https://duckduckgo.com/?q="),
-            "{spaced}"
-        );
-        let js = resolve_omnibox_input("javascript:alert(1)").unwrap();
-        assert!(js.starts_with("https://duckduckgo.com/?q="), "{js}");
+        assert_ddg("hello");
+        assert_ddg("https://hello");
+        assert_ddg("hello world");
+        assert_ddg("https://hello world");
+        assert_ddg("javascript:alert(1)");
         assert!(resolve_omnibox_input("").is_err());
         assert!(!webview_can_load_url("https://hello world"));
         assert!(!webview_can_load_url("file:///etc/passwd"));
         assert!(webview_can_load_url("https://example.com"));
+        // `https://hello` is syntactically loadable — omnibox still searches it.
+        assert!(webview_can_load_url("https://hello"));
+        assert!(navigable_http_url("hello").is_none());
+        assert!(navigable_http_url("https://hello").is_none());
+        assert!(navigable_http_url("example.com").is_some());
     }
 
     #[test]

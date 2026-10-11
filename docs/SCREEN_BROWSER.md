@@ -50,16 +50,18 @@ Tabs from the **+** control or the agent are unchanged.
 ## Capture
 
 Observation frames are **Chrome-style visible-tab screenshots of the page content**
-(the content webview only — no koma chrome, no OS titlebar):
+(the content webview only — no koma chrome, no OS titlebar, no overlapping apps):
 
-| OS | Primary | Fallback |
-|----|---------|----------|
-| macOS | `WKWebView.takeSnapshot` | `screencapture -R` content region |
-| Windows | WebView2 `CapturePreview` | — |
-| Linux | webkit2gtk `snapshot(Visible)` | grim/import content region |
+| OS | Visible | Full page | Fallback |
+|----|---------|-----------|----------|
+| macOS | `WKWebView.takeSnapshot` | snapshot rect from document size | this window's backing store (`screencapture -l`), chrome cropped |
+| Windows | WebView2 `CapturePreview` | CDP `Page.captureScreenshot` (`captureBeyondViewport`) | viewport `CapturePreview` |
+| Linux | webkit2gtk `snapshot(Visible)` | `snapshot(FullDocument)` | viewport `Visible` |
 
-`capture_quality` is `webview` when the native path succeeds, else `window`.
-Grant screen-recording permission only if the fallback path is used.
+`capture_quality` is `webview` when the native path succeeds, else `window` (macOS only).
+Desktop-region capture (`screencapture -R` / grim) is **not** used — it composites
+whatever is on screen, so a koma chat window covering the browser would appear in
+the PNG. Grant screen-recording permission only if the macOS window-id fallback is used.
 
 ## Page data and input
 

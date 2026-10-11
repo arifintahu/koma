@@ -15,17 +15,38 @@ function post(action: SbAction, extra?: { url?: string; tab_id?: string }) {
   window.ipc?.postMessage(JSON.stringify({ t: 'sb', a: action, ...extra }))
 }
 
+function isDnsLabel(label: string): boolean {
+  return /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?$/.test(label)
+}
+
+/** IP, localhost, or `example.com`. A single word (`hello`) is a search, not https://hello. */
+function hostIsNavigable(host: string, hasPort: boolean): boolean {
+  const h = host.replace(/^\[|\]$/g, '')
+  if (!h) return false
+  if (h.toLowerCase() === 'localhost') return true
+  if (/^(?:\d{1,3}\.){3}\d{1,3}$/.test(h) || h.includes(':')) return true
+  const labels = h.replace(/\.$/, '').split('.')
+  if (labels.length < 2) return hasPort && isDnsLabel(h)
+  return labels.every(isDnsLabel)
+}
+
 /** Address bar: real http(s) URLs pass through; anything else is a DuckDuckGo query. */
 export function resolveOmnibox(raw: string): string {
   const t = raw.trim()
   if (!t) return t
   if (/^about:blank(\?.*)?$/i.test(t)) return 'about:blank'
-  const candidate = /^(https?:\/\/)/i.test(t) ? t : (t.includes('://') ? t : `https://${t}`)
-  try {
-    if (/\s/.test(candidate)) throw new Error('space')
-    const u = new URL(candidate)
-    if ((u.protocol === 'http:' || u.protocol === 'https:') && u.hostname) return candidate
-  } catch { /* not a url */ }
+  if (/\s/.test(t) || /[\u0000-\u001F]/.test(t)) {
+    return `https://duckduckgo.com/?q=${encodeURIComponent(t)}`
+  }
+  const candidate = /^(https?:\/\/)/i.test(t) ? t : (t.includes('://') ? null : `https://${t}`)
+  if (candidate) {
+    try {
+      const u = new URL(candidate)
+      if ((u.protocol === 'http:' || u.protocol === 'https:') && hostIsNavigable(u.hostname, !!u.port)) {
+        return candidate
+      }
+    } catch { /* not a url */ }
+  }
   return `https://duckduckgo.com/?q=${encodeURIComponent(t)}`
 }
 

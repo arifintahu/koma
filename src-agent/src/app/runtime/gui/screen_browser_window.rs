@@ -1184,15 +1184,29 @@ impl BrowserWindow {
             let tab = self.tab_mut(tab_id)?;
             (tab.id.clone(), tab.url.clone(), tab.title.clone())
         };
-        // Chrome-style visible-tab capture: the page content webview only
-        // (no koma chrome, no OS window chrome).
+        // Engine snapshot of the page (GoFullPage-style). Never `screencapture -R`:
+        // that grabs the desktop under the rect, so overlapping koma appears in the PNG.
         let (png, quality) = {
             let tab = self.tab_mut(Some(&tab_id_s))?;
             match capture::snapshot_tab(&tab.webview, full_page) {
                 Ok(p) if !p.is_empty() => (p, "webview"),
-                Ok(_) | Err(_) => {
-                    let fallback = capture::snapshot_content_region(&self.window, chrome_h)?;
-                    (fallback, "window")
+                other => {
+                    let why = match &other {
+                        Ok(_) => "empty webview snapshot".to_string(),
+                        Err(e) => e.to_string(),
+                    };
+                    #[cfg(target_os = "macos")]
+                    {
+                        match capture::snapshot_own_window(&self.window, chrome_h) {
+                            Ok(p) if !p.is_empty() => (p, "window"),
+                            _ => bail!("page screenshot unavailable ({why})"),
+                        }
+                    }
+                    #[cfg(not(target_os = "macos"))]
+                    {
+                        let _ = chrome_h;
+                        bail!("page screenshot unavailable ({why})")
+                    }
                 }
             }
         };
@@ -1515,13 +1529,11 @@ mod capture {
         }
         #[cfg(target_os = "windows")]
         {
-            let _ = full_page;
-            win::snapshot_tab(webview)
+            win::snapshot_tab(webview, full_page)
         }
         #[cfg(target_os = "linux")]
         {
-            let _ = full_page;
-            linux::snapshot_tab(webview)
+            linux::snapshot_tab(webview, full_page)
         }
         #[cfg(not(any(target_os = "macos", target_os = "windows", target_os = "linux")))]
         {
@@ -1530,79 +1542,63 @@ mod capture {
         }
     }
 
-    /// Fallback: OS capture of the content region under the chrome strip.
-    pub fn snapshot_content_region(window: &Window, chrome_h_logical: f64) -> Result<Vec<u8>> {
-        let scale = window.scale_factor();
-        let outer = window
-            .outer_position()
-            .map_err(|e| anyhow::anyhow!("window position: {e}"))?;
-        let size = window.inner_size();
-        let chrome_px = (chrome_h_logical * scale).round() as i32;
-        let x = outer.x;
-        let y = outer.y + chrome_px;
-        let w = size.width as i32;
-        let h = (size.height as i32 - chrome_px).max(1);
-        let path = std::env::temp_dir().join(format!("koma-sb-{}.png", uuid::Uuid::new_v4()));
+    /// Fallback: this window's backing store (not a desktop region).
+    /// `screencapture -R` composites whatever is on screen — overlapping koma
+    /// would appear in the PNG. `-l <windowNumber>` is this NSWindow only.
+    #[cfg(target_os = "macos")]
+    pub fn snapshot_own_window(window: &Window, chrome_h_logical: f64) -> Result<Vec<u8>> {
+        use objc2::msg_send;
+        use objc2::runtime::AnyObject;
+        use tao::platform::macos::WindowExtMacOS;
 
-        #[cfg(target_os = "macos")]
-        {
-            use std::process::Command;
-            let status = Command::new("screencapture")
-                .args([
-                    "-x",
-                    "-R",
-                    &format!("{x},{y},{w},{h}"),
-                    path.to_str().unwrap_or("/tmp/koma-sb.png"),
-                ])
-                .status()
-                .context("screencapture")?;
-            if !status.success() {
-                bail!("screencapture failed");
-            }
-            let bytes = std::fs::read(&path)?;
-            let _ = std::fs::remove_file(&path);
-            if bytes.is_empty() {
-                bail!("empty capture");
-            }
-            Ok(bytes)
+        let ns = window.ns_window() as *mut AnyObject;
+        if ns.is_null() {
+            bail!("no NSWindow");
         }
-        #[cfg(target_os = "linux")]
-        {
-            use std::process::Command;
-            let p = path.to_string_lossy().to_string();
-            let ok = Command::new("grim")
-                .args(["-g", &format!("{x},{y} {w}x{h}"), &p])
-                .status()
-                .map(|s| s.success())
-                .unwrap_or(false)
-                || Command::new("import")
-                    .args([
-                        "-window",
-                        "root",
-                        "-crop",
-                        &format!("{w}x{h}+{x}+{y}"),
-                        &p,
-                    ])
-                    .status()
-                    .map(|s| s.success())
-                    .unwrap_or(false);
-            if !ok {
-                bail!("no grim/import capture tool available");
-            }
-            let bytes = std::fs::read(&path)?;
-            let _ = std::fs::remove_file(&path);
-            return Ok(bytes);
+        let id: isize = unsafe { msg_send![ns, windowNumber] };
+        if id <= 0 {
+            bail!("NSWindow windowNumber is 0");
         }
-        #[cfg(target_os = "windows")]
-        {
-            let _ = (x, y, w, h, path);
-            bail!("OS region capture not available; need WebView2 CapturePreview")
+        let path = std::env::temp_dir().join(format!("koma-sb-{}.png", uuid::Uuid::new_v4()));
+        let status = std::process::Command::new("screencapture")
+            .args([
+                "-x",
+                "-o",
+                "-l",
+                &id.to_string(),
+                path.to_str().unwrap_or("/tmp/koma-sb.png"),
+            ])
+            .status()
+            .context("screencapture -l")?;
+        if !status.success() {
+            bail!("screencapture -l failed");
         }
-        #[cfg(not(any(target_os = "macos", target_os = "windows", target_os = "linux")))]
-        {
-            let _ = (window, chrome_h_logical, path);
-            bail!("screenshot unsupported on this OS")
+        let bytes = std::fs::read(&path)?;
+        let _ = std::fs::remove_file(&path);
+        if bytes.is_empty() {
+            bail!("empty window capture");
         }
+        let scale = window.scale_factor();
+        let top = (chrome_h_logical * scale).round().max(0.0) as u32;
+        crop_top(&bytes, top)
+    }
+
+    #[cfg(target_os = "macos")]
+    fn crop_top(png: &[u8], top_px: u32) -> Result<Vec<u8>> {
+        if top_px == 0 {
+            return Ok(png.to_vec());
+        }
+        let img = image::load_from_memory(png)?;
+        if top_px >= img.height() {
+            bail!("chrome crop exceeds capture");
+        }
+        let cropped = img.crop_imm(0, top_px, img.width(), img.height() - top_px);
+        let mut out = Vec::new();
+        cropped.write_to(
+            &mut std::io::Cursor::new(&mut out),
+            image::ImageFormat::Png,
+        )?;
+        Ok(out)
     }
 
     /// Evaluate JS and return the JSON-serialized result (wry portable path).
@@ -1617,6 +1613,19 @@ mod capture {
             let _ = tx.send(value);
         })?;
         wait_recv(rx).map_err(|e| anyhow::anyhow!("js eval: {e}"))
+    }
+
+    #[cfg(target_os = "macos")]
+    fn page_content_size(webview: &WebView) -> Option<(f64, f64)> {
+        let raw = js_eval(
+            webview,
+            "({w:Math.max(document.documentElement.scrollWidth||0, (document.body&&document.body.scrollWidth)||0), h:Math.max(document.documentElement.scrollHeight||0, (document.body&&document.body.scrollHeight)||0)})",
+        )
+        .ok()?;
+        let v: serde_json::Value = serde_json::from_str(&raw).ok()?;
+        let w = v.get("w")?.as_f64()?;
+        let h = v.get("h")?.as_f64()?;
+        (w >= 8.0 && h >= 8.0).then_some((w, h))
     }
 
     fn wait_recv(rx: mpsc::Receiver<String>) -> Result<String, String> {
@@ -1699,38 +1708,52 @@ mod capture {
         type SnapshotSlot = Rc<RefCell<Option<Result<Vec<u8>, String>>>>;
 
         pub fn snapshot_tab(webview: &WebView, full_page: bool) -> Result<Vec<u8>> {
+            use objc2::rc::Retained;
+
             let mtm = MainThreadMarker::new()
                 .ok_or_else(|| anyhow::anyhow!("page screenshot must run on the GUI main thread"))?;
             let wk = webview.webview();
+            let as_wk: &WKWebView = wk.as_ref();
             let slot: SnapshotSlot = Rc::new(RefCell::new(None));
             let out = Rc::clone(&slot);
 
-            let config = if full_page {
-                // Visible bounds remain the Chrome captureVisibleTab default;
-                // full_page still uses takeSnapshot (document may be clipped).
-                Some(unsafe { WKSnapshotConfiguration::new(mtm) })
-            } else {
-                None
-            };
+            let config = unsafe { WKSnapshotConfiguration::new(mtm) };
+            unsafe {
+                config.setAfterScreenUpdates(true);
+                let bounds = as_wk.bounds();
+                if bounds.size.width < 2.0 || bounds.size.height < 2.0 {
+                    bail!(
+                        "webview has no layout ({:.0}x{:.0})",
+                        bounds.size.width,
+                        bounds.size.height
+                    );
+                }
+                let mut rect = bounds;
+                rect.origin.x = 0.0;
+                rect.origin.y = 0.0;
+                if full_page {
+                    if let Some((cw, ch)) = super::page_content_size(webview) {
+                        rect.size.width = rect.size.width.max(cw);
+                        rect.size.height = rect.size.height.max(ch).min(8192.0);
+                    }
+                }
+                config.setRect(rect);
+            }
 
             let block = RcBlock::new(move |image: *mut NSImage, error: *mut NSError| {
                 let res = if !error.is_null() {
                     Err("WKWebView takeSnapshot failed".into())
-                } else if image.is_null() {
-                    Err("WKWebView takeSnapshot returned no image".into())
                 } else {
-                    let img = unsafe { &*image };
-                    nsimage_to_png(img).map_err(|e| e.to_string())
+                    match unsafe { Retained::retain(image) } {
+                        Some(img) => nsimage_to_png(&img).map_err(|e| e.to_string()),
+                        None => Err("WKWebView takeSnapshot returned no image".into()),
+                    }
                 };
                 *out.borrow_mut() = Some(res);
             });
 
             unsafe {
-                let as_wk: &WKWebView = &wk;
-                as_wk.takeSnapshotWithConfiguration_completionHandler(
-                    config.as_deref(),
-                    &block,
-                );
+                as_wk.takeSnapshotWithConfiguration_completionHandler(Some(&config), &block);
             }
 
             let deadline = Instant::now() + WAIT;
@@ -1776,7 +1799,84 @@ mod capture {
         use std::sync::{Arc, Mutex};
         use wry::WebViewExtWindows;
 
-        pub fn snapshot_tab(webview: &WebView) -> Result<Vec<u8>> {
+        pub fn snapshot_tab(webview: &WebView, full_page: bool) -> Result<Vec<u8>> {
+            if full_page {
+                if let Ok(png) = snapshot_cdp(webview) {
+                    if !png.is_empty() {
+                        return Ok(png);
+                    }
+                }
+            }
+            snapshot_preview(webview)
+        }
+
+        /// GoFullPage-style: Chromium CDP `Page.captureScreenshot` from the renderer.
+        fn snapshot_cdp(webview: &WebView) -> Result<Vec<u8>> {
+            use base64::Engine;
+            use webview2_com::CallDevToolsProtocolMethodCompletedHandler;
+            use webview2_com::Microsoft::Web::WebView2::Win32::ICoreWebView2;
+            use windows::core::{Interface, PCWSTR};
+
+            let controller = webview.controller();
+            let core: ICoreWebView2 = unsafe { controller.CoreWebView2() }
+                .map_err(|e| anyhow::anyhow!("CoreWebView2: {e}"))?;
+
+            let method: Vec<u16> = "Page.captureScreenshot\0".encode_utf16().collect();
+            let params: Vec<u16> =
+                "{\"format\":\"png\",\"captureBeyondViewport\":true}\0"
+                    .encode_utf16()
+                    .collect();
+
+            let done = Arc::new(Mutex::new(None::<Result<String, String>>));
+            let flag = Arc::clone(&done);
+            let handler = CallDevToolsProtocolMethodCompletedHandler::create(Box::new(
+                move |err, json| {
+                    let res = if err.is_ok() {
+                        Ok(json)
+                    } else {
+                        Err(format!("CDP captureScreenshot failed: {err:?}"))
+                    };
+                    *flag.lock().unwrap_or_else(|e| e.into_inner()) = Some(res);
+                    Ok(())
+                },
+            ));
+
+            unsafe {
+                core.CallDevToolsProtocolMethod(
+                    PCWSTR(method.as_ptr()),
+                    PCWSTR(params.as_ptr()),
+                    &handler,
+                )
+            }
+            .map_err(|e| anyhow::anyhow!("CallDevToolsProtocolMethod: {e}"))?;
+
+            let deadline = Instant::now() + WAIT;
+            let json = loop {
+                if let Some(res) = done.lock().unwrap_or_else(|e| e.into_inner()).take() {
+                    break res.map_err(|e| anyhow::anyhow!(e))?;
+                }
+                if Instant::now() > deadline {
+                    bail!("WebView2 CDP captureScreenshot timed out");
+                }
+                super::pump_main_events();
+            };
+
+            let v: serde_json::Value = serde_json::from_str(&json)
+                .context("parse CDP captureScreenshot JSON")?;
+            let b64 = v
+                .get("data")
+                .and_then(|d| d.as_str())
+                .context("CDP captureScreenshot missing data")?;
+            let bytes = base64::engine::general_purpose::STANDARD
+                .decode(b64)
+                .context("decode CDP PNG")?;
+            if bytes.is_empty() {
+                bail!("empty CDP screenshot");
+            }
+            Ok(bytes)
+        }
+
+        fn snapshot_preview(webview: &WebView) -> Result<Vec<u8>> {
             use webview2_com::Microsoft::Web::WebView2::Win32::{
                 ICoreWebView2, COREWEBVIEW2_CAPTURE_PREVIEW_IMAGE_FORMAT_PNG,
             };
@@ -1857,22 +1957,44 @@ mod capture {
         use super::*;
         use wry::WebViewExtUnix;
 
-        pub fn snapshot_tab(webview: &WebView) -> Result<Vec<u8>> {
-            use gtk::gdk::Texture;
-            use gtk::prelude::*;
+        pub fn snapshot_tab(webview: &WebView, full_page: bool) -> Result<Vec<u8>> {
+            let region = if full_page {
+                webkit2gtk::SnapshotRegion::FullDocument
+            } else {
+                webkit2gtk::SnapshotRegion::Visible
+            };
+            match snapshot_region(webview, region) {
+                Ok(png) if !png.is_empty() => Ok(png),
+                Ok(_) | Err(_) if full_page => {
+                    snapshot_region(webview, webkit2gtk::SnapshotRegion::Visible)
+                }
+                other => other,
+            }
+        }
+
+        fn snapshot_region(
+            webview: &WebView,
+            region: webkit2gtk::SnapshotRegion,
+        ) -> Result<Vec<u8>> {
             use webkit2gtk::WebViewExt;
 
             let wk = webview.webview();
             let (tx, rx) = mpsc::channel::<Result<Vec<u8>, String>>();
 
-            // webkit2gtk 2.40+: snapshot of the visible viewport (Chrome-like).
             wk.snapshot(
-                webkit2gtk::SnapshotRegion::Visible,
+                region,
                 webkit2gtk::SnapshotOptions::NONE,
                 None::<&gtk::gio::Cancellable>,
                 move |res| {
                     let out = match res {
-                        Ok(texture) => texture_to_png(&texture),
+                        Ok(surface) => {
+                            let mut buf = Vec::new();
+                            match surface.write_to_png(&mut buf) {
+                                Ok(()) if !buf.is_empty() => Ok(buf),
+                                Ok(()) => Err("empty cairo snapshot".into()),
+                                Err(e) => Err(format!("cairo png: {e}")),
+                            }
+                        }
                         Err(e) => Err(format!("webkit snapshot: {e}")),
                     };
                     let _ = tx.send(out);
@@ -1896,21 +2018,6 @@ mod capture {
                     }
                 }
             }
-        }
-
-        fn texture_to_png(texture: &gtk::gdk::Texture) -> Result<Vec<u8>, String> {
-            // Save via gdk texture PNG bytes when available; else downcast path.
-            let w = texture.width();
-            let h = texture.height();
-            if w <= 0 || h <= 0 {
-                return Err("empty texture".into());
-            }
-            // gdk::Texture has save_to_png_bytes on newer gtk4; webkit2gtk may be gtk3.
-            // Use MemoryTexture download if possible.
-            #[allow(unused_imports)]
-            use gtk::gdk::prelude::TextureExt;
-            let bytes = texture.save_to_png_bytes();
-            Ok(bytes.to_vec())
         }
     }
 }
