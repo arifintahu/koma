@@ -1,13 +1,12 @@
 name: ci
 
 # Runs the test suite across every OS/arch koma ships for, plus non-gating
-# formatting and lint checks and a Nix flake check, on pushes to main and on
-# pull requests. Uses only standard GitHub-hosted runners, which are free and
-# unmetered for public repositories, so this does not touch the Actions minute
-# allotment used by the release workflow.
+# formatting and lint checks and a Nix flake check, on pull requests only.
+# Pushes to main and release/tag workflows do not trigger these checks.
+# Uses only standard GitHub-hosted runners, which are free and unmetered for
+# public repositories, so this does not touch the Actions minute allotment used
+# by the release workflow.
 on:
-  push:
-    branches: [main]
   pull_request:
 
 # Cancel superseded runs on the same ref so we never pay for stale work.
@@ -51,7 +50,6 @@ jobs:
         uses: Swatinem/rust-cache@v2
         with:
           prefix-key: "v0.0.4-cache-rust"
-          save-if: ${{ github.event_name != 'pull_request' }}
 
       - name: Tests (agent)
         run: cargo test --workspace --no-default-features --all-targets
@@ -104,7 +102,6 @@ jobs:
         with:
           prefix-key: macos-gui-link-v1
           key: ${{ matrix.target }}
-          save-if: ${{ github.event_name != 'pull_request' }}
 
       # cargo check and the headless test matrix cannot detect missing GUI FFI
       # archives/frameworks. Link the real executable without opening a desktop.
@@ -156,8 +153,6 @@ jobs:
         uses: Swatinem/rust-cache@v2
         with:
           prefix-key: "v0.0.4-cache-rust-lint"
-          save-if: ${{ github.event_name != 'pull_request' }}
-
       # Formatting: non-gating until the tree is rustfmt-clean.
       - name: Formatting
         run: cargo fmt --all --check || true
