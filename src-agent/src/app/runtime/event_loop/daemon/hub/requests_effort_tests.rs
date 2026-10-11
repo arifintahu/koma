@@ -9,15 +9,17 @@ use crate::service::oauth::registry::COMMANDCODE_API_BASE;
 fn session(id: &str, model: &str, effort: &str) -> SessionRuntime {
     let mut rt = SessionRuntime::new();
     rt.id = id.into();
-    let mut settings = crate::model::settings::Settings::default();
-    settings.effort = effort.into();
-    settings.session_models.push(ModelEntry {
-        uuid: id.into(),
-        model_id: model.into(),
-        provider_uuid: "cc-push".into(),
-        roles: vec![ModelRole::Main],
+    let settings = crate::model::settings::Settings {
+        effort: effort.into(),
+        session_models: vec![ModelEntry {
+            uuid: id.into(),
+            model_id: model.into(),
+            provider_uuid: "cc-push".into(),
+            roles: vec![ModelRole::Main],
+            ..Default::default()
+        }],
         ..Default::default()
-    });
+    };
     rt.session = Some(crate::model::session::Session::new(
         id.into(),
         Default::default(),

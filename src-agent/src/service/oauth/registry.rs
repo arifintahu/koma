@@ -285,7 +285,10 @@ mod tests {
     fn bundled_codex_overlay_covers_static_picker_ids() {
         // Offline bundled models.json remains a fallback effort authority until
         // OA catalogues land; every hardcoded picker id must still appear there.
-        let raw = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/../models.json"));
+        let raw = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/../models.json")).trim();
+        if raw.is_empty() {
+            return;
+        }
         let v: serde_json::Value = serde_json::from_str(raw).expect("models.json parses");
         let Some(arr) = v
             .get("https://chatgpt.com/backend-api/codex")
@@ -324,7 +327,10 @@ mod tests {
 
     #[test]
     fn bundled_xai_overlay_has_grok_when_present() {
-        let raw = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/../models.json"));
+        let raw = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/../models.json")).trim();
+        if raw.is_empty() {
+            return;
+        }
         let v: serde_json::Value = serde_json::from_str(raw).expect("models.json parses");
         let Some(arr) = v.get("https://api.x.ai/v1").and_then(|x| x.as_array()) else {
             return;

@@ -11,15 +11,17 @@ fn state(provider: OAuthProvider, id: &str, ndjson: bool) -> AppState {
         commandcode_chat: ndjson.then(|| "ndjson".into()),
         ..Default::default()
     });
-    let mut settings = crate::model::settings::Settings::default();
-    settings.model = "stale-legacy-id".into();
-    settings.session_models.push(ModelEntry {
-        uuid: "effort-model".into(),
-        model_id: id.into(),
-        provider_uuid: "effort-oauth".into(),
-        roles: vec![ModelRole::Main],
+    let settings = crate::model::settings::Settings {
+        model: "stale-legacy-id".into(),
+        session_models: vec![ModelEntry {
+            uuid: "effort-model".into(),
+            model_id: id.into(),
+            provider_uuid: "effort-oauth".into(),
+            roles: vec![ModelRole::Main],
+            ..Default::default()
+        }],
         ..Default::default()
-    });
+    };
     state.rest.fg_mut().session = Some(crate::model::session::Session::new(
         "test".into(),
         Default::default(),

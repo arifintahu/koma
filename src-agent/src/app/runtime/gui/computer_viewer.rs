@@ -196,6 +196,12 @@ fn clamp_preview_size(size: PhysicalSize<u32>, screen: PhysicalSize<u32>) -> Phy
     )
 }
 
+impl Drop for Viewer {
+    fn drop(&mut self) {
+        self.save();
+    }
+}
+
 #[cfg(test)]
 mod sizing_tests {
     use super::*;
@@ -281,10 +287,5 @@ mod native_tests {
         });
         assert!(routed, "viewer IPC did not route the window refresh");
         assert!(!focus_stolen, "floating viewer stole focus from the target");
-    }
-}
-impl Drop for Viewer {
-    fn drop(&mut self) {
-        self.save();
     }
 }

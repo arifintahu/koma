@@ -148,7 +148,11 @@ fn load_initial() -> OverlayTable {
             }
         }
     }
-    match serde_json::from_str::<OverlayTable>(BUNDLED_DEFAULT) {
+    let bundled = BUNDLED_DEFAULT.trim();
+    if bundled.is_empty() {
+        return HashMap::new();
+    }
+    match serde_json::from_str::<OverlayTable>(bundled) {
         Ok(table) => table,
         Err(e) => {
             crate::model::store::append_global_error_log(

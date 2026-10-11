@@ -83,7 +83,7 @@ pub fn args_for_launch(args: Vec<String>) -> Vec<String> {
         if should_launch_gui(&args) {
             args.insert(1, "gui".to_string());
         }
-        return args;
+        args
     }
     #[cfg(not(target_os = "macos"))]
     {

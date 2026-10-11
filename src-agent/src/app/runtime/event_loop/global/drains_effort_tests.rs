@@ -19,15 +19,17 @@ fn fixture(id: &str, caps: bool) -> OverlayModel {
 
 fn session(id: &str, model: &str, effort: &str) -> SessionRuntime {
     let mut rt = SessionRuntime::new();
-    let mut settings = crate::model::settings::Settings::default();
-    settings.effort = effort.into();
-    settings.session_models.push(ModelEntry {
-        uuid: format!("{id}-model"),
-        model_id: model.into(),
-        provider_uuid: "cc-detail".into(),
-        roles: vec![ModelRole::Main],
+    let settings = crate::model::settings::Settings {
+        effort: effort.into(),
+        session_models: vec![ModelEntry {
+            uuid: format!("{id}-model"),
+            model_id: model.into(),
+            provider_uuid: "cc-detail".into(),
+            roles: vec![ModelRole::Main],
+            ..Default::default()
+        }],
         ..Default::default()
-    });
+    };
     rt.id = id.into();
     rt.session = Some(crate::model::session::Session::new(
         id.into(),
@@ -95,7 +97,8 @@ fn incomplete_detail_success_refreshes_all_matching_ndjson_sessions() {
         "status-only loading must not steal focus"
     );
     assert!(state.rest.sessions[0].status.is_empty());
-    for (i, selected) in [(1, 2)] {
+    {
+        let (i, selected) = (1, 2);
         match &state.rest.sessions[i].mode {
             Mode::Effort(picker) => {
                 assert_eq!(picker.options, ["default", "off", "low", "high", "xhigh"]);
