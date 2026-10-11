@@ -11,7 +11,9 @@
 
 use super::WorkspaceRef;
 use anyhow::{Context, Result};
-use process_wrap::std::{ChildWrapper, CommandWrap, CommandWrapper};
+use process_wrap::std::{ChildWrapper, CommandWrap};
+#[cfg(unix)]
+use process_wrap::std::CommandWrapper;
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use std::{
@@ -47,8 +49,9 @@ struct KernelSession {
     generation: u64,
     child: Mutex<Option<Box<dyn ChildWrapper>>>,
     client: Mutex<Option<Arc<super::notebook_client::ClientHandle>>>,
+    /// `CreateEventW` HANDLE stored as usize so the registry stays `Send`.
     #[cfg(windows)]
-    interrupt_event: Option<windows_sys::Win32::Foundation::HANDLE>,
+    interrupt_event: Option<usize>,
     stopping: bool,
     started_ms: u64,
 }
@@ -84,7 +87,7 @@ pub(super) fn has_active() -> bool {
             let client_alive = k
                 .client
                 .lock()
-                .map_or(false, |slot| slot.as_ref().is_some_and(|c| c.is_alive()));
+                .is_ok_and(|slot| slot.as_ref().is_some_and(|c| c.is_alive()));
             child_alive || client_alive
         })
     })
@@ -113,7 +116,7 @@ pub(super) fn reject_kernelspec_argv(argv: &[String]) -> Result<()> {
 /// Build the only permitted kernel argv. `connection_file` must already exist.
 pub(super) fn launch_argv(interpreter: &Path, connection_file: &Path) -> Result<Vec<String>> {
     anyhow::ensure!(
-        interpreter.as_os_str().len() > 0 && !interpreter.as_os_str().is_empty(),
+        !interpreter.as_os_str().is_empty(),
         "Interpreter path is empty"
     );
     let interp = interpreter
@@ -362,7 +365,9 @@ fn stop_session(session: &mut KernelSession) -> Result<()> {
     #[cfg(windows)]
     if let Some(handle) = session.interrupt_event.take() {
         unsafe {
-            windows_sys::Win32::Foundation::CloseHandle(handle);
+            windows_sys::Win32::Foundation::CloseHandle(
+                handle as windows_sys::Win32::Foundation::HANDLE,
+            );
         }
     }
     delete_connection(&session.connection_dir);
@@ -371,7 +376,7 @@ fn stop_session(session: &mut KernelSession) -> Result<()> {
 }
 
 #[cfg(windows)]
-fn create_interrupt_event() -> Result<(windows_sys::Win32::Foundation::HANDLE, String)> {
+fn create_interrupt_event() -> Result<(usize, String)> {
     use windows_sys::Win32::Foundation::HANDLE;
     use windows_sys::Win32::Security::SECURITY_ATTRIBUTES;
     use windows_sys::Win32::System::Threading::CreateEventW;
@@ -385,18 +390,19 @@ fn create_interrupt_event() -> Result<(windows_sys::Win32::Foundation::HANDLE, S
     let handle: HANDLE =
         unsafe { CreateEventW(&mut sa, 0, 0, std::ptr::null()) };
     anyhow::ensure!(
-        handle != 0 && handle != windows_sys::Win32::Foundation::INVALID_HANDLE_VALUE,
+        !handle.is_null() && handle != windows_sys::Win32::Foundation::INVALID_HANDLE_VALUE,
         "CreateEventW failed for JPY_INTERRUPT_EVENT"
     );
     // jupyter_client.win_interrupt: env value is the handle as a decimal string.
     let as_decimal = format!("{}", handle as usize);
-    Ok((handle, as_decimal))
+    Ok((handle as usize, as_decimal))
 }
 
 #[cfg(windows)]
-fn signal_interrupt_event(handle: windows_sys::Win32::Foundation::HANDLE) -> Result<()> {
+fn signal_interrupt_event(handle: usize) -> Result<()> {
+    use windows_sys::Win32::Foundation::HANDLE;
     use windows_sys::Win32::System::Threading::SetEvent;
-    let ok = unsafe { SetEvent(handle) };
+    let ok = unsafe { SetEvent(handle as HANDLE) };
     anyhow::ensure!(ok != 0, "SetEvent failed for JPY_INTERRUPT_EVENT");
     Ok(())
 }
@@ -564,7 +570,9 @@ pub(super) fn start(
             #[cfg(windows)]
             if let Some(handle) = interrupt_event {
                 unsafe {
-                    windows_sys::Win32::Foundation::CloseHandle(handle);
+                    windows_sys::Win32::Foundation::CloseHandle(
+                        handle as windows_sys::Win32::Foundation::HANDLE,
+                    );
                 }
             }
             delete_connection(&conn_dir);
@@ -696,7 +704,7 @@ pub(super) fn stop(workspace: &WorkspaceRef, kernel_id: &str) -> Result<Value> {
 
 pub(super) fn interrupt(workspace: &WorkspaceRef, kernel_id: &str) -> Result<Value> {
     #[cfg(windows)]
-    let mut interrupt_event: Option<windows_sys::Win32::Foundation::HANDLE> = None;
+    let interrupt_event;
     let (generation, client) = {
         let map = registry()
             .lock()
@@ -1053,7 +1061,9 @@ mod tests {
         assert!(env.chars().all(|c| c.is_ascii_digit()), "JPY_INTERRUPT_EVENT must be decimal: {env}");
         signal_interrupt_event(handle).expect("SetEvent");
         unsafe {
-            windows_sys::Win32::Foundation::CloseHandle(handle);
+            windows_sys::Win32::Foundation::CloseHandle(
+                handle as windows_sys::Win32::Foundation::HANDLE,
+            );
         }
     }
 

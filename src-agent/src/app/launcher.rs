@@ -109,7 +109,7 @@ pub fn exe_should_launch_gui(exe: &Path, args: &[String]) -> bool {
 }
 
 /// PNG path written for the macOS Dock, once [`install`] has run.
-#[cfg(target_os = "macos")]
+#[cfg(all(target_os = "macos", feature = "gui"))]
 pub fn dock_icon_path() -> Option<PathBuf> {
     let home = dirs::home_dir()?;
     let path = home.join("Applications/Koma.app/Contents/Resources/icon-256.png");

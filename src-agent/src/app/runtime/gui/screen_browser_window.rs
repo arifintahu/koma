@@ -3,8 +3,9 @@ use super::proto::UserEvent;
 use crate::app::runtime::{
     client::HostCtl,
     screen_browser::{
-        allow_content_url, validate_content_url, Action, Observation, Operation, Request, Reply,
-        Status, TabInfo, Transform, Viewport, MAX_TABS,
+        allow_content_url, duckduckgo_search_url, resolve_omnibox_input, validate_content_url,
+        webview_can_load_url, Action, Observation, Operation, Request, Reply, Status, TabInfo,
+        Transform, Viewport, MAX_TABS,
     },
 };
 use anyhow::{bail, Context, Result};
@@ -749,6 +750,51 @@ impl BrowserWindow {
         ));
     }
 
+    fn chrome_toast(&self, text: &str) {
+        let payload = serde_json::json!({ "text": text, "kind": "error" });
+        let _ = self.chrome.evaluate_script(&format!(
+            "window.dispatchEvent(new CustomEvent('koma-screen-browser-toast',{{detail:{payload}}}));"
+        ));
+    }
+
+    fn fail_navigate(&mut self, tab_id: Option<&str>, message: &str) {
+        if let Ok(tab) = self.tab_mut(tab_id) {
+            tab.loading = false;
+            tab.error = Some(message.to_string());
+        }
+        self.chrome_toast(message);
+    }
+
+    /// Load a tab URL without letting wry's NSURL `unwrap` take down the process.
+    fn load_tab(&mut self, tab_id: Option<&str>, url: &str, blank: bool) -> Result<()> {
+        let tab = self.tab_mut(tab_id)?;
+        tab.url = if blank {
+            "about:blank".into()
+        } else {
+            url.to_string()
+        };
+        tab.title = if blank {
+            "New Tab".into()
+        } else {
+            url.to_string()
+        };
+        tab.loading = !blank;
+        tab.error = None;
+        if blank {
+            tab.webview.load_html(&welcome_html())?;
+            return Ok(());
+        }
+        if !webview_can_load_url(url) {
+            bail!("invalid url");
+        }
+        match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| tab.webview.load_url(url)))
+        {
+            Ok(Ok(())) => Ok(()),
+            Ok(Err(e)) => Err(anyhow::anyhow!("{e}")),
+            Err(_) => bail!("webview rejected url"),
+        }
+    }
+
     pub fn handle_chrome(
         &mut self,
         action: &str,
@@ -796,42 +842,47 @@ impl BrowserWindow {
                 }
             }
             "navigate" => {
-                let mut u = url.ok_or_else(|| anyhow::anyhow!("url required"))?;
-                // User address bar: bare hosts get https:// (same as chrome UI).
-                if !u.contains("://") && !crate::app::runtime::screen_browser::is_blank_url(&u) {
-                    u = format!("https://{u}");
-                }
-                validate_content_url(&u)?;
-                let blank = crate::app::runtime::screen_browser::is_blank_url(&u);
-                let tab = self.tab_mut(tab_id.as_deref())?;
-                tab.url = if blank {
-                    "about:blank".into()
-                } else {
-                    u.clone()
+                let raw = url.ok_or_else(|| anyhow::anyhow!("url required"))?;
+                let u = match resolve_omnibox_input(&raw) {
+                    Ok(u) => u,
+                    Err(e) => {
+                        self.chrome_toast(&e.to_string());
+                        return Ok(());
+                    }
                 };
-                tab.title = if blank { "New Tab".into() } else { u.clone() };
-                tab.loading = !blank;
-                tab.error = None;
-                if blank {
-                    tab.webview.load_html(&welcome_html())?;
-                } else {
-                    tab.webview.load_url(&u)?;
+                if let Err(e) = validate_content_url(&u) {
+                    self.chrome_toast(&e.to_string());
+                    return Ok(());
+                }
+                let blank = crate::app::runtime::screen_browser::is_blank_url(&u);
+                let load = self.load_tab(tab_id.as_deref(), &u, blank);
+                if let Err(e) = load {
+                    // wry panics on garbage NSURL — treat as "not a URL" → DDG.
+                    let search = duckduckgo_search_url(&raw);
+                    if search != u {
+                        if let Err(e2) = self.load_tab(tab_id.as_deref(), &search, false) {
+                            self.fail_navigate(tab_id.as_deref(), &e2.to_string());
+                        }
+                    } else {
+                        self.fail_navigate(tab_id.as_deref(), &e.to_string());
+                    }
                 }
                 let _ = self.layout();
                 self.push_status();
             }
             "reload" => {
-                let tab = self.tab_mut(tab_id.as_deref())?;
-                let u = tab.url.clone();
+                let u = {
+                    let tab = self.tab_mut(tab_id.as_deref())?;
+                    tab.url.clone()
+                };
                 let blank = crate::app::runtime::screen_browser::is_blank_url(&u);
-                tab.loading = !blank;
-                tab.error = None;
-                if blank {
-                    tab.webview.load_html(&welcome_html())?;
-                    tab.loading = false;
-                    tab.title = "New Tab".into();
-                } else {
-                    tab.webview.load_url(&u)?;
+                if let Err(e) = self.load_tab(tab_id.as_deref(), &u, blank) {
+                    self.fail_navigate(tab_id.as_deref(), &e.to_string());
+                } else if blank {
+                    if let Ok(tab) = self.tab_mut(tab_id.as_deref()) {
+                        tab.loading = false;
+                        tab.title = "New Tab".into();
+                    }
                 }
                 self.push_status();
             }
@@ -1302,9 +1353,10 @@ impl BrowserWindow {
             "query" => format!(
                 r#"(function(){{const el=document.querySelector({sel:?}); if(!el) return {{found:false}}; return {{found:true,tag:el.tagName,text:(el.innerText||'').slice(0,500),value:el.value||null,href:el.href||null}};}})()"#
             ),
-            "actions_inventory" => format!(
-                r#"(function(){{const out=[]; document.querySelectorAll('a[href],button,input,textarea,select,[role=button]').forEach((el,i)=>{{if(i>=80)return; out.push({{tag:el.tagName,text:(el.innerText||el.value||'').trim().slice(0,80),href:el.href||null,type:el.type||null}});}}); return out;}})()"#
-            ),
+            "actions_inventory" => {
+                r#"(function(){const out=[]; document.querySelectorAll('a[href],button,input,textarea,select,[role=button]').forEach((el,i)=>{if(i>=80)return; out.push({tag:el.tagName,text:(el.innerText||el.value||'').trim().slice(0,80),href:el.href||null,type:el.type||null});}); return out;})()"#
+                    .to_string()
+            }
             other => bail!("unknown read mode {other}"),
         };
         let tab = self.tab_mut(tab_id)?;
@@ -1459,17 +1511,17 @@ mod capture {
     pub fn snapshot_tab(webview: &WebView, full_page: bool) -> Result<Vec<u8>> {
         #[cfg(target_os = "macos")]
         {
-            return mac::snapshot_tab(webview, full_page);
+            mac::snapshot_tab(webview, full_page)
         }
         #[cfg(target_os = "windows")]
         {
             let _ = full_page;
-            return win::snapshot_tab(webview);
+            win::snapshot_tab(webview)
         }
         #[cfg(target_os = "linux")]
         {
             let _ = full_page;
-            return linux::snapshot_tab(webview);
+            linux::snapshot_tab(webview)
         }
         #[cfg(not(any(target_os = "macos", target_os = "windows", target_os = "linux")))]
         {
@@ -1512,7 +1564,7 @@ mod capture {
             if bytes.is_empty() {
                 bail!("empty capture");
             }
-            return Ok(bytes);
+            Ok(bytes)
         }
         #[cfg(target_os = "linux")]
         {
@@ -1592,7 +1644,6 @@ mod capture {
             let run_loop = NSRunLoop::currentRunLoop();
             let until = NSDate::dateWithTimeIntervalSinceNow(0.02);
             let _ = unsafe { run_loop.runMode_beforeDate(NSDefaultRunLoopMode, &until) };
-            return;
         }
         #[cfg(target_os = "linux")]
         {
@@ -1645,12 +1696,13 @@ mod capture {
         use std::rc::Rc;
         use wry::WebViewExtMacOS;
 
+        type SnapshotSlot = Rc<RefCell<Option<Result<Vec<u8>, String>>>>;
+
         pub fn snapshot_tab(webview: &WebView, full_page: bool) -> Result<Vec<u8>> {
             let mtm = MainThreadMarker::new()
                 .ok_or_else(|| anyhow::anyhow!("page screenshot must run on the GUI main thread"))?;
             let wk = webview.webview();
-            let slot: Rc<RefCell<Option<Result<Vec<u8>, String>>>> =
-                Rc::new(RefCell::new(None));
+            let slot: SnapshotSlot = Rc::new(RefCell::new(None));
             let out = Rc::clone(&slot);
 
             let config = if full_page {
@@ -1674,7 +1726,7 @@ mod capture {
             });
 
             unsafe {
-                let as_wk: &WKWebView = &*wk;
+                let as_wk: &WKWebView = &wk;
                 as_wk.takeSnapshotWithConfiguration_completionHandler(
                     config.as_deref(),
                     &block,

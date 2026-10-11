@@ -3,11 +3,15 @@ use anyhow::{bail, Result};
 use serde::{Deserialize, Serialize};
 
 pub const MAX_TABS: usize = 16;
+#[cfg(feature = "gui")]
 pub const OBSERVATION_MAX_EDGE: u32 = 1920;
+#[cfg(feature = "gui")]
 pub const OBSERVATION_MAX_PIXELS: u64 = 2_073_600;
+#[cfg(feature = "gui")]
 pub const READ_MAX_CHARS: usize = 80_000;
 pub const ACT_MAX: usize = 16;
 
+#[cfg(feature = "gui")]
 pub fn capture_size(width: u32, height: u32) -> (u32, u32) {
     if width == 0 || height == 0 {
         return (0, 0);
@@ -43,6 +47,7 @@ pub fn allow_content_url(url: &str) -> bool {
 }
 
 /// True when the tab is the empty/new-tab shell (welcome page lives here).
+#[cfg(any(feature = "gui", test))]
 pub fn is_blank_url(url: &str) -> bool {
     let lower = url.trim().to_ascii_lowercase();
     lower.is_empty() || lower == "about:blank" || lower.starts_with("about:blank?")
@@ -56,7 +61,60 @@ pub fn validate_content_url(url: &str) -> Result<()> {
     }
 }
 
+/// Visual DuckDuckGo search used when the address bar is not a URL.
+/// (`DEFAULT_SEARCH_ENGINE` is the HTML scrape endpoint — wrong for a real tab.)
+#[cfg(any(feature = "gui", test))]
+const OMNIBOX_DDG: &str = "https://duckduckgo.com/?q={query}";
+
+/// True when wry/WKWebView can be given this string without `NSURL` unwrap-panic.
+#[cfg(any(feature = "gui", test))]
+pub fn webview_can_load_url(url: &str) -> bool {
+    if is_blank_url(url) {
+        return true;
+    }
+    if url.chars().any(|c| c.is_whitespace() || c.is_control()) {
+        return false;
+    }
+    let Ok(parsed) = url::Url::parse(url) else {
+        return false;
+    };
+    matches!(parsed.scheme(), "http" | "https") && parsed.host_str().is_some()
+}
+
+#[cfg(any(feature = "gui", test))]
+pub fn duckduckgo_search_url(query: &str) -> String {
+    crate::model::settings::build_search_url(OMNIBOX_DDG, query.trim())
+        .unwrap_or_else(|_| {
+            let encoded: String =
+                url::form_urlencoded::byte_serialize(query.trim().as_bytes()).collect();
+            format!("https://duckduckgo.com/?q={encoded}")
+        })
+}
+
+/// Address-bar input → content URL. Anything wry cannot load becomes a DDG search.
+#[cfg(any(feature = "gui", test))]
+pub fn resolve_omnibox_input(raw: &str) -> Result<String> {
+    let raw = raw.trim();
+    if raw.is_empty() {
+        bail!("url required");
+    }
+    if is_blank_url(raw) {
+        return Ok("about:blank".into());
+    }
+    if webview_can_load_url(raw) {
+        return Ok(raw.to_string());
+    }
+    if !raw.contains("://") {
+        let https = format!("https://{raw}");
+        if webview_can_load_url(&https) {
+            return Ok(https);
+        }
+    }
+    Ok(duckduckgo_search_url(raw))
+}
+
 /// Host from an http(s) URL (no port), lowercased — best-effort, no full parser.
+#[cfg(any(feature = "gui", test))]
 fn url_host_lower(url: &str) -> Option<String> {
     let u = url.trim();
     let rest = u
@@ -75,6 +133,7 @@ fn url_host_lower(url: &str) -> Option<String> {
 }
 
 /// Path (+ empty) from an http(s) URL, lowercased, no query/fragment.
+#[cfg(any(feature = "gui", test))]
 fn url_path_lower(url: &str) -> Option<String> {
     let u = url.trim();
     let rest = u
@@ -100,6 +159,7 @@ fn url_path_lower(url: &str) -> Option<String> {
 ///
 /// Real OAuth/login documents (`/signin`, `/oauth`, `/authorize`, …) do **not**
 /// match these rules and still open as background tabs when policy allows.
+#[cfg(any(feature = "gui", test))]
 pub fn is_noise_popup_url(url: &str) -> bool {
     let trimmed = url.trim();
     if trimmed.is_empty() {
@@ -175,6 +235,7 @@ pub fn is_noise_popup_url(url: &str) -> bool {
 /// 3. otherwise open as a **background** tab (caller must not steal focus)
 ///
 /// We never create an OS window (handler always returns false upstream).
+#[cfg(any(feature = "gui", test))]
 pub fn allow_popup_url(url: &str, popup_policy: &str) -> bool {
     if popup_policy.eq_ignore_ascii_case("block") {
         return false;
@@ -194,6 +255,7 @@ pub struct Capabilities {
 }
 
 impl Capabilities {
+    #[cfg(feature = "gui")]
     pub fn gui_default(eval_allowed: bool) -> Self {
         Self {
             tabs: true,
@@ -503,6 +565,41 @@ mod tests {
         assert!(!allow_content_url("file:///etc/passwd"));
         assert!(!allow_content_url("javascript:alert(1)"));
         assert!(!allow_content_url("koma://localhost"));
+    }
+
+    #[test]
+    fn omnibox_urls_pass_through() {
+        assert_eq!(
+            resolve_omnibox_input("https://example.com/a").unwrap(),
+            "https://example.com/a"
+        );
+        assert_eq!(
+            resolve_omnibox_input("example.com").unwrap(),
+            "https://example.com"
+        );
+        assert_eq!(
+            resolve_omnibox_input("localhost:3000").unwrap(),
+            "https://localhost:3000"
+        );
+        assert_eq!(resolve_omnibox_input("about:blank").unwrap(), "about:blank");
+    }
+
+    #[test]
+    fn omnibox_non_url_goes_to_duckduckgo() {
+        let u = resolve_omnibox_input("hello world").unwrap();
+        assert!(u.starts_with("https://duckduckgo.com/?q="), "{u}");
+        assert!(u.contains("hello+world"), "{u}");
+        let spaced = resolve_omnibox_input("https://hello world").unwrap();
+        assert!(
+            spaced.starts_with("https://duckduckgo.com/?q="),
+            "{spaced}"
+        );
+        let js = resolve_omnibox_input("javascript:alert(1)").unwrap();
+        assert!(js.starts_with("https://duckduckgo.com/?q="), "{js}");
+        assert!(resolve_omnibox_input("").is_err());
+        assert!(!webview_can_load_url("https://hello world"));
+        assert!(!webview_can_load_url("file:///etc/passwd"));
+        assert!(webview_can_load_url("https://example.com"));
     }
 
     #[test]

@@ -8,6 +8,7 @@
 
 /// Events delivered to the main `tao` event loop from the ipc handler (window
 /// commands) or the host-relay client-thread (state pushes).
+#[allow(clippy::large_enum_variant)]
 pub(super) enum UserEvent {
     #[cfg_attr(not(any(target_os = "macos", target_os = "windows")), allow(dead_code))]
     PickSettingsFolder { request_id: String },

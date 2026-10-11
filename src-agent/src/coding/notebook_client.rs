@@ -452,9 +452,7 @@ async fn client_main_inner(
                 // Opportunistic IOPub drain (status / late messages).
                 drain_iopub_once(
                     &mut iopub,
-                    &mut stdin,
                     &key,
-                    &session,
                     &shared,
                     &workspace,
                     &document_path,
@@ -511,6 +509,7 @@ async fn wait_kernel_info(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn run_execute(
     shell: &mut DealerSocket,
     iopub: &mut SubSocket,
@@ -531,7 +530,7 @@ async fn run_execute(
         generation == current_gen,
         "Stale execute generation (kernel restarted)"
     );
-    {
+    let (msg_id, frames) = {
         let mut inflight = shared
             .inflight_msg_id
             .lock()
@@ -539,41 +538,54 @@ async fn run_execute(
         anyhow::ensure!(inflight.is_none(), "Kernel already has an in-flight execute");
         let (msg_id, frames) = encode_execute_request(key, session, &code, false)?;
         *inflight = Some(msg_id.clone());
-        set_state(shared, workspace, document_path, KernelRunState::Busy);
-        shell
-            .send(frames_to_zmq(frames)?)
-            .await
-            .context("Send execute_request")?;
-
-        let result = wait_execute_reply(
-            shell,
-            iopub,
-            stdin,
-            key,
-            session,
-            shared,
-            workspace,
-            document_path,
-            &msg_id,
-            cell_id.as_deref(),
-            document_epoch,
-            generation,
-            event_budget,
-        )
-        .await;
-        *inflight = None;
-        // Return to idle unless dead.
-        if shared.alive.load(Ordering::Acquire) {
-            if shared.run_state.lock().map(|s| *s).unwrap_or(KernelRunState::Dead)
-                != KernelRunState::Dead
-            {
-                set_state(shared, workspace, document_path, KernelRunState::Idle);
-            }
+        (msg_id, frames)
+    };
+    set_state(shared, workspace, document_path, KernelRunState::Busy);
+    if let Err(err) = shell
+        .send(frames_to_zmq(frames)?)
+        .await
+        .context("Send execute_request")
+    {
+        if let Ok(mut inflight) = shared.inflight_msg_id.lock() {
+            *inflight = None;
         }
-        result
+        return Err(err);
     }
+
+    let result = wait_execute_reply(
+        shell,
+        iopub,
+        stdin,
+        key,
+        session,
+        shared,
+        workspace,
+        document_path,
+        &msg_id,
+        cell_id.as_deref(),
+        document_epoch,
+        generation,
+        event_budget,
+    )
+    .await;
+    if let Ok(mut inflight) = shared.inflight_msg_id.lock() {
+        *inflight = None;
+    }
+    // Return to idle unless dead.
+    if shared.alive.load(Ordering::Acquire)
+        && shared
+            .run_state
+            .lock()
+            .map(|s| *s)
+            .unwrap_or(KernelRunState::Dead)
+            != KernelRunState::Dead
+    {
+        set_state(shared, workspace, document_path, KernelRunState::Idle);
+    }
+    result
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn wait_execute_reply(
     shell: &mut DealerSocket,
     iopub: &mut SubSocket,
@@ -635,9 +647,6 @@ async fn wait_execute_reply(
                 if let Ok(decoded) = decode_frames(key, &zmq_to_frames(msg)) {
                     handle_iopub_msg(
                         &decoded,
-                        stdin,
-                        key,
-                        session,
                         shared,
                         workspace,
                         document_path,
@@ -672,9 +681,7 @@ async fn wait_execute_reply(
 
 async fn drain_iopub_once(
     iopub: &mut SubSocket,
-    stdin: &mut DealerSocket,
     key: &[u8],
-    session: &str,
     shared: &SharedState,
     workspace: &WorkspaceRef,
     document_path: &str,
@@ -686,9 +693,6 @@ async fn drain_iopub_once(
         if let Ok(decoded) = decode_frames(key, &zmq_to_frames(msg)) {
             handle_iopub_msg(
                 &decoded,
-                stdin,
-                key,
-                session,
                 shared,
                 workspace,
                 document_path,
@@ -702,9 +706,6 @@ async fn drain_iopub_once(
 
 async fn handle_iopub_msg(
     decoded: &JupyterMessage,
-    _stdin: &mut DealerSocket,
-    _key: &[u8],
-    _session: &str,
     shared: &SharedState,
     workspace: &WorkspaceRef,
     document_path: &str,

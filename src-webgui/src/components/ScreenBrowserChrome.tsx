@@ -15,6 +15,20 @@ function post(action: SbAction, extra?: { url?: string; tab_id?: string }) {
   window.ipc?.postMessage(JSON.stringify({ t: 'sb', a: action, ...extra }))
 }
 
+/** Address bar: real http(s) URLs pass through; anything else is a DuckDuckGo query. */
+export function resolveOmnibox(raw: string): string {
+  const t = raw.trim()
+  if (!t) return t
+  if (/^about:blank(\?.*)?$/i.test(t)) return 'about:blank'
+  const candidate = /^(https?:\/\/)/i.test(t) ? t : (t.includes('://') ? t : `https://${t}`)
+  try {
+    if (/\s/.test(candidate)) throw new Error('space')
+    const u = new URL(candidate)
+    if ((u.protocol === 'http:' || u.protocol === 'https:') && u.hostname) return candidate
+  } catch { /* not a url */ }
+  return `https://duckduckgo.com/?q=${encodeURIComponent(t)}`
+}
+
 function applyPalette(palette: Record<string, unknown> | null | undefined) {
   if (!palette || typeof palette !== 'object') return
   // Same roles as main GUI `applyPaletteVars` (store/initial.ts) / ComputerViewer.
@@ -55,6 +69,7 @@ function paintChevron(button: HTMLButtonElement | null, enabled: boolean) {
 export function ScreenBrowserChrome() {
   const [status, setStatus] = useState<ScreenBrowserStatus | null>(window.__komaScreenBrowserInitial ?? null)
   const [urlDraft, setUrlDraft] = useState('')
+  const [toast, setToast] = useState<string | null>(null)
   const inputRef = useRef<HTMLInputElement>(null)
   const tabStripRef = useRef<HTMLDivElement>(null)
   const leftChevronRef = useRef<HTMLButtonElement>(null)
@@ -76,11 +91,18 @@ export function ScreenBrowserChrome() {
       setStatus(next ?? null)
     }
     const palette = (event: Event) => applyPalette((event as CustomEvent<Record<string, unknown>>).detail)
+    const onToast = (event: Event) => {
+      const detail = (event as CustomEvent<{ text?: string } | string>).detail
+      const text = typeof detail === 'string' ? detail : detail?.text
+      if (text) setToast(text)
+    }
     window.addEventListener('koma-screen-browser', receive)
     window.addEventListener('koma-screen-browser-palette', palette)
+    window.addEventListener('koma-screen-browser-toast', onToast)
     return () => {
       window.removeEventListener('koma-screen-browser', receive)
       window.removeEventListener('koma-screen-browser-palette', palette)
+      window.removeEventListener('koma-screen-browser-toast', onToast)
     }
   }, [os])
 
@@ -89,6 +111,12 @@ export function ScreenBrowserChrome() {
     if (document.activeElement === inputRef.current) return
     setUrlDraft(active?.url ?? '')
   }, [status?.active_tab, status?.tabs])
+
+  useEffect(() => {
+    if (!toast) return
+    const id = window.setTimeout(() => setToast(null), 4000)
+    return () => window.clearTimeout(id)
+  }, [toast])
 
   // Tell the host the real chrome strip is painted (tabs + toolbar), not the empty SPA shell.
   useEffect(() => {
@@ -133,7 +161,7 @@ export function ScreenBrowserChrome() {
   const go = () => {
     const raw = urlDraft.trim()
     if (!raw) return
-    const url = /^(https?:\/\/|about:)/i.test(raw) ? raw : `https://${raw}`
+    const url = resolveOmnibox(raw)
     setUrlDraft(url)
     post('navigate', { url, tab_id: activeId ?? undefined })
     inputRef.current?.blur()
@@ -175,6 +203,16 @@ export function ScreenBrowserChrome() {
         borderTopRightRadius: os === 'macos' ? 12 : 10,
       }}
     >
+      {toast && (
+        <div
+          role="status"
+          className="pointer-events-none absolute right-2 top-2 z-20 max-w-[18rem] truncate rounded-md border border-koma-error/40 bg-koma-panel px-2.5 py-1 text-[11px] text-koma-fg shadow-sm"
+          title={toast}
+        >
+          {toast}
+        </div>
+      )}
+
       {waiting && (
         <div role="status" className="flex items-center gap-2 border-b border-koma-warn/40 bg-koma-warn/15 px-3 py-1.5 text-[11px] text-koma-fg">
           <span className="font-medium">Waiting for you</span>

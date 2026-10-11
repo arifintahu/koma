@@ -275,6 +275,7 @@ fn runtime_commands(p: &Pack) -> Result<Vec<Value>> {
         "No supported runtime package manager on this host. Select an existing executable."
     )
 }
+#[allow(clippy::too_many_arguments)]
 pub(super) fn plan(
     workspace: &WorkspaceRef,
     root: &Path,

@@ -365,6 +365,7 @@ pub fn memory_dir(pwd_hash: &str) -> Result<PathBuf> {
 /// Shared by every session whose workdir hashes to the same `pwd_hash`, so
 /// logins survive session reopen and new sessions under the same PWD. Tabs are
 /// NOT stored here — only site data.
+#[cfg(feature = "gui")]
 pub fn screen_browser_profile_dir(pwd_hash: &str) -> Result<PathBuf> {
     let dir = pwd_bucket_dir(pwd_hash)?
         .join("screen-browser")
@@ -375,6 +376,7 @@ pub fn screen_browser_profile_dir(pwd_hash: &str) -> Result<PathBuf> {
 
 /// Window placement JSON for the on-screen browser under a pwd bucket:
 /// `<pwd_bucket_dir>/screen-browser/window.json`.
+#[cfg(feature = "gui")]
 pub fn screen_browser_window_path(pwd_hash: &str) -> Result<PathBuf> {
     let dir = pwd_bucket_dir(pwd_hash)?.join("screen-browser");
     std::fs::create_dir_all(&dir)?;
