@@ -73,7 +73,7 @@ notify-debouncer-mini = { version = "0.7", optional = true }
 # build pulls NONE of these (headless-safe, lean `cargo install`). ---
 # `devtools` keeps WebView inspector available in release builds too (debug
 # builds always get it). Needed so F12 / Inspect can call open_devtools().
-wry = { version = "0.52", optional = true, features = ["transparent", "devtools"] }
+wry = { version = "0.55", optional = true, features = ["transparent", "devtools"] }
 tao = { version = "0.35", optional = true }
 rfd = { version = "0.15", optional = true }
 
@@ -92,7 +92,7 @@ windows-sys = { version = "0.59", features = [
     "Win32_System_Time",
     "Win32_UI_WindowsAndMessaging",
 ] }
-# Match wry 0.52's WebView2 stack so CapturePreview can run on the GUI host.
+# Match wry 0.55's WebView2 stack so CapturePreview can run on the GUI host.
 webview2-com = { version = "0.38", optional = true }
 windows = { version = "0.61", optional = true, features = [
     "Win32_Foundation",

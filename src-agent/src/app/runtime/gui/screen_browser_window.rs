@@ -14,7 +14,7 @@ use tao::{
     event_loop::EventLoopWindowTarget,
     window::{Window, WindowBuilder},
 };
-use wry::{PageLoadEvent, Rect, WebContext, WebView, WebViewBuilder};
+use wry::{NewWindowResponse, PageLoadEvent, Rect, WebContext, WebView, WebViewBuilder};
 
 /// Fallback chrome strip height (tabs + address bar). Overwritten when the
 /// chrome webview reports its measured height so no black gap remains.
@@ -340,9 +340,11 @@ impl BrowserWindow {
             })
             .with_new_window_req_handler({
                 let ctl = self.ctl.clone();
-                move |u| {
+                move |u, _features| {
                     // Always deny a native OS window. Real popups become tabs via
                     // "popup"; ad/tracker beacons are dropped in handle_chrome.
+                    // (wry >=0.55 only calls this for window.open / target=_blank,
+                    // not for iframe navigations as 0.52 did on macOS.)
                     if allow_content_url(&u) {
                         let _ = ctl.send(HostCtl::ScreenBrowserChrome {
                             action: "popup".into(),
@@ -350,7 +352,7 @@ impl BrowserWindow {
                             tab_id: None,
                         });
                     }
-                    false
+                    NewWindowResponse::Deny
                 }
             });
 
