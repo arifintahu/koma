@@ -71,6 +71,8 @@ pub(super) struct BrowserWindow {
     context: WebContext,
     preferences: Option<std::path::PathBuf>,
     profile_dir: std::path::PathBuf,
+    /// `store::pwd_hash` of the workdir this profile belongs to.
+    pwd_hash: String,
     ctl: std::sync::mpsc::Sender<HostCtl>,
     status: Status,
     always_on_top: bool,
@@ -82,11 +84,14 @@ impl BrowserWindow {
         status: &Status,
         palette: &serde_json::Value,
         ctl: std::sync::mpsc::Sender<HostCtl>,
+        workdir: &std::path::Path,
     ) -> Result<Self> {
-        let base = crate::model::store::base_dir().context("koma base dir")?;
-        let preferences = Some(base.join("screen-browser.json"));
-        let profile_dir = base.join("screen-browser").join("webview");
-        std::fs::create_dir_all(&profile_dir)?;
+        // Cookies/storage live under the project pwd bucket so every session with
+        // the same workdir reuses logins. Tabs stay ephemeral (closed on stop).
+        let hash = crate::model::store::pwd_hash(workdir);
+        let profile_dir = crate::model::store::screen_browser_profile_dir(&hash)
+            .context("screen-browser profile dir")?;
+        let preferences = crate::model::store::screen_browser_window_path(&hash).ok();
         let saved = preferences
             .as_ref()
             .and_then(|p| std::fs::read(p).ok())
@@ -189,6 +194,7 @@ impl BrowserWindow {
             context,
             preferences,
             profile_dir,
+            pwd_hash: hash,
             ctl,
             status: status.clone(),
             always_on_top,
@@ -216,6 +222,11 @@ impl BrowserWindow {
 
     pub fn always_on_top(&self) -> bool {
         self.always_on_top
+    }
+
+    /// Project key this window's cookies/storage belong to (`store::pwd_hash`).
+    pub fn pwd_hash(&self) -> &str {
+        &self.pwd_hash
     }
 
     pub fn resized(&mut self) {

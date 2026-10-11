@@ -644,6 +644,10 @@ pub fn run_gui(opts: crate::cli::Opts) -> Result<()> {
     let mut screen_browser_status: Option<crate::app::runtime::screen_browser::Status> = None;
     let screen_browser_ctl = ctl_tx.clone();
     let mut screen_browser_palette = serde_json::Value::Null;
+    // Primary session workdir — keys the per-PWD browser profile (cookies/storage).
+    // Updated from SettingsValues; falls back to process cwd until the first push.
+    let mut screen_browser_workdir = std::env::current_dir()
+        .unwrap_or_else(|_| std::path::PathBuf::from("."));
     // Taken on the first loop turn. The install must not run before `run`,
     // and it must not stay on this thread: a folder dialog here is the only
     // thing the user sees.
@@ -809,6 +813,31 @@ pub fn run_gui(opts: crate::cli::Opts) -> Result<()> {
                             screen_browser_palette = p.clone();
                         }
                     }
+                    // Track primary workdir so the browser profile stays on the project
+                    // pwd hash (cookies shared across sessions with the same workdir).
+                    if kind == Some("SettingsValues") {
+                        if let Some(first) = value
+                            .get("workdir")
+                            .and_then(|v| v.as_array())
+                            .into_iter()
+                            .flatten()
+                            .filter_map(|v| v.as_str())
+                            .map(str::trim)
+                            .find(|s| !s.is_empty())
+                        {
+                            let next = std::path::PathBuf::from(first);
+                            let next_hash = crate::model::store::pwd_hash(&next);
+                            if screen_browser
+                                .as_ref()
+                                .is_some_and(|b| b.pwd_hash() != next_hash)
+                            {
+                                // Workdir moved to another project — drop the window so the
+                                // next open loads that project's profile (tabs stay ephemeral).
+                                screen_browser = None;
+                            }
+                            screen_browser_workdir = next;
+                        }
+                    }
                     let switched = kind == Some("Snapshot")
                         && computer_status.as_ref().is_some_and(|s| {
                             value.get("session").and_then(|v| v.as_str()) != Some(s.session.as_str())
@@ -934,6 +963,14 @@ pub fn run_gui(opts: crate::cli::Opts) -> Result<()> {
                     }
                 }
                 WinCmd::ScreenBrowser => {
+                    let want_hash = crate::model::store::pwd_hash(&screen_browser_workdir);
+                    // Wrong project profile still open (workdir changed) → rebuild.
+                    if screen_browser
+                        .as_ref()
+                        .is_some_and(|b| b.pwd_hash() != want_hash)
+                    {
+                        screen_browser = None;
+                    }
                     if screen_browser.is_none() {
                         let status = screen_browser_status.clone().unwrap_or_default();
                         // Create when daemon says enabled. If status is stale-disabled
@@ -945,6 +982,7 @@ pub fn run_gui(opts: crate::cli::Opts) -> Result<()> {
                                 &status,
                                 &screen_browser_palette,
                                 screen_browser_ctl.clone(),
+                                &screen_browser_workdir,
                             ) {
                                 Ok(browser) => screen_browser = Some(browser),
                                 Err(e) => {

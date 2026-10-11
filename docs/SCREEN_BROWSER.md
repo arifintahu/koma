@@ -62,7 +62,22 @@ read/eval/act confirmation.
 Default **off**. Agent control uses the webview API and does **not** raise the
 window or steal focus. Turn on **Settings → Always on top** only if you want the
 browser pinned above other apps.
-Shared webview profile under `~/.koma/screen-browser/webview`. **Clear browsing data** wipes cookies/storage for this profile.
+
+## Profile (cookies / logins)
+
+Site data is **per project workdir** (`pwd_hash`), not per session and not global:
+
+`~/.koma/sessions/<pwd_hash>/screen-browser/webview`
+
+- Same PWD → same cookies/localStorage across session reopen and brand-new sessions.
+- Different PWD → separate profile (no cross-project login bleed).
+- **Tabs are not persisted.** Closing/stopping the browser drops tabs; only site
+  data remains. Re-open starts on a blank tab with your previous logins intact.
+- **Clear browsing data** wipes cookies/storage for the **current** project
+  profile only.
+
+Window placement is stored beside the profile as `window.json` under the same
+`screen-browser/` folder.
 
 ## Not this feature
 

@@ -99,7 +99,7 @@ export function ScreenBrowserSettings() {
           <Trash2 size={14} />Clear browsing data
         </button>
       </div>
-      <p className="mt-2 text-xs text-koma-dim">Clears cookies and site data for the on-screen browser profile only.</p>
+      <p className="mt-2 text-xs text-koma-dim">Clears cookies and site data for this project&apos;s browser profile only (same workdir = shared logins). Tabs are never saved.</p>
     </div>
 
     {status && <details>
