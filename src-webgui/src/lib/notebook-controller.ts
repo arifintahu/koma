@@ -53,6 +53,12 @@ export class NotebookController {
   private epoch = 0
   /** Source revision bumped on every successful commit. */
   private revision = 0
+  /**
+   * Cached snapshot for useSyncExternalStore. Must be referentially stable
+   * between emits — a fresh object every getState() call causes React #185
+   * (maximum update depth exceeded).
+   */
+  private snapshot: NotebookControllerState
 
   constructor(
     private readonly workspace: WorkspaceRef,
@@ -70,6 +76,7 @@ export class NotebookController {
     if (!this.parse.ok || this.text.length > NOTEBOOK_EDITABLE_MAX_CHARS) {
       this.mode = 'raw'
     }
+    this.snapshot = this.buildSnapshot()
   }
 
   get documentEpoch() { return this.epoch }
@@ -82,11 +89,7 @@ export class NotebookController {
     return () => { this.listeners.delete(listener) }
   }
 
-  private emit() {
-    for (const listener of this.listeners) listener()
-  }
-
-  getState(): NotebookControllerState {
+  private buildSnapshot(): NotebookControllerState {
     return {
       mode: this.mode,
       parse: this.parse,
@@ -97,6 +100,16 @@ export class NotebookController {
       canRedo: this.history.canRedo,
       lastError: this.lastError,
     }
+  }
+
+  private emit() {
+    this.snapshot = this.buildSnapshot()
+    for (const listener of this.listeners) listener()
+  }
+
+  /** Stable between emits — required by useSyncExternalStore. */
+  getState(): NotebookControllerState {
+    return this.snapshot
   }
 
   private syncIdentities() {

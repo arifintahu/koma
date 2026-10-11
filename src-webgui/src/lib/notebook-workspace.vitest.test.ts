@@ -143,6 +143,19 @@ describe('notebook controller history and identity', () => {
     expect(mock.state.coding.files[k].content).toBe(bad)
     c.dispose()
   })
+
+  it('keeps getState referentially stable between emits (React useSyncExternalStore)', () => {
+    const c = new NotebookController(local, 'nb.ipynb', TEMPLATE)
+    const a = c.getState()
+    const b = c.getState()
+    expect(a).toBe(b)
+    const id = a.identities[0]!.runtimeId
+    expect(c.setCellSource(id, 'x = 1')).toBe(true)
+    const d = c.getState()
+    expect(d).not.toBe(a)
+    expect(c.getState()).toBe(d)
+    c.dispose()
+  })
 })
 
 describe('notebook identity binding', () => {
