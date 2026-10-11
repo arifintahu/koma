@@ -174,6 +174,8 @@ pub(super) fn execute(request: &Request) -> Result<Value> {
             pack_id,
             runtime,
             notebook,
+            lsp,
+            adapter,
             server,
         } => super::packs::plan(
             &request.workspace,
@@ -181,6 +183,8 @@ pub(super) fn execute(request: &Request) -> Result<Value> {
             pack_id,
             *runtime,
             *notebook,
+            *lsp,
+            *adapter,
             server.as_deref(),
         ),
         Operation::PackApply { plan_id } => {

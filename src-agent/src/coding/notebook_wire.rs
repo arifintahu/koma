@@ -17,31 +17,23 @@ pub const MAX_BUFFER_BYTES: usize = 2 * 1024 * 1024;
 pub const MAX_BUFFERS: usize = 8;
 
 /// One decoded Jupyter message (identity frames stripped).
+///
+/// Metadata, binary buffers, and the hex signature are validated during decode
+/// and not retained — the v1 client only needs header/parent/content.
 #[derive(Debug, Clone)]
 pub struct JupyterMessage {
     pub header: Value,
     pub parent_header: Value,
-    pub metadata: Value,
     pub content: Value,
-    pub buffers: Vec<Vec<u8>>,
-    pub signature_hex: String,
 }
 
 impl JupyterMessage {
-    pub fn msg_id(&self) -> Option<&str> {
-        self.header.get("msg_id").and_then(Value::as_str)
-    }
-
     pub fn msg_type(&self) -> Option<&str> {
         self.header.get("msg_type").and_then(Value::as_str)
     }
 
     pub fn parent_msg_id(&self) -> Option<&str> {
         self.parent_header.get("msg_id").and_then(Value::as_str)
-    }
-
-    pub fn session(&self) -> Option<&str> {
-        self.header.get("session").and_then(Value::as_str)
     }
 }
 
@@ -172,18 +164,17 @@ pub fn decode_frames(key: &[u8], frames: &[Vec<u8>]) -> Result<JupyterMessage> {
         constant_time_eq(signature, &expected),
         "Jupyter HMAC signature mismatch"
     );
-    let buffers: Vec<Vec<u8>> = rest[5..].iter().cloned().collect();
-    anyhow::ensure!(buffers.len() <= MAX_BUFFERS, "Too many Jupyter buffers");
-    for buf in &buffers {
+    // Bound binary frames; v1 does not surface them to the UI.
+anyhow::ensure!(rest[5..].len() <= MAX_BUFFERS, "Too many Jupyter buffers");
+    for buf in &rest[5..] {
         anyhow::ensure!(buf.len() <= MAX_BUFFER_BYTES, "Jupyter buffer exceeds size bound");
     }
+    // Parse metadata so bad JSON fails closed; discard after (unused by v1 client).
+    let _: Value = serde_json::from_str(meta_s).context("Parse metadata JSON")?;
     Ok(JupyterMessage {
         header: serde_json::from_str(header_s).context("Parse header JSON")?,
         parent_header: serde_json::from_str(parent_s).context("Parse parent_header JSON")?,
-        metadata: serde_json::from_str(meta_s).context("Parse metadata JSON")?,
         content: serde_json::from_str(content_s).context("Parse content JSON")?,
-        buffers,
-        signature_hex: signature.to_string(),
     })
 }
 
@@ -421,7 +412,7 @@ mod tests {
         assert_eq!(frames[0], DELIM);
         let msg = decode_frames(key, &frames).unwrap();
         assert_eq!(msg.msg_type(), Some("execute_request"));
-        assert_eq!(msg.msg_id(), Some("mid-1"));
+        assert_eq!(msg.header.get("msg_id").and_then(Value::as_str), Some("mid-1"));
         assert_eq!(msg.content["code"], "print('hi')");
     }
 
@@ -481,7 +472,7 @@ mod tests {
         let (id, frames) = encode_execute_request(b"key", "sess", "x=1", false).unwrap();
         assert!(!id.is_empty());
         let msg = decode_frames(b"key", &frames).unwrap();
-        assert_eq!(msg.msg_id(), Some(id.as_str()));
+        assert_eq!(msg.header.get("msg_id").and_then(Value::as_str), Some(id.as_str()));
         assert_eq!(msg.msg_type(), Some("execute_request"));
     }
 }

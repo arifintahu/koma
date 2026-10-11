@@ -33,12 +33,10 @@ pub struct ConnectionInfo {
     pub key: Vec<u8>,
     pub ip: String,
     pub transport: String,
-    pub signature_scheme: String,
     pub shell_port: u16,
     pub iopub_port: u16,
     pub stdin_port: u16,
     pub control_port: u16,
-    pub hb_port: u16,
 }
 
 impl ConnectionInfo {
@@ -64,25 +62,25 @@ impl ConnectionInfo {
         let signature_scheme = v
             .get("signature_scheme")
             .and_then(Value::as_str)
-            .unwrap_or("hmac-sha256")
-            .to_string();
-        validate_connection_public(&ip, &transport, &signature_scheme)?;
+            .unwrap_or("hmac-sha256");
+        validate_connection_public(&ip, &transport, signature_scheme)?;
         let port = |name: &str| -> Result<u16> {
             v.get(name)
                 .and_then(Value::as_u64)
                 .and_then(|n| u16::try_from(n).ok())
                 .with_context(|| format!("Connection file missing {name}"))
         };
+        // Require hb_port in the file (Jupyter always writes it) without retaining it —
+        // heartbeat is not used by the v1 client.
+        let _hb = port("hb_port")?;
         Ok(Self {
             key,
             ip,
             transport,
-            signature_scheme,
             shell_port: port("shell_port")?,
             iopub_port: port("iopub_port")?,
             stdin_port: port("stdin_port")?,
             control_port: port("control_port")?,
-            hb_port: port("hb_port")?,
         })
     }
 
@@ -146,10 +144,6 @@ impl ClientHandle {
             .lock()
             .map(|g| *g)
             .unwrap_or(KernelRunState::Dead)
-    }
-
-    pub fn generation(&self) -> u64 {
-        self.shared.generation.load(Ordering::Acquire)
     }
 
     pub fn is_alive(&self) -> bool {

@@ -17,33 +17,55 @@ Match `CodingTasks` chrome. Do **not** reintroduce a floating
 |------|--------|
 | Shell | `#workspace-bottom-panel` tab content only |
 | Title chrome | Owned by BottomPanel tablist (`TASKS · PROBLEMS · LANGUAGE SERVERS · LANGUAGE PACKS`) + collapse/close |
-| Body root | `section` with `flex min-h-0 flex-1 flex-col overflow-auto text-[11px]` — no rounded card, no own `X` |
-| Tool rows | `h-8` / `py-1` strips with `border-b border-koma-border px-2` |
+| Body root | `section` with `flex min-h-0 flex-1 flex-col overflow-hidden text-[11px]` — no rounded card, no own `X` |
+| Tool rows | Workspace strip + language/view strip; thin borders, compact muted controls |
+| Density | Separate Environment from Tools; one scrollable content body with 12px padding, 16px section gaps, maximum width 48rem |
 | Buttons | `flex h-6 items-center … rounded px-1.5 text-koma-dim hover:bg-koma-hover` |
 | Selects | `KomaSelect` + `h-6 … bg-koma-panel2 pl-2 text-[11px]` |
-| Paths | mono `text-[10px]` status grid; break-all |
+| Paths | Hidden behind (?) help, except the editable environment path and reviewed install commands |
+| Copy | Short names + status only. Explanations belong in click/keyboard-accessible (?) disclosures, not permanent paragraphs. |
 | Errors | compact `role="alert"` strip under tools (or toast for one-shots) |
 | Open API | `showCodingPacks()` → `setBottomPanelTab('packs')` (listener stays mounted with the panel) |
-| Install progress | `packApply` opens **Tasks** with the run id — never a second process UI |
+| Install progress | Stays on Language Packs after `packApply` (live output + Stop). **Open in Tasks** is optional. |
+| Components | Tools always offers **Language server**, with debugger, runtime, and Python notebook kernel where applicable. Aligned checkbox · name · short status · (?) rows. |
 
 ```text
 BottomPanel
 ├── tablist: Tasks | Problems | Language Servers | Language Packs
 └── packs tab
     ├── row: workspace select · refresh · open .koma/coding.json
-    ├── row: language · (server) · Include runtime · Review install
-    ├── status grid: runtime / LSP / debugger / tests / platform
-    ├── row: executable + Use for workspace
-    └── body: install plan commands (scroll) or empty hint
+    ├── row: language (bounded field, arrow inside) · Environment | Tools
+    └── scrollable body
+        ├── Environment: executable + Apply · Manage tools
+        └── Tools: checkbox · component · Installed / Not installed / Manual setup · (?)
+            └── Review changes → exact commands → Install / update → progress
 ```
+
+Preserve the dock signature, not its former cramped density. Never put language
+selection, installation checkboxes, and a primary action on one crowded toolbar.
+Environment is the default view; notebook recovery opens Tools with ipykernel
+checked. Keep one primary action per step. Checkboxes choose what to install;
+they are not green indicators of installation status. Unmanaged LLVM debugging
+shows **Manual setup**, never a checked but disabled installation choice.
+
+Explanations and full installed paths live in (?) disclosures that work by click
+and keyboard. Do not turn tool rows into paragraphs or expose managed directory
+paths by default. Help stays in flow to avoid clipping in small docks. Exact
+commands remain visible during review so short copy does not hide consent.
+
+The language select uses a bounded outer wrapper and a full-width inner control:
+never apply a maximum width only to the inner select while its chevron wrapper
+stretches across the dock. The workspace and view controls stay outside the
+scroll body. Progress stays on Packs; **Open in Tasks** is secondary. All colors
+remain theme tokens; use the accent for active chrome and the primary action.
 
 ## Notebook kernel (ipykernel)
 
 Python pack plans can include **Notebook kernel (ipykernel)** — a reviewed
-`{workspace python} -m pip install ipykernel` step (same Apply → Tasks path as
-LSP/debugpy). Koma never silent-pip-installs when a notebook opens. From a
-notebook missing-ipykernel strip, **Install ipykernel…** opens Language Packs
-with Python + the notebook checkbox already on.
+`{workspace python} -m pip install ipykernel` step. Progress stays on **Language
+Packs** (optional **Open in Tasks**). Koma never silent-pip-installs when a
+notebook opens. From a notebook missing-ipykernel strip, **Install ipykernel…**
+opens Language Packs with Python + the notebook checkbox already on.
 
 ## Behavior
 

@@ -22,6 +22,8 @@ pub(crate) mod provision;
 mod pty;
 mod notebook;
 mod notebook_client;
+/// Opt-in BasedPyright notebookDocumentSync probe — test harness only until Analysis wires it.
+#[cfg(test)]
 mod notebook_probe;
 mod notebook_wire;
 mod resources;
@@ -74,6 +76,10 @@ pub(super) fn event(value: Value) {
 pub(crate) struct WorkspaceRef {
     pub host_id: String,
     pub root: String,
+}
+
+fn default_true() -> bool {
+    true
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -163,6 +169,12 @@ pub(crate) enum Operation {
         /// selected workspace interpreter — never silent; runs only after PackApply.
         #[serde(default)]
         notebook: bool,
+        /// Install / update the pack language server (default true).
+        #[serde(default = "default_true")]
+        lsp: bool,
+        /// Install / update the pack debug adapter when one exists (default true).
+        #[serde(default = "default_true")]
+        adapter: bool,
         #[serde(default)]
         server: Option<String>,
     },

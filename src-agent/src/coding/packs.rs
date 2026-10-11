@@ -281,6 +281,8 @@ pub(super) fn plan(
     pack_id: &str,
     runtime: bool,
     notebook: bool,
+    include_lsp: bool,
+    include_adapter: bool,
     server: Option<&str>,
 ) -> Result<Value> {
     let p = PACKS
@@ -292,26 +294,32 @@ pub(super) fn plan(
         server == p.lsp || (p.id == "php" && server == "phpactor" && !cfg!(windows)),
         "Unsupported language server for this pack and host"
     );
+    anyhow::ensure!(
+        runtime || notebook || include_lsp || include_adapter,
+        "Select at least one component to install"
+    );
     let exe = std::env::current_exe()?.to_string_lossy().into_owned();
     let mut commands = Vec::new();
     if runtime {
         commands.extend(runtime_commands(p)?);
     }
-    let provision_lsp = matches!(server, "lua-language-server" | "zls" | "nil");
-    commands.push(command(
-        &exe,
-        if provision_lsp {
-            vec!["coding-provision".into(), server.into()]
-        } else {
-            vec![
-                "lsp".into(),
-                "install".into(),
-                server.into(),
-                "--force".into(),
-            ]
-        },
-    ));
-    if !p.adapter.is_empty() && p.adapter != "lldb-dap" {
+    if include_lsp {
+        let provision_lsp = matches!(server, "lua-language-server" | "zls" | "nil");
+        commands.push(command(
+            &exe,
+            if provision_lsp {
+                vec!["coding-provision".into(), server.into()]
+            } else {
+                vec![
+                    "lsp".into(),
+                    "install".into(),
+                    server.into(),
+                    "--force".into(),
+                ]
+            },
+        ));
+    }
+    if include_adapter && !p.adapter.is_empty() && p.adapter != "lldb-dap" {
         commands.push(command(
             &exe,
             vec!["coding-provision".into(), p.adapter.into()],
@@ -364,13 +372,18 @@ pub(super) fn plan(
             step["env"] = json!(env);
         }
     }
-    let notes = if notebook && p.id == "python" {
-        "ipykernel is installed into the workspace Python executable shown above (pip). Project packages stay project-owned. Koma never silent-pip-installs on notebook open."
-    } else if p.adapter == "lldb-dap" {
-        "LLVM's lldb-dap must be on PATH. Some distributions package it separately. Project test dependencies remain project-owned."
-    } else {
-        "Project test dependencies remain project-owned. PHP debugging requires Xdebug; Bash debugging requires bashdb."
-    };
+    let mut note_parts = Vec::new();
+    if include_lsp {
+        note_parts.push(format!("Language server: {server}."));
+    }
+    if notebook && p.id == "python" {
+        note_parts.push("ipykernel installs into the workspace Python (pip); never silent on notebook open.".into());
+    }
+    if p.adapter == "lldb-dap" && include_adapter {
+        note_parts.push("LLVM's lldb-dap must be on PATH.".into());
+    }
+    note_parts.push("Project test dependencies remain project-owned.".into());
+    let notes = note_parts.join(" ");
     let id = uuid::Uuid::new_v4().to_string();
     let result = json!({"id":id,"label":p.label,"commands":commands,"notes": notes});
     let mut registry = plans().lock().map_err(|_| {

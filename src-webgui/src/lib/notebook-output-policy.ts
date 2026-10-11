@@ -124,7 +124,8 @@ export function classifyNotebookOutput(output: {
     const joinHtml = (v: unknown) =>
       v == null ? '' : Array.isArray(v) ? v.map(String).join('') : String(v)
     const raw = joinHtml(data['text/html'])
-    const html = sanitizeNotebookHtml(raw)
+    // Outputs never allow remote images (stricter than markdown cells).
+    const html = sanitizeNotebookHtml(raw, { allowRemoteImages: false })
     if (!html.trim()) {
       return {
         kind: 'html-blocked',

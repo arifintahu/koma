@@ -6,7 +6,7 @@ import {
   notebookMarkdownComponents,
   type NotebookSafeOutput,
 } from '../lib/notebook-output-policy'
-import { notebookHtmlSrcdoc } from '../lib/notebook-html'
+import { notebookHtmlSrcdoc, sanitizeNotebookHtml } from '../lib/notebook-html'
 import { komaCode } from './komaShiki'
 import { komaLinkSafety } from './LinkSafetyModal'
 import { useKoma } from '../store/koma'
@@ -49,9 +49,28 @@ function ImageOutput({ bytes, mime }: { bytes: Uint8Array; mime: 'image/png' | '
   )
 }
 
-function HtmlOutput({ html }: { html: string }) {
+/** Shared sandboxed HTML frame for cell outputs and markdown HTML. */
+export function NotebookHtmlFrame({
+  html,
+  allowRemoteImages = false,
+  borderless = false,
+}: {
+  html: string
+  allowRemoteImages?: boolean
+  borderless?: boolean
+}) {
   const ref = useRef<HTMLIFrameElement | null>(null)
-  const srcdoc = useMemo(() => notebookHtmlSrcdoc(html), [html])
+  const bg = useKoma((s) => s.palette.bg)
+  const fg = useKoma((s) => s.palette.fg)
+  const srcdoc = useMemo(
+    () =>
+      notebookHtmlSrcdoc(html, {
+        allowRemoteImages,
+        themeFg: fg || undefined,
+        themeBg: 'transparent',
+      }),
+    [html, allowRemoteImages, fg],
+  )
   useEffect(() => {
     const frame = ref.current
     if (!frame) return
@@ -59,23 +78,32 @@ function HtmlOutput({ html }: { html: string }) {
       try {
         const doc = frame.contentDocument
         const h = doc?.documentElement?.scrollHeight ?? doc?.body?.scrollHeight
-        if (h && h > 0) frame.style.height = `${Math.min(480, Math.max(40, h + 8))}px`
+        if (h && h > 0) frame.style.height = `${Math.min(720, Math.max(24, h + 4))}px`
       } catch {
-        /* cross-origin shouldn't happen with srcdoc + sandbox without allow-same-origin scripts */
+        /* srcdoc + sandbox without allow-same-origin can still expose contentDocument in practice */
       }
     }
     frame.addEventListener('load', fit)
+    // Second fit after remote images (markdown badges) settle.
+    const t = window.setTimeout(fit, allowRemoteImages ? 400 : 0)
     fit()
-    return () => frame.removeEventListener('load', fit)
-  }, [srcdoc])
+    return () => {
+      frame.removeEventListener('load', fit)
+      window.clearTimeout(t)
+    }
+  }, [srcdoc, allowRemoteImages, bg])
   return (
     <iframe
       ref={ref}
-      title="Notebook HTML output"
+      title="Notebook HTML"
       sandbox=""
       referrerPolicy="no-referrer"
       srcDoc={srcdoc}
-      className="w-full min-h-[40px] rounded border border-koma-border bg-koma-bg"
+      className={
+        borderless
+          ? 'w-full min-h-[24px] border-0 bg-transparent'
+          : 'w-full min-h-[40px] rounded border border-koma-border/40 bg-transparent'
+      }
     />
   )
 }
@@ -86,7 +114,7 @@ function SafeOne({ safe }: { safe: NotebookSafeOutput }) {
   if (safe.kind === 'stream' || safe.kind === 'text' || safe.kind === 'error') {
     return (
       <pre
-        className={`m-0 whitespace-pre-wrap break-words font-mono text-[11px] ${
+        className={`m-0 whitespace-pre-wrap break-words font-mono text-[12px] ${
           safe.kind === 'error' ? 'text-koma-error' : 'text-koma-fg'
         }`}
       >
@@ -97,7 +125,7 @@ function SafeOne({ safe }: { safe: NotebookSafeOutput }) {
   if (safe.kind === 'markdown') {
     return (
       <Streamdown
-        className="koma-md text-[12px]"
+        className="koma-md text-[13px]"
         mode="static"
         parseIncompleteMarkdown={false}
         plugins={{ code: komaCode }}
@@ -115,7 +143,7 @@ function SafeOne({ safe }: { safe: NotebookSafeOutput }) {
     return <ImageOutput bytes={safe.bytes} mime={safe.kind === 'image-png' ? 'image/png' : 'image/jpeg'} />
   }
   if (safe.kind === 'html') {
-    return <HtmlOutput html={safe.html} />
+    return <NotebookHtmlFrame html={safe.html} />
   }
   if (safe.kind === 'html-blocked' || safe.kind === 'unsupported') {
     return (
@@ -132,7 +160,7 @@ export function NotebookOutputs({ outputs }: { outputs: unknown[] }) {
   if (!outputs.length) return null
   const safes = outputs.map((raw) => classifyNotebookOutput(asOutput(raw)))
   return (
-    <div className="flex flex-col gap-1 border-t border-koma-border bg-koma-bg/40 px-2 py-1.5">
+    <div className="flex flex-col gap-1 py-1 pl-1">
       {safes.map((safe, i) => (
         <div key={i} className="min-w-0 overflow-auto">
           <SafeOne safe={safe} />
@@ -140,4 +168,9 @@ export function NotebookOutputs({ outputs }: { outputs: unknown[] }) {
       ))}
     </div>
   )
+}
+
+/** Sanitize + frame path used by markdown cells with raw HTML. */
+export function sanitizeMarkdownCellHtml(raw: string): string {
+  return sanitizeNotebookHtml(raw, { allowRemoteImages: true })
 }

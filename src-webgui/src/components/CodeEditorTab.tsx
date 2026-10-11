@@ -43,6 +43,8 @@ const LSP_CHANGE_MS = 120
 // CodeLens ref-counts are expensive (documentSymbol + N references RPCs) and
 // share the host LSP mutex with hover/completion. Only warm on open / save idle.
 const CODELENS_IDLE_MS = 2500
+/** Soft threshold: skip CodeLens warm + some chrome on huge buffers (open feels heavy). */
+const LARGE_FILE_CHARS = 200_000
 const viewStates = new Map<string, monaco.editor.ICodeEditorViewState>()
 
 export default function CodeEditorTab({ tab }: { tab: CodingTab }) {
@@ -138,6 +140,8 @@ function WorkspaceCodeEditor({ tab }: { tab: CodingTab }) {
     if (!host) return
     initMonaco()
     const theme = applyKomaTheme()
+    // Content may still be loading; prefer conservative defaults then upgrade after paint.
+    const largeOpen = (fileState?.content?.length ?? 0) >= LARGE_FILE_CHARS
     const editor = monaco.editor.create(host, {
       value: '',
       language: langFromPath(tab.path),
@@ -149,7 +153,8 @@ function WorkspaceCodeEditor({ tab }: { tab: CodingTab }) {
       fontSize: 12,
       lineNumbersMinChars: 3,
       theme,
-      wordWrap: 'on',
+      // Word-wrap on multi-hundred-KB buffers is a known Monaco cost spike on open.
+      wordWrap: largeOpen ? 'off' : 'on',
       quickSuggestions: true,
       suggestOnTriggerCharacters: true,
       parameterHints: { enabled: true },
@@ -159,7 +164,7 @@ function WorkspaceCodeEditor({ tab }: { tab: CodingTab }) {
       // Alt = multi-cursor so Ctrl/Cmd+click is free for Go to Definition (VS Code).
       multiCursorModifier: 'alt',
       definitionLinkOpensInPeek: false,
-      codeLens: true,
+      codeLens: !largeOpen,
       gotoLocation: {
         multipleDefinitions: 'goto',
         // Always prefer peek for multi-ref; CodeLens forces peek even for 1 hit.
@@ -171,11 +176,11 @@ function WorkspaceCodeEditor({ tab }: { tab: CodingTab }) {
       // Peek chrome tracks koma theme (title actions, tree focus).
       peekWidgetDefaultFocus: 'tree',
       renderValidationDecorations: 'on',
-      matchBrackets: 'always',
-      bracketPairColorization: { enabled: true },
-      guides: { indentation: true, bracketPairs: false },
-      stickyScroll: { enabled: true },
-      inlayHints: { enabled: 'on' },
+      matchBrackets: largeOpen ? 'near' : 'always',
+      bracketPairColorization: { enabled: !largeOpen },
+      guides: { indentation: !largeOpen, bracketPairs: false },
+      stickyScroll: { enabled: !largeOpen },
+      inlayHints: { enabled: largeOpen ? 'off' : 'on' },
       // Dim CodeLens to match VS Code secondary chrome.
       // (color comes from editorCodeLens.foreground theme token)
     })
@@ -281,6 +286,8 @@ function WorkspaceCodeEditor({ tab }: { tab: CodingTab }) {
         })
       }, LSP_CHANGE_MS)
       // Defer CodeLens warm until typing goes idle — never on every didChange.
+      // Skip for large buffers (documentSymbol + N references thrash the LSP mutex).
+      if (text.length >= LARGE_FILE_CHARS) return
       if (codeLensIdleTimer) clearTimeout(codeLensIdleTimer)
       codeLensIdleTimer = setTimeout(() => {
         codeLensIdleTimer = null
@@ -438,6 +445,17 @@ function WorkspaceCodeEditor({ tab }: { tab: CodingTab }) {
 
     editor.updateOptions({
       readOnly: fileState.binary || fileState.tooLarge || fileState.loading,
+      ...(next.length >= LARGE_FILE_CHARS
+        ? {
+            wordWrap: 'off' as const,
+            codeLens: false,
+            matchBrackets: 'near' as const,
+            bracketPairColorization: { enabled: false },
+            guides: { indentation: false, bracketPairs: false },
+            stickyScroll: { enabled: false },
+            inlayHints: { enabled: 'off' as const },
+          }
+        : {}),
     })
 
     // Go-to-def / Problems may open this tab before content is ready — apply
@@ -526,12 +544,14 @@ function WorkspaceCodeEditor({ tab }: { tab: CodingTab }) {
           const m =
             monaco.editor.getModel(monacoUriFromPath(tab.root, tab.path)) ??
             modelRef.current
-          warmCodeLensCache(
-            (body) => useKoma.getState().req(body as never),
-            tab.root,
-            tab.path,
-            m?.getVersionId() ?? 1,
-          )
+          if ((fileState.content?.length ?? 0) < LARGE_FILE_CHARS) {
+            warmCodeLensCache(
+              (body) => useKoma.getState().req(body as never),
+              tab.root,
+              tab.path,
+              m?.getVersionId() ?? 1,
+            )
+          }
         }
       }, 2500)
       return () => window.clearTimeout(t)
@@ -553,12 +573,14 @@ function WorkspaceCodeEditor({ tab }: { tab: CodingTab }) {
     {
       const m =
         monaco.editor.getModel(monacoUriFromPath(tab.root, tab.path)) ?? modelRef.current
-      warmCodeLensCache(
-        (body) => useKoma.getState().req(body as never),
-        tab.root,
-        tab.path,
-        m?.getVersionId() ?? 1,
-      )
+      if ((fileState.content?.length ?? 0) < LARGE_FILE_CHARS) {
+        warmCodeLensCache(
+          (body) => useKoma.getState().req(body as never),
+          tab.root,
+          tab.path,
+          m?.getVersionId() ?? 1,
+        )
+      }
     }
   }, [
     fileState?.content,

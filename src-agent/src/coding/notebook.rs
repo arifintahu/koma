@@ -41,8 +41,8 @@ struct KernelSession {
     document_path: String,
     document_epoch: u64,
     interpreter: String,
+    /// Private dir holding the connection file; deleted on stop (file path is not retained).
     connection_dir: PathBuf,
-    connection_file: PathBuf,
     /// Public ports/key material never leave the native side in events.
     generation: u64,
     child: Mutex<Option<Box<dyn ChildWrapper>>>,
@@ -493,10 +493,13 @@ pub(super) fn start(
         if let Some((id, session)) = map.iter().find(|(_, s)| {
             s.workspace == *workspace && s.document_path == document_path
         }) {
+            // Reuse keeps the original document-epoch binding. Callers must execute
+            // with that epoch (not a later controller edit/output epoch).
             return Ok(json!({
                 "kernelId": id,
                 "generation": session.generation,
                 "documentPath": document_path,
+                "documentEpoch": session.document_epoch,
                 "interpreter": session.interpreter,
                 "interpreterFingerprint": fingerprint_interpreter(Path::new(&session.interpreter)),
                 "status": session
@@ -596,7 +599,6 @@ pub(super) fn start(
                 document_epoch,
                 interpreter: interp_str.clone(),
                 connection_dir: conn_dir,
-                connection_file: conn_file,
                 generation,
                 child: Mutex::new(Some(child)),
                 client: Mutex::new(None),
@@ -623,7 +625,6 @@ pub(super) fn start(
         document_epoch,
         interpreter: interp_str.clone(),
         connection_dir: conn_dir,
-        connection_file: conn_file,
         generation,
         child: Mutex::new(Some(child)),
         client: Mutex::new(Some(Arc::new(client))),
@@ -650,6 +651,7 @@ pub(super) fn start(
                 "kernelId": existing_id,
                 "generation": existing.generation,
                 "documentPath": document_path,
+                "documentEpoch": existing.document_epoch,
                 "interpreter": existing.interpreter,
                 "status": "running",
                 "reused": true,

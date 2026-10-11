@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import * as monaco from 'monaco-editor/esm/vs/editor/editor.api'
-import { BookOpen, Braces, ChevronDown, ChevronUp, Code2, Play, Plus, Square, Sparkles, Trash2, RotateCcw } from 'lucide-react'
+import { BookOpen, Braces, ChevronDown, ChevronUp, Code2, Play, Plus, Square, Trash2, RotateCcw } from 'lucide-react'
 import { Streamdown } from 'streamdown'
 import { initMonaco, applyKomaTheme, readMonoFont } from '../lib/monaco-setup'
 import { stampModelPath } from '../lib/monaco-lsp'
@@ -36,9 +36,10 @@ import {
   type PythonEnvironment,
 } from '../lib/notebook-kernel-picker'
 import { showCodingPacks } from './CodingPacks'
-import { NotebookOutputs } from './NotebookOutputs'
+import { NotebookOutputs, NotebookHtmlFrame, sanitizeMarkdownCellHtml } from './NotebookOutputs'
 import { showCodingHistory } from './CodingHistory'
-import { showToast } from '../lib/toast'
+import { showToast, showToastConfirm } from '../lib/toast'
+import { markdownLooksLikeHtml } from '../lib/notebook-html'
 import { useKoma, type Tab } from '../store/koma'
 import { fileKey } from '../store/coding'
 import { BrailleSpinner } from './BrailleSpinner'
@@ -120,7 +121,15 @@ function CellEditor({
       lineDecorationsWidth: 8,
       theme,
       wordWrap: 'on',
-      scrollbar: { verticalScrollbarSize: 8, horizontalScrollbarSize: 8 },
+      // Content drives host height — vertical bar only after the soft-cap.
+      scrollbar: {
+        vertical: 'auto',
+        horizontal: 'hidden',
+        verticalScrollbarSize: 8,
+        horizontalScrollbarSize: 8,
+        handleMouseWheel: true,
+        alwaysConsumeMouseWheel: false,
+      },
       padding: { top: 8, bottom: 8 },
       // No ordinary file LSP — cell analysis is M2 and stays unavailable.
       quickSuggestions: false,
@@ -129,19 +138,34 @@ function CellEditor({
       links: false,
     })
     editorRef.current = editor
+
+    const fitHeight = () => {
+      const lh = editor.getOption(monaco.editor.EditorOption.lineHeight) || 18
+      // getContentHeight includes word-wrap view lines + padding — preferred over model lineCount.
+      const contentHeight = editor.getContentHeight()
+      const height = Math.min(480, Math.max(lh * 2 + 16, contentHeight + 4))
+      if (host.style.height !== `${height}px`) {
+        host.style.height = `${height}px`
+        editor.layout()
+      }
+    }
+
     const sub = model.onDidChangeContent(() => {
+      fitHeight()
       if (applyingRef.current) return
       onChangeRef.current(model!.getValue())
     })
+    // Wrap / font metrics also change content height without a model edit.
+    const subLayout = editor.onDidContentSizeChange(() => fitHeight())
     const ro = new ResizeObserver(() => {
-      const height = Math.min(480, Math.max(72, (model!.getLineCount() + 1) * 18 + 16))
-      host.style.height = `${height}px`
       editor.layout()
+      fitHeight()
     })
-    host.style.height = `${Math.min(480, Math.max(72, (model.getLineCount() + 1) * 18 + 16))}px`
+    fitHeight()
     ro.observe(host)
     return () => {
       sub.dispose()
+      subLayout.dispose()
       ro.disconnect()
       editor.dispose()
       // Keep model only while tab lives — dispose with cell unmount to avoid leaks on delete.
@@ -156,7 +180,8 @@ function CellEditor({
   useEffect(() => {
     const model = modelRef.current
     const editor = editorRef.current
-    if (!model || !editor) return
+    const host = hostRef.current
+    if (!model || !editor || !host) return
     if (model.getValue() !== value) {
       applyingRef.current = true
       const pos = editor.getPosition()
@@ -166,13 +191,18 @@ function CellEditor({
     }
     monaco.editor.setModelLanguage(model, language)
     editor.updateOptions({ readOnly })
+    // External value sync (undo, run-clear, peer) must re-grow after setValue.
+    const lh = editor.getOption(monaco.editor.EditorOption.lineHeight) || 18
+    const height = Math.min(480, Math.max(lh * 2 + 16, editor.getContentHeight() + 4))
+    host.style.height = `${height}px`
+    editor.layout()
   }, [value, language, readOnly])
 
   useEffect(() => {
     if (active) editorRef.current?.focus()
   }, [active])
 
-  return <div ref={hostRef} className="w-full overflow-hidden rounded-b border border-t-0 border-koma-border bg-koma-bg" />
+  return <div ref={hostRef} className="w-full overflow-hidden bg-transparent" />
 }
 
 function RawJsonEditor({
@@ -251,20 +281,37 @@ function RawJsonEditor({
 function MarkdownPreview({ source }: { source: string }) {
   const bg = useKoma((s) => s.palette.bg)
   const theme = luminance(bg) >= 0.5 ? 'github-light' : 'github-dark'
-  // Static markdown only — no workspace image/link resolution (M4 hardens further).
+  const trimmed = source.trim()
+  // Jupyter renders raw HTML in markdown cells (Colab badges, tables). Prefer
+  // the sandboxed HTML path when the cell is HTML-dominant; otherwise Streamdown.
+  if (markdownLooksLikeHtml(trimmed)) {
+    const html = sanitizeMarkdownCellHtml(trimmed)
+    return (
+      <div className="min-w-0 px-1 py-1">
+        {html ? (
+          <NotebookHtmlFrame html={html} allowRemoteImages borderless />
+        ) : (
+          <span className="text-[12px] text-koma-dim">Empty after HTML sanitization</span>
+        )}
+      </div>
+    )
+  }
   return (
-    <div className="border border-t-0 border-koma-border bg-koma-bg px-3 py-2">
-      {source.trim() ? (
+    <div className="min-w-0 px-1 py-0.5">
+      {trimmed ? (
         <Streamdown
-          className="koma-md text-[12px]"
+          className="koma-md text-[13px]"
           mode="static"
           parseIncompleteMarkdown={false}
+          normalizeHtmlIndentation
           plugins={{ code: komaCode }}
           shikiTheme={[theme, theme]}
           lineNumbers={false}
-          controls={{ code: { copy: true, download: false }, table: false, mermaid: false }}
+          controls={{ code: { copy: false, download: false }, table: false, mermaid: false }}
           linkSafety={komaLinkSafety}
-        >{source}</Streamdown>
+        >
+          {source}
+        </Streamdown>
       ) : (
         <span className="text-[12px] text-koma-dim">Empty markdown cell</span>
       )}
@@ -362,25 +409,19 @@ function WorkspaceNotebook({ tab }: { tab: CodingTab }) {
   selectedInterpreterRef.current = selectedInterpreter
   const sessionId = useKoma(s => s.session.id)
 
-  /** Non-actionable → toast only. Missing ipykernel → sticky Select Kernel + toast. */
+  /** Actionable kernel recovery → sticky vertical banner only. Transient → toast. */
   function reportKernel(message: string, opts?: { selectKernel?: string }) {
     const text = message.trim() || 'Notebook kernel error'
     if (opts?.selectKernel) {
-      const path = opts.selectKernel
-      setKernelAction({ kind: 'select-kernel', path })
-      showToast(`ipykernel missing in ${path}`, 'warn', { session: sessionId, source: 'coding' })
-      setPickerOpen(true)
+      setKernelAction({ kind: 'select-kernel', path: opts.selectKernel })
       return
     }
-    // Native strings that mean "pick another env" still open the picker once.
+    // Native strings that mean "pick another env" → banner only (no toast pile-on).
     if (/ipykernel/i.test(text) && /not available|missing|did not become ready/i.test(text)) {
-      const path = selectedInterpreterRef.current || shortInterpreterLabel(null)
-      setKernelAction({ kind: 'select-kernel', path: selectedInterpreterRef.current || 'python' })
-      showToast(text.length > 160 ? `ipykernel missing · Select Kernel` : text, 'warn', {
-        session: sessionId,
-        source: 'coding',
+      setKernelAction({
+        kind: 'select-kernel',
+        path: selectedInterpreterRef.current || 'python',
       })
-      setPickerOpen(true)
       return
     }
     setKernelAction(null)
@@ -402,10 +443,22 @@ function WorkspaceNotebook({ tab }: { tab: CodingTab }) {
   }, [workspace.hostId, workspace.root, tab.path, fileState?.content != null])
 
   // External buffer changes (disk, revert, history restore) while mounted.
+  // Local controller commits already match fileState.content — adopt no-ops then.
+  // A real external replace advances epoch; drop the kernel bind so the next run
+  // re-consents against the new document identity.
   useEffect(() => {
     if (!controller || fileState?.content == null) return
+    const before = controller.documentEpoch
     controller.adoptExternalText(fileState.content)
-  }, [controller, fileState?.content])
+    if (controller.documentEpoch !== before) {
+      const k = kernelRef.current
+      if (k?.kernelId) {
+        void stopKernel(workspace, k.kernelId).catch(() => {})
+      }
+      setKernel(null)
+      setKernelStatus(null)
+    }
+  }, [controller, fileState?.content, workspace])
 
   // Release kernel when the tab unmounts.
   useEffect(() => {
@@ -567,21 +620,32 @@ function WorkspaceNotebook({ tab }: { tab: CodingTab }) {
         reportKernel(`ipykernel missing in ${interpreter}`, { selectKernel: interpreter })
         return null
       }
-      // First start: explicit consent (VS Code associates kernel after pick; we still gate process spawn).
-      const ok = window.confirm(
-        `Start a Python kernel for this notebook?\n\nInterpreter: ${interpreter}\nNotebook: ${tab.path}\n\nThe kernel runs on the workspace host and can execute code in this document.`,
-      )
+      // Snapshot epoch at consent/start — later cell edits / output commits must not
+      // invalidate the bind (execute uses this bound epoch, not the live controller epoch).
+      const bindEpoch = controller.documentEpoch
+      // First start: toast-confirm (never window.confirm — silent no-op inside wry).
+      const ok = await showToastConfirm({
+        text: `Start Python kernel?\n${shortInterpreterLabel(interpreter)} · ${tab.path}`,
+        confirmLabel: 'Start kernel',
+        kind: 'warn',
+        session: sessionId,
+        source: 'coding',
+      })
       if (!ok) return null
-      await consentKernel(workspace, tab.path, interpreter, controller.documentEpoch)
-      const info = await startKernel(workspace, tab.path, controller.documentEpoch, interpreter)
-      setKernel(info)
-      setKernelStatus(info.status)
-      setKernelAction(null)
-      if (info.interpreter) {
-        setSelectedInterpreter(info.interpreter)
-        rememberInterpreter(workspace, tab.path, info.interpreter)
+      await consentKernel(workspace, tab.path, interpreter, bindEpoch)
+      const info = await startKernel(workspace, tab.path, bindEpoch, interpreter)
+      const bound: NotebookKernelInfo = {
+        ...info,
+        documentEpoch: info.documentEpoch ?? bindEpoch,
       }
-      return info
+      setKernel(bound)
+      setKernelStatus(bound.status)
+      setKernelAction(null)
+      if (bound.interpreter) {
+        setSelectedInterpreter(bound.interpreter)
+        rememberInterpreter(workspace, tab.path, bound.interpreter)
+      }
+      return bound
     } catch (e) {
       reportKernel(e instanceof Error ? e.message : String(e))
       return null
@@ -598,6 +662,14 @@ function WorkspaceNotebook({ tab }: { tab: CodingTab }) {
     if (!cell || cell.cellType !== 'code') return
     const info = await ensureKernel()
     if (!info) return
+    // Kernel is bound to documentEpoch from start/reuse — not the live controller
+    // epoch. clearCellOutputs / streaming commits advance the controller epoch and
+    // must not be sent as the execute CAS token (that produced "Document epoch mismatch").
+    const boundEpoch = info.documentEpoch
+    if (boundEpoch == null) {
+      reportKernel('Kernel is missing a document epoch binding — restart the kernel')
+      return
+    }
     setRunBusy(true)
     liveOutputsRef.current = []
     liveCellRef.current = runtimeId
@@ -611,7 +683,7 @@ function WorkspaceNotebook({ tab }: { tab: CodingTab }) {
         cellId: runtimeId,
         code: cell.source,
         generation: info.generation,
-        documentEpoch: controller.documentEpoch,
+        documentEpoch: boundEpoch,
       })
       if (reply.parentMsgId) liveParentRef.current = reply.parentMsgId
       controller.setCellOutputs(
@@ -654,9 +726,14 @@ function WorkspaceNotebook({ tab }: { tab: CodingTab }) {
     if (!kernel) return
     setStartingKernel(true)
     try {
+      const prevEpoch = kernel.documentEpoch
       const info = await restartKernel(workspace, kernel.kernelId)
-      setKernel(info)
-      setKernelStatus(info.status)
+      const bound: NotebookKernelInfo = {
+        ...info,
+        documentEpoch: info.documentEpoch ?? prevEpoch,
+      }
+      setKernel(bound)
+      setKernelStatus(bound.status)
       setKernelAction(null)
     } catch (e) {
       reportKernel(e instanceof Error ? e.message : String(e))
@@ -845,10 +922,10 @@ function WorkspaceNotebook({ tab }: { tab: CodingTab }) {
                     className="mt-1 w-full rounded px-1.5 py-1 text-left text-[10px] text-koma-dim hover:bg-koma-hover hover:text-koma-fg"
                     onClick={() => {
                       setPickerOpen(false)
-                      showCodingPacks()
+                      showCodingPacks(workspace, { notebook: true })
                     }}
                   >
-                    Language Packs… (workspace default / install)
+                    Language Packs… (install LSP / ipykernel)
                   </button>
                 </div>
               </div>
@@ -925,119 +1002,215 @@ function WorkspaceNotebook({ tab }: { tab: CodingTab }) {
         </div>
       )}
       {kernelAction?.kind === 'select-kernel' && (
-        <div className="flex flex-none items-center gap-2 border-b border-koma-border bg-koma-warn/10 px-3 py-1.5 text-[12px] text-koma-fg">
-          <span className="min-w-0 flex-1 truncate">
+        <div className="flex flex-none flex-col gap-2 border-b border-koma-border bg-koma-warn/10 px-3 py-2 text-[12px] text-koma-fg">
+          <div className="min-w-0 break-all">
             ipykernel missing in <span className="font-mono text-[11px]">{kernelAction.path}</span>
-          </span>
-          <button
-            type="button"
-            className="flex-none rounded border border-koma-border px-2 py-0.5 text-[11px] hover:bg-koma-hover"
-            onClick={() => void openKernelPicker()}
-          >
-            Select Kernel
-          </button>
-          <button
-            type="button"
-            className="flex-none rounded border border-koma-border px-2 py-0.5 text-[11px] hover:bg-koma-hover"
-            title="Open Language Packs with Notebook kernel (ipykernel) checked — review then install via Tasks"
-            onClick={() => showCodingPacks(workspace, { notebook: true })}
-          >
-            Install ipykernel…
-          </button>
-          <button
-            type="button"
-            className="flex-none text-[11px] text-koma-dim underline"
-            onClick={() => setKernelAction(null)}
-          >
-            Dismiss
-          </button>
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              className="rounded border border-koma-border px-2 py-0.5 text-[11px] hover:bg-koma-hover"
+              onClick={() => void openKernelPicker()}
+            >
+              Select Kernel
+            </button>
+            <button
+              type="button"
+              className="rounded border border-koma-border px-2 py-0.5 text-[11px] hover:bg-koma-hover"
+              title="Open Language Packs — install ipykernel into the workspace Python"
+              onClick={() => showCodingPacks(workspace, { notebook: true })}
+            >
+              Install ipykernel…
+            </button>
+            <button
+              type="button"
+              className="text-[11px] text-koma-dim underline"
+              onClick={() => setKernelAction(null)}
+            >
+              Dismiss
+            </button>
+          </div>
         </div>
       )}
       {!state.parse.ok && state.mode === 'raw' && (
-        <div className="flex flex-none items-center gap-2 border-b border-koma-border bg-koma-warn/10 px-3 py-1.5 text-[12px] text-koma-warn">
-          <span className="min-w-0 flex-1">Invalid notebook JSON — edit as raw text. Returning to cells requires a successful reparse. Original bytes are not rewritten on open.</span>
+        <div className="flex flex-none flex-col gap-1 border-b border-koma-border bg-koma-warn/10 px-3 py-2 text-[12px] text-koma-warn">
+          <span className="min-w-0">
+            Invalid notebook JSON — edit as raw text. Returning to cells requires a successful reparse.
+            Original bytes are not rewritten on open.
+          </span>
         </div>
       )}
       {state.oversize && (
-        <div className="flex flex-none items-center gap-2 border-b border-koma-border bg-koma-warn/10 px-3 py-1.5 text-[12px] text-koma-warn">
-          <span className="min-w-0 flex-1">
-            Notebook exceeds the {Math.round(NOTEBOOK_EDITABLE_MAX_CHARS / (1024 * 1024))} MiB cell-editor budget. Raw JSON only — outputs are not stripped.
+        <div className="flex flex-none flex-col gap-1 border-b border-koma-border bg-koma-warn/10 px-3 py-2 text-[12px] text-koma-warn">
+          <span className="min-w-0">
+            Notebook exceeds the {Math.round(NOTEBOOK_EDITABLE_MAX_CHARS / (1024 * 1024))} MiB cell-editor
+            budget. Raw JSON only — outputs are not stripped.
           </span>
         </div>
       )}
 
       {showCells && notebookDoc ? (
-        <div className="min-h-0 flex-1 overflow-auto px-3 py-3">
-          <div className="mx-auto flex max-w-4xl flex-col gap-3">
+        <div className="min-h-0 flex-1 overflow-auto px-2 py-2 sm:px-4">
+          <div className="mx-auto flex max-w-4xl flex-col">
             {notebookDoc.cells.map((cell, index) => {
               const identity = state.identities[index]
               if (!identity) return null
               const selected = state.selectedRuntimeId === identity.runtimeId
-              const previewMd = cell.cellType === 'markdown' && mdPreview[identity.runtimeId]
+              // Jupyter default: markdown shows rendered; code shows editor.
+              // mdPreview[id] === false means explicitly editing; undefined/true = preview.
+              const mdEditing = cell.cellType === 'markdown' && mdPreview[identity.runtimeId] === false
+              const showMdPreview = cell.cellType === 'markdown' && !mdEditing
+              const execLabel =
+                cell.cellType === 'code'
+                  ? cell.executionCount != null
+                    ? `In [${cell.executionCount}]:`
+                    : 'In [ ]:'
+                  : ''
               return (
                 <div
                   key={identity.runtimeId}
-                  className={`rounded border ${selected ? 'border-koma-accent/60' : 'border-koma-border'} bg-koma-panel`}
+                  className={`group relative flex gap-2 border-l-2 py-1 pl-1 pr-1 transition-colors ${
+                    selected
+                      ? 'border-koma-accent bg-koma-accent/[0.04]'
+                      : 'border-transparent hover:bg-koma-hover/30'
+                  }`}
                   onMouseDown={() => controller.selectCell(identity.runtimeId)}
+                  onDoubleClick={() => {
+                    if (cell.cellType === 'markdown' && showMdPreview) {
+                      setMdPreview((m) => ({ ...m, [identity.runtimeId]: false }))
+                    }
+                  }}
                 >
-                  <div className="flex flex-wrap items-center gap-1 border-b border-koma-border px-2 py-1 text-[11px]">
-                    <span className="font-mono text-koma-dim">[{index + 1}]</span>
-                    <select
-                      disabled={readOnly}
-                      value={cell.cellType}
-                      onChange={(e) => controller.setCellType(identity.runtimeId, e.target.value as NotebookCellType)}
-                      className="rounded border border-koma-border bg-koma-bg px-1 py-0.5 text-koma-fg"
-                    >
-                      <option value="code">code</option>
-                      <option value="markdown">markdown</option>
-                      <option value="raw">raw</option>
-                    </select>
-                    {cell.cellType === 'code' && (
-                      <span className="text-koma-dim">
-                        {cell.executionCount != null ? `[${cell.executionCount}]` : '[ ]'}
-                      </span>
+                  {/* Gutter — Jupyter-style prompt */}
+                  <div className="flex w-14 flex-none flex-col items-end pt-1.5 font-mono text-[11px] leading-none text-koma-dim select-none">
+                    {cell.cellType === 'code' ? (
+                      <span title={`Cell ${index + 1}`}>{execLabel}</span>
+                    ) : (
+                      <span className="opacity-0 group-hover:opacity-50">[{index + 1}]</span>
                     )}
-                    {cell.cellType === 'markdown' && (
-                      <button
-                        type="button"
-                        className="rounded px-1 text-koma-dim hover:bg-koma-hover hover:text-koma-fg"
-                        onClick={() => setMdPreview(m => ({ ...m, [identity.runtimeId]: !m[identity.runtimeId] }))}
-                      >
-                        {previewMd ? 'Edit' : 'Preview'}
-                      </button>
-                    )}
-                    <span className="ml-auto flex items-center gap-0.5">
-                      <button type="button" disabled={readOnly || index === 0} title="Move up" className="rounded p-0.5 text-koma-dim hover:bg-koma-hover disabled:opacity-30" onClick={() => controller.moveCell(identity.runtimeId, index - 1)}><ChevronUp size={13} /></button>
-                      <button type="button" disabled={readOnly || index >= notebookDoc.cells.length - 1} title="Move down" className="rounded p-0.5 text-koma-dim hover:bg-koma-hover disabled:opacity-30" onClick={() => controller.moveCell(identity.runtimeId, index + 1)}><ChevronDown size={13} /></button>
-                      <button type="button" disabled={readOnly} title="Add cell below" className="rounded p-0.5 text-koma-dim hover:bg-koma-hover disabled:opacity-30" onClick={() => controller.addCell(identity.runtimeId, 'code')}><Plus size={13} /></button>
-                      <button type="button" disabled={readOnly || notebookDoc.cells.length <= 1} title="Delete cell" className="rounded p-0.5 text-koma-dim hover:bg-koma-hover disabled:opacity-30" onClick={() => controller.deleteCell(identity.runtimeId)}><Trash2 size={13} /></button>
-                      <button
-                        type="button"
-                        disabled={readOnly || cell.cellType !== 'code' || startingKernel || runBusy}
-                        title={cell.cellType === 'code' ? (runnable ? 'Run cell' : 'Start kernel and run cell') : 'Only code cells run'}
-                        className="rounded p-0.5 text-koma-dim hover:bg-koma-hover hover:text-koma-fg disabled:opacity-30"
-                        onClick={() => void runCell(identity.runtimeId)}
-                      >
-                        <Play size={13} />
-                      </button>
-                      <button type="button" disabled title="Analysis (unavailable)" className="rounded p-0.5 text-koma-dim opacity-40"><Sparkles size={13} /></button>
-                    </span>
                   </div>
-                  {previewMd ? (
-                    <MarkdownPreview source={cell.source} />
-                  ) : (
-                    <CellEditor
-                      runtimeId={identity.runtimeId}
-                      language={cellLanguage(cell.cellType)}
-                      value={cell.source}
-                      readOnly={readOnly}
-                      active={selected}
-                      onChange={(text) => controller.setCellSource(identity.runtimeId, text)}
-                    />
-                  )}
-                  {cell.cellType === 'code' && (
-                    <NotebookOutputs outputs={controller.getCellOutputs(identity.runtimeId)} />
-                  )}
+
+                  <div className="min-w-0 flex-1">
+                    {/* Toolbar — hover / selected only (borderless chrome) */}
+                    <div
+                      className={`mb-0.5 flex flex-wrap items-center gap-0.5 text-[11px] transition-opacity ${
+                        selected ? 'opacity-100' : 'opacity-0 group-hover:opacity-100 focus-within:opacity-100'
+                      }`}
+                    >
+                      <select
+                        disabled={readOnly}
+                        value={cell.cellType}
+                        onChange={(e) =>
+                          controller.setCellType(identity.runtimeId, e.target.value as NotebookCellType)
+                        }
+                        className="rounded border-0 bg-transparent px-0.5 py-0.5 text-koma-dim hover:bg-koma-hover hover:text-koma-fg"
+                        aria-label="Cell type"
+                      >
+                        <option value="code">Code</option>
+                        <option value="markdown">Markdown</option>
+                        <option value="raw">Raw</option>
+                      </select>
+                      {cell.cellType === 'markdown' && (
+                        <button
+                          type="button"
+                          className="rounded px-1 text-koma-dim hover:bg-koma-hover hover:text-koma-fg"
+                          onClick={() =>
+                            setMdPreview((m) => ({
+                              ...m,
+                              [identity.runtimeId]: mdEditing ? true : false,
+                            }))
+                          }
+                        >
+                          {mdEditing ? 'Preview' : 'Edit'}
+                        </button>
+                      )}
+                      <span className="ml-auto flex items-center gap-0.5">
+                        <button
+                          type="button"
+                          disabled={readOnly || index === 0}
+                          title="Move up"
+                          className="rounded p-0.5 text-koma-dim hover:bg-koma-hover disabled:opacity-30"
+                          onClick={() => controller.moveCell(identity.runtimeId, index - 1)}
+                        >
+                          <ChevronUp size={13} />
+                        </button>
+                        <button
+                          type="button"
+                          disabled={readOnly || index >= notebookDoc.cells.length - 1}
+                          title="Move down"
+                          className="rounded p-0.5 text-koma-dim hover:bg-koma-hover disabled:opacity-30"
+                          onClick={() => controller.moveCell(identity.runtimeId, index + 1)}
+                        >
+                          <ChevronDown size={13} />
+                        </button>
+                        <button
+                          type="button"
+                          disabled={readOnly}
+                          title="Add cell below"
+                          className="rounded p-0.5 text-koma-dim hover:bg-koma-hover disabled:opacity-30"
+                          onClick={() => controller.addCell(identity.runtimeId, 'code')}
+                        >
+                          <Plus size={13} />
+                        </button>
+                        <button
+                          type="button"
+                          disabled={readOnly || notebookDoc.cells.length <= 1}
+                          title="Delete cell"
+                          className="rounded p-0.5 text-koma-dim hover:bg-koma-hover disabled:opacity-30"
+                          onClick={() => controller.deleteCell(identity.runtimeId)}
+                        >
+                          <Trash2 size={13} />
+                        </button>
+                        <button
+                          type="button"
+                          disabled={readOnly || cell.cellType !== 'code' || startingKernel || runBusy}
+                          title={
+                            cell.cellType === 'code'
+                              ? runnable
+                                ? 'Run cell'
+                                : 'Start kernel and run cell'
+                              : 'Only code cells run'
+                          }
+                          className="rounded p-0.5 text-koma-dim hover:bg-koma-hover hover:text-koma-fg disabled:opacity-30"
+                          onClick={() => void runCell(identity.runtimeId)}
+                        >
+                          <Play size={13} />
+                        </button>
+                      </span>
+                    </div>
+
+                    {/* Body */}
+                    <div
+                      className={
+                        cell.cellType === 'code'
+                          ? 'rounded-sm bg-koma-bg/60 ring-1 ring-koma-border/30'
+                          : showMdPreview
+                            ? ''
+                            : 'rounded-sm ring-1 ring-koma-border/25'
+                      }
+                    >
+                      {showMdPreview ? (
+                        <MarkdownPreview source={cell.source} />
+                      ) : (
+                        <CellEditor
+                          runtimeId={identity.runtimeId}
+                          language={cellLanguage(cell.cellType)}
+                          value={cell.source}
+                          readOnly={readOnly}
+                          active={selected}
+                          onChange={(text) => controller.setCellSource(identity.runtimeId, text)}
+                        />
+                      )}
+                    </div>
+                    {cell.cellType === 'code' && (
+                      <div className="flex gap-2 pt-0.5">
+                        <div className="w-0 flex-none" />
+                        <div className="min-w-0 flex-1">
+                          <NotebookOutputs outputs={controller.getCellOutputs(identity.runtimeId)} />
+                        </div>
+                      </div>
+                    )}
+                  </div>
                 </div>
               )
             })}
@@ -1045,7 +1218,7 @@ function WorkspaceNotebook({ tab }: { tab: CodingTab }) {
               type="button"
               disabled={readOnly}
               onClick={() => controller.addCell(state.selectedRuntimeId, 'code')}
-              className="flex items-center justify-center gap-1 rounded border border-dashed border-koma-border py-2 text-[12px] text-koma-dim hover:bg-koma-hover hover:text-koma-fg disabled:opacity-40"
+              className="mt-2 flex items-center justify-center gap-1 rounded border border-dashed border-koma-border/50 py-1.5 text-[12px] text-koma-dim hover:border-koma-border hover:bg-koma-hover/40 hover:text-koma-fg disabled:opacity-40"
             >
               <Plus size={14} /> Add cell
             </button>

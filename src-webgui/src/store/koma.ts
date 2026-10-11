@@ -337,6 +337,8 @@ useKoma.subscribe((state, previous) => {
   if (state.session.id && (state.session.id !== previous.session.id || state.remoteState.hostId !== previous.remoteState.hostId)) bindNotificationHost(state.session.id, state.remoteState.hostId)
   const toast = state.ui.toast
   if (!toast || toast === previous.ui.toast || toast.id === previous.ui.toast?.id) return
+  // Toast-confirm is ephemeral UI — do not mirror into the notifications ledger.
+  if (toast.action) return
   if (toast.source === 'runtime' && toast.eventId && toast.session !== null) return // saved on the session host at creation
   publishNotification(toast.text, toast.kind, toast.session === undefined ? (publishingOrigin ? publishingOrigin.session : state.session.id) : toast.session, toast.source ?? publishingOrigin?.source, toast.eventId)
 })

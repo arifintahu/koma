@@ -555,6 +555,13 @@ function DiffFallback() {
 }
 
 function TabBody({ tab, visible }: { tab: Exclude<Tab, { kind: 'chat' }>; visible: boolean }) {
+  // Keep coding editors mounted after first show (view state / model reuse), but
+  // do not spin Monaco + LSP for every background tab the moment it is opened.
+  const [codingArmed, setCodingArmed] = useState(visible && tab.kind === 'codingFile')
+  useEffect(() => {
+    if (visible && tab.kind === 'codingFile') setCodingArmed(true)
+  }, [visible, tab.kind])
+
   return (
     <Suspense fallback={<DiffFallback />}>
       {tab.kind === 'gitTool' ? (
@@ -590,7 +597,15 @@ function TabBody({ tab, visible }: { tab: Exclude<Tab, { kind: 'chat' }>; visibl
       ) : tab.kind === 'extension' ? (
         <ExtensionPanelFrame extId={tab.extId} panelId={tab.panelId} title={tab.title} />
       ) : tab.kind === 'codingFile' ? (
-        tab.preview ? <MarkdownPreviewTab tab={tab} /> : isNotebookPath(tab.path) ? <NotebookTab tab={tab} /> : <CodeEditorTab tab={tab} />
+        !codingArmed ? (
+          <DiffFallback />
+        ) : tab.preview ? (
+          <MarkdownPreviewTab tab={tab} />
+        ) : isNotebookPath(tab.path) ? (
+          <NotebookTab tab={tab} />
+        ) : (
+          <CodeEditorTab tab={tab} />
+        )
       ) : tab.kind === 'localFile' ? (
         <LocalFileTab tab={tab} />
       ) : tab.kind === 'terminal' ? (
