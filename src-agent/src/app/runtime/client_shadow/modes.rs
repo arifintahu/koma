@@ -722,6 +722,7 @@ pub(crate) fn shadow_attachments(
                 marker_n: row.marker_n,
                 rel_path: row.rel_path,
                 mime: row.mime,
+                label: None,
             })
             .collect(),
         selected: s.selected,

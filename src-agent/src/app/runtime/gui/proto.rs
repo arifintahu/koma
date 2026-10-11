@@ -211,9 +211,15 @@ pub(super) enum GuiReq {
         #[serde(default)]
         kind: Option<String>,
     },
-    /// Long composer paste. The host forwards it as [`ClientRequest::AttachPaste`].
+    /// Long composer paste, or a dropped text file. The host forwards it as
+    /// [`ClientRequest::AttachPaste`]. `name` labels the chip; `force` keeps a
+    /// short file as a chip instead of rejecting it as inline paste.
     AttachPaste {
         text: String,
+        #[serde(default)]
+        name: Option<String>,
+        #[serde(default)]
+        force: bool,
     },
     /// Edit the body of a staged `[Pasted Text #N]` chip.
     UpdatePaste {

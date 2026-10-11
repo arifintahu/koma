@@ -54,7 +54,7 @@ declare global {
     // `kind` is `image` or `pasted_text` so the two sequences can share a number.
     | { r: 'RemoveAttachment'; markerN: number; kind?: 'image' | 'file' | 'pasted_text' }
     // Collapse a long paste into a `[Pasted Text #N]` chip.
-    | { r: 'AttachPaste'; text: string }
+    | { r: 'AttachPaste'; text: string; name?: string; force?: boolean }
     // Replace the saved body of a staged paste chip.
     | { r: 'UpdatePaste'; markerN: number; text: string }
     // Load a staged paste body after reload.

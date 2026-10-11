@@ -523,15 +523,27 @@ impl DaemonHub {
         Some(fg.session.as_ref()?.path.join(&att.rel_path))
     }
 
-    pub(super) fn attach_paste(&mut self, idx: usize, state: &mut AppState, text: String) {
-        if !crate::model::attachment::should_collapse_paste(&text) {
-            self.send_to(
-                idx,
-                DaemonEvent::Error("paste is short enough to stay inline".into()),
-            );
+    pub(super) fn attach_paste(
+        &mut self,
+        idx: usize,
+        state: &mut AppState,
+        text: String,
+        name: Option<String>,
+        force: bool,
+    ) {
+        if !crate::model::attachment::accept_paste_body(&text, force) {
+            let msg = if text.len() > crate::model::attachment::PASTE_SOFT_MAX_BYTES {
+                "paste too large or no session"
+            } else {
+                "paste is short enough to stay inline"
+            };
+            self.send_to(idx, DaemonEvent::Error(msg.into()));
             return;
         }
-        if !state.rest.try_attach_paste_text(&text) {
+        if !state
+            .rest
+            .try_attach_paste_text_named(&text, name.as_deref())
+        {
             self.send_to(
                 idx,
                 DaemonEvent::Error("paste too large or no session".into()),

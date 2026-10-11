@@ -52,6 +52,11 @@ pub struct Attachment {
     /// Sniffed MIME type (e.g. `image/png`, `text/plain`), used for image
     /// data-URL prefixes and GUI chip kind derivation.
     pub mime: String,
+    /// Composer chip label for a dropped text file. Absent for images and
+    /// clipboard pastes, which keep the on-disk basename or `Pasted Text #N`.
+    /// Not the on-disk name (`pastes/NN-paste.txt` stays unchanged).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub label: Option<String>,
 }
 
 impl Attachment {
@@ -73,6 +78,19 @@ impl Attachment {
     pub fn is_pasted_text(&self) -> bool {
         matches!(self.kind, AttachmentKind::PastedText)
     }
+
+    /// Composer chip label. A dropped text file keeps its filename; clipboard
+    /// pastes stay `Pasted Text #N`; images use the on-disk basename.
+    pub fn chip_name(&self) -> String {
+        if let Some(label) = self.label.as_deref().filter(|s| !s.is_empty()) {
+            return label.to_string();
+        }
+        if self.is_pasted_text() {
+            format!("Pasted Text #{}", self.marker_n)
+        } else {
+            self.file_name().to_string()
+        }
+    }
 }
 
 #[cfg(test)]
@@ -91,6 +109,7 @@ mod tests {
         assert_eq!(att.marker_n, 2);
         assert_eq!(att.rel_path, "images/02-shot.png");
         assert_eq!(att.mime, "image/png");
+        assert!(att.label.is_none());
         assert!(att.is_image());
         assert!(!att.is_pasted_text());
     }
@@ -102,6 +121,7 @@ mod tests {
             marker_n: 1,
             rel_path: "pastes/01-paste.txt".to_string(),
             mime: "text/plain".to_string(),
+            label: None,
         };
         let json = serde_json::to_string(&att).expect("serialize");
         let back: Attachment = serde_json::from_str(&json).expect("deserialize");

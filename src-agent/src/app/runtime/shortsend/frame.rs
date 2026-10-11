@@ -101,6 +101,7 @@ mod tests {
             marker_n: n,
             rel_path: format!("images/{n}.png"),
             mime: "image/png".into(),
+            label: None,
         }
     }
 

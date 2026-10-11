@@ -67,13 +67,22 @@ export type ListedComposerAttachment = {
   markerN: number | null
   name: string
   id?: string
+  /** Spinner in the filename slot until the daemon assigns a marker. */
+  loading?: boolean
+}
+
+export type PendingComposerChip = {
+  id: string
+  kind: 'image' | 'pasted_text'
+  name: string
 }
 
 /** Session attachments plus in-flight pastes for the composer inventory strip. */
 export function listedComposerAttachments(
   _draft: string,
   attachments: Array<{ kind: 'image' | 'file' | 'pasted_text'; markerN: number; name: string }>,
-  localPastes: Array<{ id: string; markerN?: number; n?: number; label?: string }>,
+  localPastes: Array<{ id: string; markerN?: number; n?: number; label?: string; loading?: boolean }>,
+  pending: readonly PendingComposerChip[] = [],
 ): ListedComposerAttachment[] {
   const listed: ListedComposerAttachment[] = []
   const seen = new Set<string>()
@@ -113,9 +122,48 @@ export function listedComposerAttachments(
       markerN: null,
       name: paste.label || 'Pasted Text',
       id: paste.id,
+      loading: paste.loading,
+    })
+  }
+  const localIds = new Set(localPastes.map((paste) => paste.id))
+  for (const row of pending) {
+    if (localIds.has(row.id)) continue
+    listed.push({
+      key: row.id,
+      kind: row.kind,
+      markerN: null,
+      name: row.name,
+      id: row.id,
+      loading: true,
     })
   }
   return listed
+}
+
+/**
+ * Drop optimistic chips that this snapshot will bind, or that the user already
+ * cancelled, so the inventory does not show the spinner and the real chip at once.
+ */
+export function unboundPendingChips(
+  pending: readonly PendingComposerChip[],
+  queue: readonly { id: string; kind: 'image' | 'pasted_text'; markerN: number | null; cancelled: boolean }[],
+  attachments: readonly { kind: string; markerN: number }[],
+  seen: ReadonlySet<string>,
+): PendingComposerChip[] {
+  const claimed = new Set<string>()
+  for (const att of attachments) {
+    if (att.kind !== 'image' && att.kind !== 'pasted_text') continue
+    if (seen.has(`${att.kind}:${att.markerN}`)) continue
+    const row = queue.find(
+      (item) => item.kind === att.kind && item.markerN == null && !item.cancelled && !claimed.has(item.id),
+    )
+    if (row) claimed.add(row.id)
+  }
+  return pending.filter((row) => {
+    const queued = queue.find((item) => item.id === row.id)
+    if (!queued || queued.cancelled || queued.markerN != null || claimed.has(row.id)) return false
+    return true
+  })
 }
 
 /** Markers appended on send when the user never dropped the pile into the draft. */

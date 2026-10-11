@@ -40,7 +40,9 @@ import {
   imageMarker,
   listedComposerAttachments,
   trailingAttachmentMarkers,
+  unboundPendingChips,
   type MarkerInsertRow,
+  type PendingComposerChip,
 } from '../lib/composerMarkers'
 import {
   formatPasteFence,
@@ -68,6 +70,14 @@ import {
 import { composerTextPasteAction } from '../lib/composerMarkdownPaste'
 import { parseFileRefWire } from '../lib/composerChipOpen'
 import { ComposerPasteEditOverlay } from './ComposerPasteEditOverlay'
+import { BrailleSpinner } from './BrailleSpinner'
+import {
+  COMPOSER_FILE_ACCEPT,
+  decodeDroppedText,
+  dropFileLabel,
+  previewDroppedFile,
+  readDroppedBytes,
+} from '../lib/dropFiles'
 import { LexicalMarkdownEditor, type LexicalEditorHandle } from './lexical/LexicalMarkdownEditor'
 
 type DiagramChip = { id: string; title: string; mermaid: string; doc: DiagramDoc }
@@ -77,7 +87,7 @@ function mintDiagramChipId(): string {
   return `d${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`
 }
 
-type LocalPaste = PastedBlock & { id: string; markerN?: number; label?: string }
+type LocalPaste = PastedBlock & { id: string; markerN?: number; label?: string; loading?: boolean }
 
 function steerPreview(text: string): string {
   const pasted = splitPasteMessage(text)
@@ -130,6 +140,25 @@ function readFileAsBase64(file: File): Promise<string> {
   })
 }
 
+function filesFromDrop(data: DataTransfer): { files: File[]; directory: boolean } {
+  const items = Array.from(data.items ?? [])
+  const readable = items.filter((item) => typeof (item as { webkitGetAsEntry?: unknown }).webkitGetAsEntry === 'function')
+  if (readable.length === 0) return { files: Array.from(data.files), directory: false }
+  let directory = false
+  const files: File[] = []
+  for (const item of items) {
+    const entry = (item as { webkitGetAsEntry?: () => { isDirectory?: boolean } | null }).webkitGetAsEntry?.()
+    if (entry?.isDirectory) {
+      directory = true
+      continue
+    }
+    const file = item.getAsFile()
+    if (file) files.push(file)
+  }
+  if (!directory && files.length === 0) return { files: Array.from(data.files), directory: false }
+  return { files, directory }
+}
+
 const COMPOSER_FIELD_CLASS =
   'm-0 box-border w-full whitespace-pre-wrap break-words p-0 text-[14px] leading-[22px] [overflow-wrap:anywhere] [tab-size:4]'
 
@@ -169,6 +198,7 @@ export function Composer() {
   const [localPastes, setLocalPastes] = useState<LocalPaste[]>([])
   const localPastesRef = useRef<LocalPaste[]>([])
   localPastesRef.current = localPastes
+  const [pendingFiles, setPendingFiles] = useState<PendingComposerChip[]>([])
   // Fresh pastes wait here until the snapshot assigns `[Pasted Text #N]`.
   // Recalled fences are not queued: they already have a body to splice back.
   const markerInsertQueue = useRef<MarkerInsertRow[]>([])
@@ -285,10 +315,17 @@ export function Composer() {
         prev.map((item) => {
           const q = markerInsertQueue.current.find((row) => row.id === item.id)
           if (!q || q.markerN == null) return item
-          return { ...item, markerN: q.markerN, n: q.markerN }
+          return { ...item, markerN: q.markerN, n: q.markerN, loading: false }
         }),
       )
     }
+    setPendingFiles((prev) => {
+      const next = prev.filter((row) => {
+        const queued = markerInsertQueue.current.find((item) => item.id === row.id)
+        return !!queued && !queued.cancelled && queued.markerN == null
+      })
+      return next.length === prev.length ? prev : next
+    })
   }
 
   useEffect(() => {
@@ -337,6 +374,7 @@ export function Composer() {
     sessionSeenRef.current = sessionId
     setPasteTexts({})
     setLocalPastes([])
+    setPendingFiles([])
     setDiagramChips([])
     setDesignChips([])
     setInput('')
@@ -357,6 +395,7 @@ export function Composer() {
     setDiagramChips(draft.chips)
     setDesignChips(draft.designs)
     setLocalPastes(draft.pastes)
+    setPendingFiles([])
     setInput(draft.prose)
     consumeComposerRefill()
   }, [composerRefill, consumeComposerRefill, preserveTabsOnNextSession])
@@ -422,6 +461,7 @@ export function Composer() {
     setDiagramChips(draft.chips)
     setDesignChips(draft.designs)
     setLocalPastes(draft.pastes)
+    setPendingFiles([])
     setInput(draft.prose)
   }
 
@@ -522,6 +562,7 @@ export function Composer() {
     setDiagramChips([])
     setDesignChips([])
     setLocalPastes([])
+    setPendingFiles([])
     window.setTimeout(() => {
       submitLock.current = false
     }, 300)
@@ -572,6 +613,14 @@ export function Composer() {
       const stuck = markerInsertQueue.current.filter((row) => row.markerN == null && !row.cancelled)
       if (!stuck.length) return
       markerInsertQueue.current = markerInsertQueue.current.filter((row) => !stuck.some((item) => item.id === row.id))
+      setPendingFiles((prev) => {
+        const next = prev.filter((row) => !stuck.some((item) => item.id === row.id))
+        return next.length === prev.length ? prev : next
+      })
+      setLocalPastes((prev) => {
+        if (!prev.some((item) => stuck.some((row) => row.id === item.id && item.loading))) return prev
+        return prev.map((item) => (stuck.some((row) => row.id === item.id) ? { ...item, loading: false } : item))
+      })
       if (submitArmed.current && !submitLock.current) {
         submitArmed.current = false
         submitRef.current()
@@ -716,23 +765,84 @@ export function Composer() {
     resetHistory()
   }
 
-  const attachFiles = async (files: FileList | File[]) => {
-    for (const file of Array.from(files)) {
-      // Images only — the daemon's attachment ingest (Paste{path}) only
-      // ingests image extensions; a non-image file falls through to
-      // inserting its raw path into the shared composer buffer, silently
-      // corrupting the session. Silently skip non-image files here; use
-      // omnisearch to reference non-image workspace files by path instead.
-      if (!file.type.startsWith('image/')) continue
-      const id = mintDiagramChipId()
-      markerInsertQueue.current.push({ id, kind: 'image', markerN: null, cancelled: false })
-      try {
-        const bytesB64 = await readFileAsBase64(file)
-        req({ r: 'AttachFile', name: file.name, bytesB64, mime: file.type || undefined })
-      } catch {
-        markerInsertQueue.current = markerInsertQueue.current.filter((row) => row.id !== id)
+  const forgetPending = (id: string) => {
+    markerInsertQueue.current = markerInsertQueue.current.filter((row) => row.id !== id)
+    setPendingFiles((prev) => prev.filter((row) => row.id !== id))
+    setLocalPastes((prev) => prev.filter((paste) => paste.id !== id))
+  }
+
+  const attachFiles = (files: FileList | File[]) => {
+    const list = Array.from(files)
+    if (!list.length) return
+    const accepted: Array<{ id: string; file: File; kind: 'image' | 'text'; name: string }> = []
+    for (const file of list) {
+      const name = dropFileLabel(file.name)
+      const preview = previewDroppedFile(file.name, file.type, file.size)
+      if (preview === 'reject') {
+        toastError(file.size > PASTE_SOFT_MAX_BYTES ? 'Paste is larger than 2 MB' : `${name} isn't a text or image file`)
+        continue
       }
+      const id = mintDiagramChipId()
+      accepted.push({ id, file, kind: preview, name })
     }
+    if (!accepted.length) return
+    setPendingFiles((prev) => [
+      ...prev,
+      ...accepted.map((item) => ({
+        id: item.id,
+        kind: item.kind === 'image' ? 'image' as const : 'pasted_text' as const,
+        name: item.name,
+      })),
+    ])
+    for (const item of accepted) {
+      markerInsertQueue.current.push({
+        id: item.id,
+        kind: item.kind === 'image' ? 'image' : 'pasted_text',
+        markerN: null,
+        cancelled: false,
+      })
+    }
+    void (async () => {
+      const ready = await Promise.all(accepted.map(async (item) => {
+        if (item.kind === 'image') {
+          try {
+            return { ...item, bytesB64: await readFileAsBase64(item.file), text: null as string | null, failed: false }
+          } catch {
+            return { ...item, bytesB64: '', text: null, failed: true }
+          }
+        }
+        try {
+          const bytes = await readDroppedBytes(item.file)
+          const text = decodeDroppedText(bytes)
+          if (text == null || pasteByteLength(text) > PASTE_SOFT_MAX_BYTES) {
+            return { ...item, bytesB64: '', text: null, failed: true }
+          }
+          return { ...item, bytesB64: '', text, failed: false }
+        } catch {
+          return { ...item, bytesB64: '', text: null, failed: true }
+        }
+      }))
+      for (const item of ready) {
+        const row = markerInsertQueue.current.find((queued) => queued.id === item.id)
+        if (!row || row.cancelled) {
+          forgetPending(item.id)
+          continue
+        }
+        if (item.failed || (item.kind === 'text' && item.text == null)) {
+          forgetPending(item.id)
+          toastError(item.kind === 'text' ? `${item.name} isn't a text or image file` : `${item.name} couldn't be read`)
+          continue
+        }
+        if (item.kind === 'image') {
+          req({ r: 'AttachFile', name: item.name, bytesB64: item.bytesB64, mime: item.file.type || undefined })
+          continue
+        }
+        const text = item.text ?? ''
+        setPendingFiles((prev) => prev.filter((row) => row.id !== item.id))
+        setLocalPastes((prev) => [...prev, { id: item.id, n: 0, path: '', text, label: item.name, loading: true }])
+        req({ r: 'AttachPaste', text, name: item.name, force: true })
+      }
+    })()
   }
 
   const onPaste = (e: ClipboardEvent<HTMLElement>): boolean => {
@@ -786,7 +896,9 @@ export function Composer() {
       })
       return
     }
-    if (e.dataTransfer.files.length > 0) void attachFiles(e.dataTransfer.files)
+    const dropped = filesFromDrop(e.dataTransfer)
+    if (dropped.directory) toastError("Folders can't be attached")
+    if (dropped.files.length > 0) attachFiles(dropped.files)
   }
 
   const onDragOver = (e: DragEvent<HTMLDivElement>) => {
@@ -828,15 +940,21 @@ export function Composer() {
     req({ r: 'RemoveAttachment', markerN, kind })
   }
 
-  const stripAttachments = useMemo(
-    () => listedComposerAttachments(input, attachments, localPastes),
-    [input, attachments, localPastes],
-  )
+  const stripAttachments = useMemo(() => {
+    const pending = unboundPendingChips(
+      pendingFiles,
+      markerInsertQueue.current,
+      attachments,
+      seenAttachmentMarkers.current,
+    )
+    return listedComposerAttachments(input, attachments, localPastes, pending)
+  }, [input, attachments, localPastes, pendingFiles])
 
   const removeListedAttachment = (item: (typeof stripAttachments)[number]) => {
-    if (item.kind === 'pasted_text' && item.markerN == null && item.id) {
+    if (item.markerN == null && item.id) {
       const row = markerInsertQueue.current.find((queued) => queued.id === item.id)
       if (row) row.cancelled = true
+      setPendingFiles((prev) => prev.filter((chip) => chip.id !== item.id))
       setLocalPastes((prev) => prev.filter((paste) => paste.id !== item.id))
       return
     }
@@ -1115,7 +1233,8 @@ export function Composer() {
                   role="group"
                   aria-label={item.name}
                   draggable={canPlace}
-                  title={canPlace ? 'Drag into the message to place. Click to insert at the caret.' : undefined}
+                  title={item.loading ? item.name : canPlace ? 'Drag into the message to place. Click to insert at the caret.' : undefined}
+                  aria-busy={item.loading || undefined}
                   onDragStart={(event) => {
                     if (!canPlace || item.markerN == null) {
                       event.preventDefault()
@@ -1143,7 +1262,9 @@ export function Composer() {
                   }}
                   className={`flex items-center gap-1 rounded-lg border border-koma-border bg-koma-panel2 px-2 py-1 text-[11px] text-koma-fg opacity-90 focus:outline-none focus-visible:ring-1 focus-visible:ring-koma-accent ${canPlace ? 'cursor-grab' : ''}`}
                 >
-                  {item.kind === 'pasted_text' && item.markerN != null ? (
+                  {item.loading ? (
+                    <BrailleSpinner size={11} className="text-koma-dim" />
+                  ) : item.kind === 'pasted_text' && item.markerN != null ? (
                     <button
                       type="button"
                       className="max-w-[180px] truncate text-left"
@@ -1257,7 +1378,7 @@ export function Composer() {
             <input
               ref={fileInputRef}
               type="file"
-              accept="image/*"
+              accept={COMPOSER_FILE_ACCEPT}
               multiple
               className="hidden"
               onChange={onFilePicked}

@@ -7,6 +7,7 @@ import {
   listedComposerAttachments,
   markerKeysInText,
   trailingAttachmentMarkers,
+  unboundPendingChips,
 } from './composerMarkers.ts'
 import { pasteMarker } from './pasteText.ts'
 
@@ -67,6 +68,26 @@ import { pasteMarker } from './pasteText.ts'
 
   const unplaced = listedComposerAttachments('hello', attachments, [])
   assert.equal(unplaced.some((item) => item.key === 'image:1'), true)
+
+  const pendingImage = listedComposerAttachments('', [], [], [{ id: 'img', kind: 'image', name: 'shot.png' }])
+  assert.equal(pendingImage.length, 1)
+  assert.equal(pendingImage[0]?.loading, true)
+  assert.equal(pendingImage[0]?.name, 'shot.png')
+
+  const named = listedComposerAttachments('', [], [{ id: 'p0', n: 0, label: 'notes.md', loading: true }])
+  assert.equal(named.length, 1)
+  assert.equal(named[0]?.name, 'notes.md')
+  assert.equal(named[0]?.loading, true)
+  const bound = listedComposerAttachments('', [{ kind: 'pasted_text', markerN: 4, name: 'Pasted Text #4' }], [{ id: 'p0', markerN: 4, n: 4, label: 'notes.md' }])
+  assert.equal(bound.filter((item) => item.kind === 'pasted_text').length, 1)
+  assert.equal(bound[0]?.name, 'notes.md')
+  assert.equal(bound[0]?.loading, undefined)
+
+  const queue = [{ id: 'img', kind: 'image' as const, markerN: null, cancelled: false }]
+  const hidden = unboundPendingChips([{ id: 'img', kind: 'image', name: 'shot.png' }], queue, [{ kind: 'image', markerN: 1 }], new Set())
+  assert.equal(hidden.length, 0)
+  const still = unboundPendingChips([{ id: 'img', kind: 'image', name: 'shot.png' }], queue, [], new Set())
+  assert.equal(still.length, 1)
 }
 
 {

@@ -179,6 +179,7 @@ fn computer_turn_scope_skips_observations_and_reminders_but_ends_at_new_user() {
             marker_n: 1,
             rel_path: "images/fixture.png".into(),
             mime: "image/png".into(),
+            label: None,
         }],
     );
     conversation.push_user_with_attachments(
@@ -188,6 +189,7 @@ fn computer_turn_scope_skips_observations_and_reminders_but_ends_at_new_user() {
             marker_n: 2,
             rel_path: "images/crop.png".into(),
             mime: "image/png".into(),
+            label: None,
         }],
     );
     conversation.push_user(super::COMPUTER_RECOVERY_NUDGE_MSG);

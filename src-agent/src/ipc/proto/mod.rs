@@ -144,8 +144,14 @@ pub enum ClientRequest {
         kind: Option<String>,
     },
     /// Collapse a long GUI paste into `pastes/NN-paste.txt` and stage `[Pasted Text #N]`.
+    /// `name` is the dropped filename (display only). `force` stages a short file
+    /// that would otherwise stay inline.
     AttachPaste {
         text: String,
+        #[serde(default)]
+        name: Option<String>,
+        #[serde(default)]
+        force: bool,
     },
     /// Replace the body of a staged pasted-text chip. Disk stays the source of truth.
     UpdatePaste {

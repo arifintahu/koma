@@ -648,11 +648,7 @@ fn push_snapshot_if_changed(
         .filter(|a| a.is_image() || a.is_pasted_text())
         .map(|a| PushAttachment {
             marker_n: a.marker_n,
-            name: if a.is_pasted_text() {
-                format!("Pasted Text #{}", a.marker_n)
-            } else {
-                a.file_name().to_string()
-            },
+            name: a.chip_name(),
             kind: if a.is_pasted_text() {
                 "pasted_text"
             } else {

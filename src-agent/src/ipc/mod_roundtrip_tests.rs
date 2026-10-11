@@ -167,6 +167,7 @@ fn sample_global_snapshot() -> GlobalSnapshot {
             marker_n: 1,
             rel_path: "images/01-shot.png".to_string(),
             mime: "image/png".to_string(),
+            label: None,
         }],
         file_palette: Some(vec!["src/main.rs".to_string(), "src/lib.rs".to_string()]),
         agent_mode: "auto".to_string(),

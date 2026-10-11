@@ -225,12 +225,14 @@ mod tests {
                 marker_n: 1,
                 rel_path: "images/01-a.png".into(),
                 mime: "image/png".into(),
+                label: None,
             },
             Attachment {
                 kind: AttachmentKind::PastedText,
                 marker_n: 1,
                 rel_path: "pastes/01-paste.txt".into(),
                 mime: "text/plain".into(),
+                label: None,
             },
         ];
         // Only the paste marker survives → image #1 must drop even though n=1 matches paste.

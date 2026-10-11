@@ -61,6 +61,7 @@ fn small_image_passes_through_byte_identical() {
         marker_n: 1,
         rel_path: "images/01-small.png".to_string(),
         mime: "image/png".to_string(),
+        label: None,
     };
 
     let got = data_url_for(&dir, &att).expect("data url");
@@ -91,6 +92,7 @@ fn oversized_image_is_downscaled() {
         marker_n: 1,
         rel_path: "images/01-big.png".to_string(),
         mime: "image/png".to_string(),
+        label: None,
     };
 
     let got = data_url_for(&dir, &att).expect("data url");
@@ -136,6 +138,7 @@ fn cache_file_created_and_reused() {
         marker_n: 1,
         rel_path: "images/01-cache.png".to_string(),
         mime: "image/png".to_string(),
+        label: None,
     };
 
     let first = data_url_for(&dir, &att).expect("first call");

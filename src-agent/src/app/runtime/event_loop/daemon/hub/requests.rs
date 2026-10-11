@@ -435,8 +435,8 @@ impl DaemonHub {
                 self.submit_input(idx, state, client, handle, text);
             }
 
-            ClientRequest::AttachPaste { text } => {
-                self.attach_paste(idx, state, text);
+            ClientRequest::AttachPaste { text, name, force } => {
+                self.attach_paste(idx, state, text, name, force);
             }
             ClientRequest::UpdatePaste { marker_n, text } => {
                 self.update_paste(idx, state, marker_n, text);

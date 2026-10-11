@@ -181,10 +181,10 @@ pub(super) fn handle_gui_req(req: GuiReq, ctx: &GuiReqCtx) {
                 }
             }
         }
-        GuiReq::AttachPaste { text } => {
+        GuiReq::AttachPaste { text, name, force } => {
             if let Ok(g) = ctx.req.lock() {
                 if let Some(tx) = g.as_ref() {
-                    let _ = tx.send(ClientRequest::AttachPaste { text });
+                    let _ = tx.send(ClientRequest::AttachPaste { text, name, force });
                 }
             }
         }
