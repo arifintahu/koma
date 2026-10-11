@@ -17,6 +17,8 @@ export type PushEvent =
   | { k: 'Computer'; status: import('../../types/computer').ComputerStatus }
   | { k: 'ComputerPreview'; frame: import('../../types/computer').ComputerPreviewFrame }
   | { k: 'ComputerError'; message: string }
+  | { k: 'ScreenBrowser'; status: import('../../types/screenBrowser').ScreenBrowserStatus }
+  | { k: 'ScreenBrowserError'; message: string }
   | import('../../lib/coding-service').CodingReply
   | { k: 'CodingEvent'; clientId?: string; workspace: import('../../lib/coding-service').WorkspaceRef; event: { k: string; [key: string]: unknown } }
   | ({ k: 'GitWorkbench' } & GitReply)

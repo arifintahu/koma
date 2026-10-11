@@ -311,6 +311,27 @@ pub(crate) enum HostCtl {
     ComputerPrepared {
         id: String,
     },
+    /// On-screen browser consent / chrome / operation results.
+    #[cfg(feature = "gui")]
+    ScreenBrowser {
+        action: String,
+        window: Option<String>,
+        prefs: Option<crate::app::runtime::screen_browser::Prefs>,
+        url: Option<String>,
+        tab_id: Option<String>,
+        tabs: Option<Vec<crate::app::runtime::screen_browser::TabInfo>>,
+        active_tab: Option<String>,
+        window_open: bool,
+        reply: Option<Box<crate::app::runtime::screen_browser::Reply>>,
+    },
+    #[cfg(feature = "gui")]
+    ScreenBrowserChrome {
+        action: String,
+        url: Option<String>,
+        tab_id: Option<String>,
+    },
+    #[cfg(feature = "gui")]
+    ScreenBrowserOpenWindow,
     /// The webview page booted / reloaded: re-push the full authoritative state.
     Ready,
     /// Attach to this existing session UUID (a hub `SelectSession` pick).

@@ -16,6 +16,24 @@ export function pushComputer(set: StoreSet, get: StoreGet, env: PushEnvelope): b
       case 'ComputerError':
         if (!get().computer?.enabled) useComputerPreview.getState().hide()
         set({ computerError: env.message }); break
+      case 'ScreenBrowser':
+        // Accept status for this session, or a blank session "stopped" wipe.
+        if (!env.status.session || env.status.session === get().session.id) {
+          const next = env.status.session
+            ? env.status
+            : { ...env.status, session: get().session.id }
+          set({
+            screenBrowser: next.enabled ? next : { ...next, enabled: false },
+            screenBrowserError: null,
+          })
+          // Hard-clear when disabled so the globe never sticks green on a stale object.
+          if (!next.enabled) {
+            set({ screenBrowser: { ...next, enabled: false, busy: false, paused: false, window_open: false, tabs: [] } })
+          }
+        }
+        break
+      case 'ScreenBrowserError':
+        set({ screenBrowserError: env.message }); break
     default:
       return false
   }

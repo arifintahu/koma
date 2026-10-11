@@ -292,6 +292,8 @@ export function sessionActions(set: StoreSet, get: StoreGet): Pick<KomaState, 'o
     set((s) => ({
       computer: null,
       computerError: null,
+      screenBrowser: null,
+      screenBrowserError: null,
       skillDeletePending: {},
       // Fresh object (not spread from the old session) — nothing about the
       // just-killed session is worth preserving, mirrors initialSession's

@@ -18,6 +18,8 @@ export type KomaState = {
   webSearchValues: import('../types/web-search').SearchReply | null
   computer: import('../types/computer').ComputerStatus | null
   computerError: string | null
+  screenBrowser: import('../types/screenBrowser').ScreenBrowserStatus | null
+  screenBrowserError: string | null
   session: SessionSlice
   hub: HubSlice
   palette: PaletteColors

@@ -505,6 +505,9 @@ impl DaemonHub {
                 // seat parked so the window can reattach or be opened again.
                 crate::app::runtime::computer::bridge::gui_client_lost(rt);
             }
+            if rt.screen_browser.owner == Some(self.clients[idx].id) {
+                crate::app::runtime::screen_browser::bridge::gui_client_lost(rt);
+            }
         }
         if state.rest.oauth_gui_client == Some(self.clients[idx].id) {
             state.rest.oauth_gui_client = None;

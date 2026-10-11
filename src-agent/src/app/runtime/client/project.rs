@@ -530,11 +530,12 @@ fn push_snapshot_if_changed(
                         })
                         .collect();
                     let computer = super::push_rows::computer_observation(m, &s.id);
+                    let screen_browser = super::push_rows::screen_browser_observation(m, &s.id);
                     Some(PushMsg {
                         idx,
                         role,
                         kind,
-                        content: if computer.is_some() {
+                        content: if computer.is_some() || screen_browser.is_some() {
                             String::new()
                         } else {
                             content
@@ -543,6 +544,7 @@ fn push_snapshot_if_changed(
                         tool_calls,
                         attachments,
                         computer,
+                        screen_browser,
                     })
                 })
                 .collect()

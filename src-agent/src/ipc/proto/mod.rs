@@ -74,6 +74,7 @@ pub enum ClientRequest {
     },
 
     Computer(crate::app::runtime::computer::Control),
+    ScreenBrowser(crate::app::runtime::screen_browser::Control),
     Attach {
         foreground_id: Option<String>,
         cwd: Option<String>,
@@ -898,6 +899,8 @@ pub enum DaemonEvent {
     },
     ComputerStatus(crate::app::runtime::computer::Status),
     ComputerOperation(crate::app::runtime::computer::Request),
+    ScreenBrowserStatus(crate::app::runtime::screen_browser::Status),
+    ScreenBrowserOperation(crate::app::runtime::screen_browser::Request),
     /// Build-skew handshake (task #142): sent VERY FIRST on attach.
     Hello {
         version: String,

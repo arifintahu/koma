@@ -320,6 +320,7 @@ pub(in crate::app::runtime) fn daemon_loop(
         //    handling below so a closed-state snapshot reflects the tombstones.
         hub.drain_inbound(state, client, handle);
         hub.drain_computer(state);
+        hub.drain_screen_browser(state);
 
         // 3-bis. Reply to any async `ListModels` GET that landed since the last tick with
         //     a seq'd `ModelList` frame to the requesting client (the GUI Connector model

@@ -1,6 +1,7 @@
 import React from 'react'
 import { restoreUiScale } from './lib/uiScale'
 import { ComputerViewer } from './components/ComputerViewer'
+import { ScreenBrowserChrome } from './components/ScreenBrowserChrome'
 import ReactDOM from 'react-dom/client'
 import { RouterProvider } from '@tanstack/react-router'
 import { router } from './router'
@@ -35,7 +36,9 @@ if (typeof window !== 'undefined') {
 function renderApp() {
   ReactDOM.createRoot(document.getElementById('root')!).render(
     <React.StrictMode>
-      {window.location.hash === '#computer-preview' ? <ComputerViewer /> : <RouterProvider router={router} />}
+      {window.location.hash === '#computer-preview' ? <ComputerViewer />
+        : window.location.hash === '#screen-browser' ? <ScreenBrowserChrome />
+        : <RouterProvider router={router} />}
     </React.StrictMode>
   )
 }

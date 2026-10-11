@@ -139,6 +139,8 @@ const seenNotificationEvents = new Set<string>()
 export const useKoma = create<KomaState>((set, get) => ({
   computer: null,
   computerError: null,
+  screenBrowser: null,
+  screenBrowserError: null,
   session: initialSession,
   hub: initialHub,
   palette: initialPalette,

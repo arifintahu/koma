@@ -26,6 +26,14 @@ pub(super) enum UserEvent {
     /// heavy attach envelopes (Snapshot/Loading/Config/…) one frame at a time —
     /// stream/chat traffic is never queued behind them.
     Push(String),
+    /// Execute an on-screen browser tool operation on the tao main thread.
+    ScreenBrowserOp(crate::app::runtime::screen_browser::Request),
+    /// Chrome IPC from the browser window, routed back if needed.
+    ScreenBrowserChrome {
+        action: String,
+        url: Option<String>,
+        tab_id: Option<String>,
+    },
     /// Background app-list install finished. The Dock icon is applied on this
     /// thread; `NSApplication` calls are main-thread only.
     LauncherReady,
@@ -46,6 +54,9 @@ pub(super) enum UserEvent {
 #[derive(Clone, Copy)]
 pub(super) enum WinCmd {
     ComputerViewer,
+    ScreenBrowser,
+    /// Tear down the on-screen browser window (stop).
+    ScreenBrowserClose,
     Drag,
     Minimize,
     ToggleMax,
@@ -139,6 +150,17 @@ pub(super) enum GuiReq {
     ComputerPreview {
         #[serde(flatten)]
         request: crate::app::runtime::computer::PreviewRequest,
+    },
+    ScreenBrowser {
+        action: String,
+        #[serde(default)]
+        window: Option<String>,
+        #[serde(default)]
+        prefs: Option<crate::app::runtime::screen_browser::Prefs>,
+        #[serde(default)]
+        url: Option<String>,
+        #[serde(default)]
+        tab_id: Option<String>,
     },
     Ready,
     Submit {

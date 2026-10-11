@@ -82,6 +82,6 @@ export async function setUiScale(scale: UiScale): Promise<boolean> {
 }
 
 export async function restoreUiScale(): Promise<void> {
-  if (window.location.hash === '#computer-preview') return
+  if (window.location.hash === '#computer-preview' || window.location.hash === '#screen-browser') return
   await setUiScale(readUiScale())
 }

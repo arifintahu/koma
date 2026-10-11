@@ -26,3 +26,4 @@ pub(in crate::app::runtime) use core::DaemonHub;
 pub(crate) use core::HubInbound;
 
 mod requests_computer;
+mod requests_screen_browser;

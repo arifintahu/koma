@@ -9,7 +9,16 @@ pub(crate) fn delegated_tool_allowed_in_plan(name: &str) -> bool {
     super::tool_allowed_in_plan(name)
         && !matches!(
             name,
-            "computer_windows" | "computer_observe" | "computer_select_window" | "computer_act"
+            "computer_windows"
+                | "computer_observe"
+                | "computer_select_window"
+                | "computer_act"
+                | "screen_browser_tabs"
+                | "screen_browser_observe"
+                | "screen_browser_act"
+                | "screen_browser_read"
+                | "screen_browser_eval"
+                | "screen_browser_wait_human"
         )
         && !matches!(name, "seqthink" | "checklist" | "plan_enter" | "plan_ready")
 }

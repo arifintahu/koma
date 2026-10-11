@@ -190,6 +190,8 @@ pub(super) fn apply_frame(
         // client-side attach like `OpenSwapper`/`NewSession` do.
         DaemonEvent::ComputerStatus(_)
         | DaemonEvent::ComputerOperation(_)
+        | DaemonEvent::ScreenBrowserStatus(_)
+        | DaemonEvent::ScreenBrowserOperation(_)
         | DaemonEvent::Ack
         | DaemonEvent::Error(_)
         | DaemonEvent::Status(_)
