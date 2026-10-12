@@ -38,3 +38,14 @@ export function fallbackSignature(name: string, args: string): string {
   inner = inner.replace(/\s+/g, ' ').trim()
   return `${name}(${truncateChars(inner, 60)})`
 }
+
+/** Pretty-printed tool arguments for the GUI payload pane. */
+export function formatToolPayload(args: string): string {
+  const raw = args.trim()
+  if (raw === '') return ''
+  try {
+    return JSON.stringify(JSON.parse(raw), null, 2)
+  } catch {
+    return raw
+  }
+}
