@@ -765,6 +765,8 @@ impl BrowserWindow {
             use wry::WebViewBuilderExtUnix;
             chrome_builder.build_gtk(&linux_fixed)?
         };
+        #[cfg(target_os = "linux")]
+        super::linux_disable_webkit_prefetch(&chrome);
         #[cfg(not(target_os = "linux"))]
         let chrome = chrome_builder.build_as_child(&window)?;
         #[cfg(target_os = "linux")]
@@ -1134,6 +1136,8 @@ impl BrowserWindow {
             use wry::WebViewBuilderExtUnix;
             builder.build_gtk(&self.linux_fixed)?
         };
+        #[cfg(target_os = "linux")]
+        super::linux_disable_webkit_prefetch(&webview);
         #[cfg(target_os = "linux")]
         linux_cover_on_load(&webview, &self.linux_plate, &self.chrome);
         // Content tabs are child webviews so the page sits under the chrome strip

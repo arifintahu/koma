@@ -169,10 +169,10 @@ html[data-computer-preparing="true"] .computer-preview-panel { visibility: hidde
    ONE flat box per fence — a single thin border with the language inline in
    the top rule, nothing nested. Streamdown's default renders a card-in-card
    (rounded-xl bordered outer shell containing an ALSO-bordered inner body,
-   plus a boxed copy-button pill) — flatten that down to match. Leave the
-   header/action-tray SIZE utilities (h-8, sticky, -mt-10) alone: that's the
-   load-bearing math that floats the copy button top-right; only their
-   border/background/padding chrome is stripped here. */
+   plus a boxed copy-button pill) — flatten that down to match. Pin the
+   header/copy tray INSIDE the gray body (absolute top-right) instead of
+   Streamdown's h-8 + -mt-10 float, which sat the icon on empty space above
+   the box. */
 .koma-md [data-streamdown="code-block"] {
   margin: 0.5rem 0;
   padding: 0;
@@ -183,8 +183,19 @@ html[data-computer-preparing="true"] .computer-preview-panel { visibility: hidde
   z-index: 0;
 }
 .koma-md [data-streamdown="code-block-header"] {
+  position: absolute !important;
+  top: 0.3rem !important;
+  right: 0.35rem !important;
+  left: auto !important;
+  height: auto !important;
+  min-height: 0 !important;
+  width: auto !important;
+  margin: 0 !important;
+  padding: 0 !important;
   font-size: 10px;
   color: var(--color-koma-dim);
+  pointer-events: none;
+  z-index: 1;
 }
 .koma-md [data-streamdown="code-block-header"] span {
   margin-left: 0;
@@ -192,6 +203,10 @@ html[data-computer-preparing="true"] .computer-preview-panel { visibility: hidde
 /* Copy-button tray: kill its bordered pill, show only on hover/focus (the
    TUI has no such affordance at all — this is the one GUI-only addition). */
 .koma-md [data-streamdown="code-block-actions"] {
+  position: static !important;
+  top: auto !important;
+  right: auto !important;
+  margin: 0 !important;
   border: none;
   border-radius: 0;
   background: transparent;
@@ -199,6 +214,7 @@ html[data-computer-preparing="true"] .computer-preview-panel { visibility: hidde
   padding: 0;
   opacity: 0;
   transition: opacity 0.12s ease;
+  pointer-events: auto;
 }
 .koma-md [data-streamdown="code-block"]:hover [data-streamdown="code-block-actions"],
 .koma-md [data-streamdown="code-block"]:focus-within [data-streamdown="code-block-actions"] {
@@ -206,6 +222,8 @@ html[data-computer-preparing="true"] .computer-preview-panel { visibility: hidde
 }
 .koma-md [data-streamdown="code-block-copy-button"] {
   color: var(--color-koma-dim);
+  background: var(--color-koma-panel);
+  border-radius: 3px;
 }
 .koma-md [data-streamdown="code-block-copy-button"]:hover {
   color: var(--color-koma-fg);
@@ -213,12 +231,13 @@ html[data-computer-preparing="true"] .computer-preview-panel { visibility: hidde
 /* The one visible box: single hairline border + a subtle panel lift off the
    chat background (assistant bubbles sit directly on --color-koma-bg), same
    pairing the rest of the app uses for "contained" content (StartScreen
-   cards, ResumePalette, ModelPicker, …). Compact padding, body-copy size. */
+   cards, ResumePalette, ModelPicker, …). Compact padding, body-copy size.
+   Extra right padding keeps the last line clear of the overlay copy button. */
 .koma-md [data-streamdown="code-block-body"] {
   border: 1px solid var(--color-koma-border);
   border-radius: 4px;
   background: var(--color-koma-panel);
-  padding: 0.5rem 0.75rem;
+  padding: 0.5rem 1.75rem 0.5rem 0.75rem;
   font-size: 13px;
 }
 

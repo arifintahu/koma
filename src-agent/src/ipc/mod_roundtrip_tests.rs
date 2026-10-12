@@ -61,6 +61,7 @@ fn sample_session_snapshot() -> SessionSnapshot {
             label: "scan the repo".to_string(),
             status: "running".to_string(),
             detached: false,
+            blocking: false,
             steps: 3,
             transcript: vec!["scanned src/".to_string()],
             messages: vec![ChatMessage::new(Role::User, "scan")],

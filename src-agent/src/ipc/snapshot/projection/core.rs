@@ -142,6 +142,7 @@ pub fn session_snapshot(
                 id: j.id,
                 command: j.command.clone(),
                 status: j.snapshot_status(),
+                blocking: j.is_blocking(),
                 // Default: no output tail. Populated per-client ONLY for the job a client
                 // is streaming into a stream tab, in the hub's `stream_deltas` post-pass —
                 // never here (this projection is shared by attach/resync + every client).
@@ -246,6 +247,9 @@ fn subagent_snapshot(sa: &crate::app::subagent::SubAgent) -> SubAgentSnapshot {
         label: sa.label.clone(),
         status,
         detached: sa.detached,
+        blocking: sa.tool_call_id.is_some()
+            && matches!(sa.status, SubAgentStatus::Running)
+            && !sa.detached,
         steps: sa.transcript.len(),
         transcript: sa.transcript.clone(),
         messages: sa.messages.clone(),

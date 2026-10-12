@@ -138,6 +138,10 @@ pub struct BashJobSnapshot {
     pub id: usize,
     pub command: String,
     pub status: crate::app::bgbash::BashJobStatus,
+    /// Whether this job still parks the main turn (`tool_call_id` set).
+    /// `#[serde(default)]` keeps older peers wire-safe.
+    #[serde(default)]
+    pub blocking: bool,
     /// Captured OUTPUT TAIL — populated ONLY for the job a client is currently
     /// streaming into an Explore stream tab (`ClientRequest::SetStreamView`), during
     /// THAT client's per-client snapshot build (see the hub's `stream_deltas`), so the
@@ -165,6 +169,12 @@ pub struct SubAgentSnapshot {
     /// defaults every agent to attached and keeps animating a backgrounded one.
     #[serde(default)]
     pub detached: bool,
+    /// Whether this sub-agent still parks the main turn (`tool_call_id` set).
+    /// Projected so the GUI chat-card / Explore background button can hide once
+    /// the agent is already backgrounded. `#[serde(default)]` keeps older peers
+    /// wire-safe (treated as not-blocking).
+    #[serde(default)]
+    pub blocking: bool,
     pub steps: usize,
     pub transcript: Vec<String>,
     pub messages: Vec<ChatMessage>,

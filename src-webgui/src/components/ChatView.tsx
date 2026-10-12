@@ -8,12 +8,12 @@ import {
 } from 'react'
 import {
   Archive,
+  AlertCircle,
   Brain,
   Check,
   ChevronDown,
   ChevronRight,
   Circle,
-  Cog,
   FileText,
   Files,
   Frame,
@@ -40,7 +40,8 @@ import { splitDesignMessage } from '../lib/design'
 import { splitPasteMessage } from '../lib/pasteText'
 import { Composer } from './Composer'
 import { ApprovalOverlay } from './ApprovalOverlay'
-import { fallbackSignature, truncateChars } from '../lib/toolSignature'
+import { BrailleSpinner } from './BrailleSpinner'
+import { formatToolPayload } from '../lib/toolSignature'
 
 // Native chat view — a 1:1 clone of the TUI `view::chat` render grammar
 // (src-agent/src/view/chat/*), with every box-drawing/unicode glyph swapped
@@ -53,21 +54,61 @@ import { fallbackSignature, truncateChars } from '../lib/toolSignature'
 
 type IconType = ComponentType<{ size?: number; className?: string }>
 
-// ---- Tool metadata: mirrors transcript.rs `tool_box_label` (the whitelist of
-// output-producing tools that get a boxed result) + a per-family lucide icon.
-// A null result means the tool falls back to the terse one-liner path.
-function toolBoxMeta(name: string): { label: string; Icon: IconType } | null {
+// ---- Tool metadata: family icon + short chip for the GUI tool card.
+function toolBoxMeta(name: string): { label: string; Icon: IconType } {
   if (name === 'bash') return { label: 'bash', Icon: Terminal }
   if (name === 'read') return { label: 'read', Icon: FileText }
+  if (name === 'write' || name === 'edit') return { label: name, Icon: Pencil }
   if (name === 'grep') return { label: 'grep', Icon: Search }
   if (name === 'glob') return { label: 'glob', Icon: Files }
   if (name === 'dir_list') return { label: 'dir', Icon: Folder }
   if (name.startsWith('git_')) return { label: 'git', Icon: GitBranch }
   if (name.startsWith('web_')) return { label: 'web', Icon: Globe }
+  if (name.startsWith('screen_browser')) return { label: 'browser', Icon: Frame }
   if (name === 'recall') return { label: 'memory', Icon: Brain }
   if (name.startsWith('mcp__')) return { label: 'mcp', Icon: Plug }
   if (name.startsWith('sec_')) return { label: 'sec', Icon: Shield }
-  return null
+  return { label: name, Icon: Terminal }
+}
+
+function toolLooksFailed(output: string | null): boolean {
+  if (output == null) return false
+  const t = output.trim()
+  return /^error:/i.test(t) || /exit code:\s*[1-9]\d*/.test(t)
+}
+
+function toolArgString(args: string, key: string): string {
+  try {
+    const v = JSON.parse(args)?.[key]
+    return typeof v === 'string' ? v.trim() : ''
+  } catch {
+    return ''
+  }
+}
+
+function toolArgFlag(args: string, key: string): boolean {
+  try {
+    return JSON.parse(args)?.[key] === true
+  } catch {
+    return false
+  }
+}
+
+const TOOL_PANE_LINE = 1.45
+
+function ToolPane({ text }: { text: string }) {
+  const body = text.replace(/\s+$/, '')
+  return (
+    <pre
+      className="overflow-auto px-2.5 py-1.5 font-mono text-[11.5px] leading-[1.45] text-koma-fg whitespace-pre-wrap break-words"
+      style={{
+        minHeight: `calc(5 * ${TOOL_PANE_LINE}em + 0.75rem)`,
+        maxHeight: `calc(10 * ${TOOL_PANE_LINE}em + 0.75rem)`,
+      }}
+    >
+      {body || ' '}
+    </pre>
+  )
 }
 
 // plan_ready digest: the composed checklist + plan Markdown the daemon rewrites
@@ -85,76 +126,19 @@ function planDigest(args: string): string | null {
   }
 }
 
-// ---- Tool RESULT: the dotted box (helpers.rs `render_tool_box`). Rounded,
-// light-dashed edges → a CSS `border border-dashed` card; the `╭┄ label ┄╮`
-// chip → a family icon + accent label; `┆` side glyphs → the dashed border.
-// Max 5 source lines, each TRUNCATED (never wrapped); a `…` overflow row when
-// there are more. Body text is dim + italic.
-const ToolOutputBox = memo(function ToolOutputBox({
-  label,
-  Icon,
-  output,
-}: {
-  label: string
-  Icon: IconType
-  output: string
-}) {
-  const lines = output.replace(/\s+$/, '').split('\n')
-  const shown = lines.slice(0, 5)
-  const overflow = lines.length > 5
-  return (
-    <div className="mt-1 ml-4 overflow-hidden rounded-md border border-dashed border-koma-dim/60">
-      <div className="flex items-center gap-1 px-2 pt-1 text-[11px]">
-        <Icon size={11} className="flex-none text-koma-accent" />
-        <span className="text-koma-accent">{label}</span>
-      </div>
-      <div className="px-2 pb-1.5 pt-0.5 font-mono text-[11.5px] italic text-koma-dim">
-        {shown.map((ln, i) => (
-          <div key={i} className="truncate">
-            {ln || ' '}
-          </div>
-        ))}
-        {overflow && <div>…</div>}
-      </div>
-    </div>
-  )
-})
-
-// Terse fallback for non-boxed tools (transcript.rs terse path): first
-// non-blank line only, truncated to 80, dim, under a small indent.
-function TerseResult({ output }: { output: string }) {
-  const first = output.split('\n').find((l) => l.trim() !== '') ?? ''
-  if (first.trim() === '') return null
-  return (
-    <div className="mt-0.5 ml-4 truncate font-mono text-[11.5px] text-koma-dim">
-      {truncateChars(first.trim(), 80)}
-    </div>
-  )
-}
-
-// ---- One tool call + its inline result (transcript.rs `render_tool_lines`).
-// Status glyph resolves live: in-flight `⚙` (Cog, still — the sidepanel
-// already conveys "running") in dim → completed `✓` (Check) in accent.
-// Result is glued directly under its own call.
 const ToolCallRow = memo(function ToolCallRow({ call }: { call: ToolCallView }) {
   const done = call.status === 'done'
   const req = useKoma((s) => s.req)
-  // The session is PARKED on a plan/mission decision when the approval gate is set AND
-  // the paused call is `plan_ready` or `mission_ready`. Only the currently-parked row is
-  // still pending (`!done`); historical rows in scrollback already
-  // got answered → they have a result → done. So gate the controls on both, so
-  // they show on exactly the one row awaiting a decision.
   const awaitingApproval = useKoma((s) => s.session.awaitingApproval)
   const pendingIsPlan = useKoma(
     (s) =>
       s.session.pendingCall?.name === 'plan_ready' ||
       s.session.pendingCall?.name === 'mission_ready',
   )
+  const subagents = useKoma((s) => s.session.subagents)
+  const bashJobs = useKoma((s) => s.session.bash)
+  const [open, setOpen] = useState(false)
 
-  // plan_ready / mission_ready: a header + the FULL Markdown digest (the rewritten
-  // `highlights` arg) rendered behind the dim quote rail — mirrors the TUI's
-  // render_tool_lines special case, NOT the terse one-line signature. Falls
-  // through to the generic row if the digest can't be parsed out.
   if (call.name === 'plan_ready' || call.name === 'mission_ready') {
     const digest = planDigest(call.args)
     if (digest != null) {
@@ -168,7 +152,7 @@ const ToolCallRow = memo(function ToolCallRow({ call }: { call: ToolCallView }) 
             {done ? (
               <Check size={12} className="flex-none text-koma-accent" />
             ) : (
-              <Cog size={12} className="flex-none text-koma-dim" />
+              <BrailleSpinner size={12} className="flex-none text-koma-accent" />
             )}
             <span>{label}</span>
           </div>
@@ -207,16 +191,14 @@ const ToolCallRow = memo(function ToolCallRow({ call }: { call: ToolCallView }) 
 
   if (call.name.startsWith('computer_')) return <ComputerToolCall call={call} />
 
-  // Fall through to generic tool row when plan/mission digest is absent.
   const meta = toolBoxMeta(call.name)
-  const signature = call.signature ?? fallbackSignature(call.name, call.args)
-  const hasOutput = call.output != null && call.output.trim() !== ''
+  const payload = formatToolPayload(call.args)
+  const output = call.output != null ? call.output.replace(/\s+$/, '') : ''
+  const hasOutput = output.trim() !== ''
+  const failed = done && toolLooksFailed(call.output)
 
-  // show_image: render the actual image inline when the call is done.
-  // Output format: "image resolved: {path} ({label})\nRendered inline..."
   let imageUrl: string | null = null
   if (call.name === 'show_image' && done && hasOutput) {
-    const output = call.output as string
     const line = output.split('\n')[0] ?? ''
     const match = line.match(/^image resolved: (.+?) \(/)
     if (match) {
@@ -224,27 +206,124 @@ const ToolCallRow = memo(function ToolCallRow({ call }: { call: ToolCallView }) 
     }
   }
 
+  const startedAsBg = toolArgFlag(call.args, 'run_in_background')
+  const taskMatch =
+    call.name === 'task'
+      ? subagents.find((a) => {
+          const agent = toolArgString(call.args, 'agent')
+          return agent === '' || a.name === agent
+        })
+      : undefined
+  const bashMatch =
+    call.name === 'bash'
+      ? bashJobs.find((b) => {
+          const cmd = toolArgString(call.args, 'command')
+          return cmd !== '' && b.cmd === cmd
+        })
+      : undefined
+  const liveFinished =
+    (taskMatch != null && taskMatch.status !== 'running') ||
+    (bashMatch != null && bashMatch.status !== 'running')
+  const liveBackgrounded =
+    startedAsBg ||
+    taskMatch?.detached === true ||
+    (bashMatch != null && bashMatch.status === 'running' && bashMatch.blocking === false)
+  const settled = done || liveFinished || liveBackgrounded
+  const canBackgroundTask =
+    !settled &&
+    taskMatch != null &&
+    taskMatch.id != null &&
+    taskMatch.status === 'running' &&
+    !taskMatch.detached &&
+    taskMatch.blocking === true
+  const canBackgroundBash =
+    !settled &&
+    bashMatch != null &&
+    bashMatch.status === 'running' &&
+    bashMatch.blocking === true
+  const status = !settled ? 'running' : failed ? 'failed' : 'done'
+
   return (
-    <div>
-      <div className="flex items-center gap-1.5 text-[12.5px] text-koma-dim">
-        {done ? (
-          <Check size={12} className="flex-none text-koma-accent" />
-        ) : (
-          <Cog size={12} className="flex-none text-koma-dim" />
+    <div className="overflow-hidden rounded-md border border-koma-border bg-koma-panel/30">
+      <div className="flex w-full items-center gap-1.5 px-2.5 py-1.5 text-[12px]">
+        <button
+          type="button"
+          aria-expanded={open}
+          aria-label={`${call.name} ${status}`}
+          onClick={() => setOpen((v) => !v)}
+          className="flex min-w-0 flex-1 items-center gap-2 text-left hover:opacity-90"
+        >
+          {!settled ? (
+            <BrailleSpinner size={12} className="flex-none text-koma-accent" />
+          ) : failed ? (
+            <AlertCircle size={12} className="flex-none text-koma-error" />
+          ) : (
+            <Check size={12} className="flex-none text-koma-accent" />
+          )}
+          <meta.Icon size={12} className="flex-none text-koma-accent" />
+          <span className="min-w-0 flex-1 truncate font-medium text-koma-fg">{call.name}</span>
+        </button>
+        {canBackgroundTask && taskMatch?.id != null && (
+          <button
+            type="button"
+            title="Run in background (keeps going, unblocks chat)"
+            aria-label="Run in background"
+            onClick={() => req({ r: 'BackgroundSubagent', id: taskMatch.id as number })}
+            className="flex-none rounded border border-koma-border px-1.5 py-0.5 text-[10px] leading-none text-koma-dim transition-colors hover:border-koma-accent hover:text-koma-accent"
+          >
+            bg
+          </button>
         )}
-        <span className="truncate">{signature}</span>
+        {canBackgroundBash && (
+          <button
+            type="button"
+            title="Run in background (keeps going, unblocks chat)"
+            aria-label="Run in background"
+            onClick={() => {
+              const n = Number(String(bashMatch?.id ?? '').replace(/^bash-/, ''))
+              if (Number.isFinite(n)) req({ r: 'BackgroundBash', id: n })
+            }}
+            className="flex-none rounded border border-koma-border px-1.5 py-0.5 text-[10px] leading-none text-koma-dim transition-colors hover:border-koma-accent hover:text-koma-accent"
+          >
+            bg
+          </button>
+        )}
+        {liveBackgrounded && !canBackgroundTask && !canBackgroundBash && (
+          <span className="flex-none text-[10px] font-medium uppercase tracking-wide text-koma-dim opacity-60" title="Running in the background">
+            bg
+          </span>
+        )}
+        <button
+          type="button"
+          aria-label={open ? 'Collapse' : 'Expand'}
+          onClick={() => setOpen((v) => !v)}
+          className="flex flex-none items-center text-koma-dim hover:text-koma-fg"
+        >
+          <ChevronDown
+            size={12}
+            className={`transition-transform ${open ? 'rotate-180' : ''}`}
+          />
+        </button>
       </div>
-      {imageUrl && (
-        <div className="mt-1 ml-4 max-w-[480px] overflow-hidden rounded-md border border-koma-dim/30">
-          <img src={imageUrl} alt="show_image" className="block max-w-full h-auto" />
+      {open && (
+        <div className="border-t border-koma-border">
+          <div className="px-2.5 pt-1 text-[10px] uppercase tracking-wide text-koma-dim">payload</div>
+          <ToolPane text={payload} />
+          {(hasOutput || imageUrl) && (
+            <>
+              <div className="border-t border-koma-border px-2.5 pt-1 text-[10px] uppercase tracking-wide text-koma-dim">
+                result
+              </div>
+              {imageUrl && (
+                <div className="px-2.5 pb-1.5">
+                  <img src={imageUrl} alt="show_image" className="block max-h-64 max-w-full h-auto rounded border border-koma-border" />
+                </div>
+              )}
+              {hasOutput && <ToolPane text={output} />}
+            </>
+          )}
         </div>
       )}
-      {hasOutput &&
-        (meta ? (
-          <ToolOutputBox label={meta.label} Icon={meta.Icon} output={call.output as string} />
-        ) : (
-          <TerseResult output={call.output as string} />
-        ))}
     </div>
   )
 })
@@ -471,7 +550,7 @@ const AssistantMessage = memo(function AssistantMessage({
             ),
           )}
         {hasTools && (
-          <div className="mt-1 space-y-1">
+          <div className="mt-1 space-y-1.5">
             {(toolCalls as ToolCallView[]).map((c) => (
               <ToolCallRow key={c.id} call={c} />
             ))}

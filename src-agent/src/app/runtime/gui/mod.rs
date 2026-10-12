@@ -31,6 +31,18 @@ pub(crate) fn allow_webview_navigation(url: &str) -> bool {
     !url.trim().to_ascii_lowercase().starts_with("file:")
 }
 
+/// WebKitGTK can SIGSEGV in `WebLoaderStrategy::preconnectTo` (custom `koma://`
+/// schemes and some HTTPS early-hints / `<link rel=preconnect>`). Turning off
+/// DNS prefetch keeps the network process off that path. Best-effort.
+#[cfg(target_os = "linux")]
+pub(crate) fn linux_disable_webkit_prefetch(webview: &wry::WebView) {
+    use webkit2gtk::{SettingsExt, WebViewExt};
+    use wry::WebViewExtUnix;
+    if let Some(settings) = webview.webview().settings() {
+        settings.set_enable_dns_prefetching(false);
+    }
+}
+
 /// Dock icon from the bundle written by [`crate::app::launcher::install_for_launch`].
 /// Missing on the first open, until that install finishes.
 #[cfg(target_os = "macos")]
@@ -600,6 +612,8 @@ pub fn run_gui(opts: crate::cli::Opts) -> Result<()> {
             .build_gtk(vbox)
             .context("failed to build webview (gtk)")?
     };
+    #[cfg(target_os = "linux")]
+    linux_disable_webkit_prefetch(&webview);
     #[cfg(not(target_os = "linux"))]
     let webview = wv_builder
         .build(&window)

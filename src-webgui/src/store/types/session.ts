@@ -78,6 +78,9 @@ export type BashJobEntry = {
   id: string
   cmd: string
   status: 'running' | 'done' | 'killed' | 'error'
+  // Whether this job still parks the main turn (has a live tool_call_id).
+  // Only `running && blocking` is eligible for the chat-card background button.
+  blocking?: boolean
   // The captured output tail (host `PushBashJob.outputTail`), present ONLY on the job the
   // client is streaming into a stream tab; undefined for every other row. A defined value
   // (even '') means "viewed"; undefined means "not viewed yet / loading".

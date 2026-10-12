@@ -611,6 +611,13 @@ pub(super) fn handle_gui_req(req: GuiReq, ctx: &GuiReqCtx) {
                 }
             }
         }
+        GuiReq::BackgroundBash { id } => {
+            if let Ok(g) = ctx.req.lock() {
+                if let Some(tx) = g.as_ref() {
+                    let _ = tx.send(ClientRequest::BackgroundBash { id });
+                }
+            }
+        }
         // Kill one bg-bash job by id (Explore bash-row kill button).
         GuiReq::KillBash { id } => {
             if let Ok(g) = ctx.req.lock() {

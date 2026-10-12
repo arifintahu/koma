@@ -163,6 +163,9 @@ declare global {
     // Background EVERY eligible running subagent at once (global Ctrl+B shortcut) —
     // mirrors the TUI composer's Ctrl+B.
     | { r: 'BackgroundAll' }
+    // Promote one still-blocking foreground bash job by numeric id (chat tool-card
+    // bg button). Mirrors Ctrl+B for a single FG bash — job keeps running, turn unblocks.
+    | { r: 'BackgroundBash'; id: number }
     // Kill a single running bg-bash job by its numeric id (Explore panel Bash
     // row kill button). The row id is `bash-<n>`; the numeric part matches the
     // daemon's `usize`.

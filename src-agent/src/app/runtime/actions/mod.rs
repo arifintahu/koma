@@ -551,6 +551,10 @@ pub(in crate::app::runtime) fn apply_action(
             background::handle_background_all_subagents(state)?;
         }
 
+        Action::BackgroundBash(id) => {
+            background::handle_background_bash(id, state)?;
+        }
+
         Action::OpenRewind => {
             rewind::handle_open_rewind(state)?;
         }
