@@ -142,7 +142,18 @@ fn window_radius_px() -> i32 {
 fn page_init_script() -> String {
     let r = window_radius_px();
     format!(
-        r#"{EDGE_RESIZE_JS}
+        r#"(function(){{
+  if(!window.__komaNoVT){{
+    window.__komaNoVT=1;
+    try{{
+      var done=Promise.resolve();
+      Document.prototype.startViewTransition=function(){{
+        return {{finished:done,ready:done,updateCallbackDone:done,types:new Set(),skipTransition:function(){{}}}};
+      }};
+    }}catch(e){{}}
+  }}
+}})();
+{EDGE_RESIZE_JS}
 (function(){{
   var s=document.getElementById('koma-round');
   if(s) return;
@@ -365,6 +376,42 @@ fn macos_pin_chrome(chrome: &WebView, tabs: &[Tab], active: Option<&str>) {
             );
         }
         parent.addSubview_positioned_relativeTo(chrome_view, NSWindowOrderingMode::Above, None);
+    }
+}
+
+/// Keep the page webview opaque across navigations. The window is transparent
+/// so chrome corners show the desktop; without this, WKWebView / WebView2 clear
+/// to alpha 0 between documents and only the tab strip and URI remain.
+#[cfg(any(target_os = "macos", target_os = "windows"))]
+fn pin_page_opaque(webview: &WebView, blank: bool) {
+    let (r, g, b, a) = if blank {
+        (11u8, 14, 20, 255)
+    } else {
+        (255, 255, 255, 255)
+    };
+    #[cfg(target_os = "windows")]
+    {
+        let _ = webview.set_background_color((r, g, b, a));
+    }
+    #[cfg(target_os = "macos")]
+    {
+        use objc2_app_kit::NSColor;
+        use objc2_foundation::{ns_string, NSNumber, NSObjectNSKeyValueCoding};
+        use wry::WebViewExtMacOS;
+        unsafe {
+            let wk = webview.webview();
+            // wry sets drawsBackground=false whenever a background color is
+            // passed at build. Put it back, or navigation punches through.
+            let yes = NSNumber::numberWithBool(true);
+            wk.setValue_forKey(Some(&yes), ns_string!("drawsBackground"));
+            let color = NSColor::colorWithSRGBRed_green_blue_alpha(
+                f64::from(r) / 255.0,
+                f64::from(g) / 255.0,
+                f64::from(b) / 255.0,
+                f64::from(a) / 255.0,
+            );
+            wk.setUnderPageBackgroundColor(Some(&color));
+        }
     }
 }
 
@@ -1039,16 +1086,23 @@ impl BrowserWindow {
             // Opaque plate like main GUI `#app`. Widget stays non-transparent so
             // pages cannot composite with the desktop; linux_apply_window_shape
             // + html clip-path round the bottom corners.
-            .with_background_color(if blank {
-                (11, 14, 20, 255)
-            } else {
-                (255, 255, 255, 255)
-            })
+            // macOS: do not pass a color here. wry's transparent feature treats
+            // any background color as `drawsBackground = false`, which is the
+            // navigation punch-through (tab + URI, no body). Color is applied
+            // after build.
             .with_back_forward_navigation_gestures(true)
             .with_bounds(Rect {
                 position: LogicalPosition::new(0.0, chrome_h).into(),
                 size: LogicalSize::new(logical_w.max(200.0), content_h).into(),
             });
+        #[cfg(not(target_os = "macos"))]
+        {
+            builder = builder.with_background_color(if blank {
+                (11, 14, 20, 255)
+            } else {
+                (255, 255, 255, 255)
+            });
+        }
         builder = if blank {
             builder.with_html(welcome_html())
         } else {
@@ -1146,19 +1200,8 @@ impl BrowserWindow {
         let webview = builder.build_as_child(&self.window)?;
         #[cfg(target_os = "macos")]
         macos_wrap_tab_in_clip(&webview)?;
-        #[cfg(target_os = "macos")]
-        {
-            // Chrome uses clear underPageBackgroundColor so radius shows the
-            // desktop. The *page* must stay opaque or WKWebView punches through
-            // on navigation the same way WebKitGTK did.
-            use objc2_app_kit::NSColor;
-            use wry::WebViewExtMacOS;
-            unsafe {
-                webview
-                    .webview()
-                    .setUnderPageBackgroundColor(Some(&NSColor::whiteColor()));
-            }
-        }
+        #[cfg(any(target_os = "macos", target_os = "windows"))]
+        pin_page_opaque(&webview, blank);
 
         let loading = !crate::app::runtime::screen_browser::is_blank_url(&start);
         self.tabs.push(Tab {
@@ -1272,6 +1315,8 @@ impl BrowserWindow {
         if !webview_can_load_url(url) {
             bail!("invalid url");
         }
+        #[cfg(any(target_os = "macos", target_os = "windows"))]
+        pin_page_opaque(&tab.webview, false);
         // WebKitGTK ignores load_uri while a previous load (Google redirects)
         // is stuck in started. Stop first so omnibox / other pages work.
         #[cfg(target_os = "linux")]
@@ -1440,7 +1485,14 @@ impl BrowserWindow {
                     linux_pin_chrome(&self.chrome);
                     #[cfg(target_os = "macos")]
                     {
+                        if let Some(t) = self.tabs.iter().find(|t| t.id == id) {
+                            pin_page_opaque(&t.webview, false);
+                        }
                         let _ = self.layout();
+                    }
+                    #[cfg(target_os = "windows")]
+                    if let Some(t) = self.tabs.iter().find(|t| t.id == id) {
+                        pin_page_opaque(&t.webview, false);
                     }
                     self.push_status();
                 }
@@ -1469,7 +1521,14 @@ impl BrowserWindow {
                     linux_pin_chrome(&self.chrome);
                     #[cfg(target_os = "macos")]
                     {
+                        if let Some(t) = self.tabs.iter().find(|t| t.id == id) {
+                            pin_page_opaque(&t.webview, false);
+                        }
                         let _ = self.layout();
+                    }
+                    #[cfg(target_os = "windows")]
+                    if let Some(t) = self.tabs.iter().find(|t| t.id == id) {
+                        pin_page_opaque(&t.webview, false);
                     }
                     self.push_status();
                 }
