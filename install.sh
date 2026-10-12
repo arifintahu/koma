@@ -26,6 +26,106 @@ for arg in "$@"; do
 done
 
 # ---------------------------------------------------------------------------
+# UI — progress on a TTY, quiet-safe in CI. ASCII fallback when not a terminal.
+# ---------------------------------------------------------------------------
+_KOMA_TTY=0
+if [ -t 2 ]; then
+    _KOMA_TTY=1
+fi
+if [ "$_KOMA_TTY" = 1 ] && [ -z "${NO_COLOR:-}" ]; then
+    _c_bold=$(printf '\033[1m')
+    _c_dim=$(printf '\033[2m')
+    _c_green=$(printf '\033[32m')
+    _c_reset=$(printf '\033[0m')
+else
+    _c_bold=
+    _c_dim=
+    _c_green=
+    _c_reset=
+fi
+if [ "$_KOMA_TTY" = 1 ]; then
+    _s_step="▸"
+    _s_ok="✓"
+else
+    _s_step=">"
+    _s_ok="+"
+fi
+_step() { printf '%s\n' "${_c_bold}${_s_step} $*${_c_reset}" >&2; }
+_ok() { printf '%s\n' "  ${_c_green}${_s_ok}${_c_reset} $*" >&2; }
+_info() { printf '%s\n' "  ${_c_dim}$*${_c_reset}" >&2; }
+_koma_bytes() {
+    _n=$1
+    if [ "$_n" -ge 1073741824 ]; then
+        printf '%s GB' $((_n / 1073741824))
+    elif [ "$_n" -ge 1048576 ]; then
+        printf '%s MB' $((_n / 1048576))
+    elif [ "$_n" -ge 1024 ]; then
+        printf '%s KB' $((_n / 1024))
+    else
+        printf '%s B' "$_n"
+    fi
+}
+_koma_download() {
+    _url=$1
+    _dest=$2
+    _label=$3
+    _step "Downloading ${_label}"
+    _info "$_url"
+    _t0=$(date +%s 2>/dev/null || echo 0)
+    if command -v curl >/dev/null 2>&1; then
+        if [ "$_KOMA_TTY" = 1 ]; then
+            curl -fL --progress-bar -o "$_dest" "$_url" || {
+                echo "ERROR: download failed from $_url" >&2
+                exit 1
+            }
+        else
+            curl -fsSL -o "$_dest" "$_url" || {
+                echo "ERROR: download failed from $_url" >&2
+                exit 1
+            }
+        fi
+    elif command -v wget >/dev/null 2>&1; then
+        if [ "$_KOMA_TTY" = 1 ]; then
+            if wget --help 2>&1 | grep -q -- '--show-progress'; then
+                wget -q --show-progress -O "$_dest" "$_url" || {
+                    echo "ERROR: download failed from $_url" >&2
+                    exit 1
+                }
+            else
+                wget -O "$_dest" "$_url" || {
+                    echo "ERROR: download failed from $_url" >&2
+                    exit 1
+                }
+            fi
+        else
+            wget -qO "$_dest" "$_url" || {
+                echo "ERROR: download failed from $_url" >&2
+                exit 1
+            }
+        fi
+    else
+        echo "ERROR: neither curl nor wget found; please install one and retry." >&2
+        exit 1
+    fi
+    if [ ! -s "$_dest" ]; then
+        echo "ERROR: download produced an empty file from $_url" >&2
+        exit 1
+    fi
+    _n=$(wc -c < "$_dest" | tr -d ' ')
+    _human=$(_koma_bytes "$_n")
+    _t1=$(date +%s 2>/dev/null || echo 0)
+    if [ "$_t0" -gt 0 ] 2>/dev/null && [ "$_t1" -ge "$_t0" ] 2>/dev/null; then
+        _dt=$((_t1 - _t0))
+        if [ "$_dt" -le 0 ]; then
+            _dt=1
+        fi
+        _ok "${_human} in ${_dt}s"
+    else
+        _ok "$_human"
+    fi
+}
+
+# ---------------------------------------------------------------------------
 # OS detection
 # ---------------------------------------------------------------------------
 _os=$(uname -s)
@@ -85,10 +185,11 @@ url="${KOMA_RELEASE_BASE}/${asset}"
 # Linux and macOS install as extensionless "koma".
 bin_name="koma"
 
-echo "koma installer — detected ${os}/${arch}"
-echo "  url:      $url"
-echo "  install:  $INSTALL_DIR/$bin_name"
-echo ""
+echo "" >&2
+printf '%s\n' "${_c_bold}koma installer${_c_reset}" >&2
+_info "platform  ${os}/${arch}"
+_info "into      $INSTALL_DIR/$bin_name"
+echo "" >&2
 
 # ---------------------------------------------------------------------------
 # Temp file + cleanup trap
@@ -102,21 +203,7 @@ trap cleanup EXIT
 # ---------------------------------------------------------------------------
 # Download
 # ---------------------------------------------------------------------------
-echo "Downloading koma..."
-if command -v curl > /dev/null 2>&1; then
-    curl -fsSL "$url" -o "$tmp" || {
-        echo "ERROR: download failed from $url" >&2
-        exit 1
-    }
-elif command -v wget > /dev/null 2>&1; then
-    wget -qO "$tmp" "$url" || {
-        echo "ERROR: download failed from $url" >&2
-        exit 1
-    }
-else
-    echo "ERROR: neither curl nor wget found; please install one and retry." >&2
-    exit 1
-fi
+_koma_download "$url" "$tmp" "$asset"
 
 chmod +x "$tmp"
 
@@ -127,6 +214,7 @@ chmod +x "$tmp"
 # The launcher preflights shared-library availability (missing webkit/gtk,
 # too-old glibc) before the dynamic linker crashes. macOS: single binary named koma.
 # ---------------------------------------------------------------------------
+_step "Installing"
 mkdir -p "$INSTALL_DIR" 2>/dev/null || true
 
 if [ "$os" = "linux" ]; then
@@ -256,7 +344,7 @@ KOMA_LAUNCHER
         if [ "$(id -u)" = "0" ]; then
             _install_linux_binary
         else
-            echo "  $INSTALL_DIR is not writable; using sudo for install step."
+            echo "  $INSTALL_DIR is not writable; using sudo for install step." >&2
             _tmp_launcher=$(mktemp)
             cat > "$_tmp_launcher" << 'KOMA_LAUNCHER'
 #!/bin/sh
@@ -383,11 +471,18 @@ else
         if [ "$(id -u)" = "0" ]; then
             mv "$tmp" "$INSTALL_DIR/$bin_name"
         else
-            echo "  $INSTALL_DIR is not writable; using sudo for install step."
+            echo "  $INSTALL_DIR is not writable; using sudo for install step." >&2
             sudo mv "$tmp" "$INSTALL_DIR/$bin_name"
             sudo chmod +x "$INSTALL_DIR/$bin_name"
         fi
     fi
+fi
+
+if [ "$os" = "linux" ]; then
+    _ok "$INSTALL_DIR/koma.bin"
+    _ok "$INSTALL_DIR/koma  (launcher)"
+else
+    _ok "$INSTALL_DIR/$bin_name"
 fi
 
 # ---------------------------------------------------------------------------
@@ -495,6 +590,7 @@ _install_linux_shared_libs() {
     if [ ! -f "$_elf" ]; then
         return 0
     fi
+    _step "Libraries"
     _ldd_check=""
     if command -v ldd >/dev/null 2>&1; then
         _ldd_check="$(ldd "$_elf" 2>&1)" || true
@@ -517,6 +613,7 @@ _install_linux_shared_libs() {
         fi
     fi
     if [ -z "$_missing" ] && [ "$_need_xtst" = "0" ]; then
+        _ok "ok"
         return 0
     fi
     if ! command -v apt-get >/dev/null 2>&1; then
@@ -555,8 +652,10 @@ _install_linux_shared_libs() {
         return 0
     fi
     echo ""
-    echo "Installing shared libraries: $_apt_pkgs"
+    _step "Installing libraries"
+    _info "$_apt_pkgs"
     if _run_apt install -y $_apt_pkgs; then
+        _ok "$_apt_pkgs"
         if command -v ldd >/dev/null 2>&1; then
             _ldd_after="$(ldd "$_elf" 2>&1)" || true
             _still="$(echo "$_ldd_after" | grep 'not found' | awk '{print $1}' | sort -u || true)"
@@ -578,18 +677,20 @@ fi
 # Optional: provision Python research environment
 # ---------------------------------------------------------------------------
 if [ "$WITH_RESEARCH" = "1" ]; then
-    echo ""
-    echo "Provisioning full internet mode environment (downloads ~80MB Firefox)..."
+    echo "" >&2
+    _step "Full internet mode"
+    _info "downloads ~80MB Firefox"
     "$INSTALL_DIR/$bin_name" --internet-fullmode-install
+    _ok "provisioned"
 fi
 
 # ---------------------------------------------------------------------------
 # Optional: provision language servers (~/.koma/lsp/)
 # ---------------------------------------------------------------------------
 if [ "$WITH_LSP" = "1" ]; then
-    echo ""
-    echo "Installing language servers under ~/.koma/lsp/ ..."
-    echo "(requires network; some servers also need node/npm, python3, or go on PATH)"
+    echo "" >&2
+    _step "Language servers"
+    _info "~/.koma/lsp/  (needs network; some servers need node, python3, or go)"
     "$INSTALL_DIR/$bin_name" lsp install --all || {
         echo "WARNING: some language servers failed to install — run 'koma lsp status' later." >&2
     }
@@ -602,11 +703,13 @@ fi
 # fails the install. Absolute Exec path avoids PATH shadowing in GUI sessions.
 # ---------------------------------------------------------------------------
 _launcher_ok=0
+_step "App list"
 if [ -x "$INSTALL_DIR/koma" ]; then
     _launcher_log=$(mktemp)
     if "$INSTALL_DIR/koma" launcher-install >"$_launcher_log" 2>&1; then
         _launcher_ok=1
         cat "$_launcher_log"
+        _ok "Koma"
     fi
     rm -f "$_launcher_log"
 fi
@@ -830,11 +933,21 @@ if [ "$_launcher_ok" != 1 ] && [ "$os" = "darwin" ] && [ -n "${HOME:-}" ]; then
     fi
 fi
 
+if [ "$_launcher_ok" != 1 ]; then
+    if [ -n "${KOMA_DESKTOP_ENTRY:-}" ]; then
+        _ok "$KOMA_DESKTOP_ENTRY"
+    elif [ -n "${KOMA_APP_BUNDLE:-}" ]; then
+        _ok "$KOMA_APP_BUNDLE"
+    else
+        _info "skipped"
+    fi
+fi
+
 # ---------------------------------------------------------------------------
 # Success
 # ---------------------------------------------------------------------------
 echo ""
-echo "koma installed to $INSTALL_DIR/$bin_name"
+printf '%s\n' "${_c_green}${_s_ok}${_c_reset} ${_c_bold}koma installed${_c_reset}  $INSTALL_DIR/$bin_name"
 echo ""
 echo "  Run 'koma' to start the TUI, or 'koma gui' for the desktop client."
 if [ "$_launcher_ok" = 1 ]; then
