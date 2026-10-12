@@ -199,7 +199,9 @@ fn chrome_user_agent() -> &'static str {
     }
     #[cfg(target_os = "linux")]
     {
-        "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
+        // Must match WebKitGTK. A Chrome UA here makes Google serve a Chromium
+        // GIS/popup flow that then hangs because we deny native windows.
+        "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.2 Safari/605.1.15"
     }
     #[cfg(not(any(target_os = "macos", target_os = "windows", target_os = "linux")))]
     {
@@ -430,19 +432,16 @@ fn linux_cover_on_load(webview: &WebView, plate: &gtk::EventBox, chrome: &WebVie
         match ev {
             webkit2gtk::LoadEvent::Started => {
                 view.set_background_color(&gtk::gdk::RGBA::new(1.0, 1.0, 1.0, 1.0));
-                if view.is_visible() {
-                    plate.set_visible(true);
-                    if let Some(win) = plate.window() {
-                        win.raise();
-                    }
-                    if let Some(win) = chrome_w.window() {
-                        win.raise();
-                    }
-                }
+                // Don't raise a blocking plate here. Google login is
+                // Started → Redirected × N → Committed; a plate that waits
+                // for Committed freezes the page and later load_uri no-ops.
             }
-            webkit2gtk::LoadEvent::Committed | webkit2gtk::LoadEvent::Finished => {
-                if view.is_visible() {
-                    plate.set_visible(false);
+            webkit2gtk::LoadEvent::Redirected
+            | webkit2gtk::LoadEvent::Committed
+            | webkit2gtk::LoadEvent::Finished => {
+                plate.set_visible(false);
+                if let Some(win) = chrome_w.window() {
+                    win.raise();
                 }
             }
             _ => {}
@@ -1186,6 +1185,14 @@ impl BrowserWindow {
         if !webview_can_load_url(url) {
             bail!("invalid url");
         }
+        // WebKitGTK ignores load_uri while a previous load (Google redirects)
+        // is stuck in started. Stop first so omnibox / other pages work.
+        #[cfg(target_os = "linux")]
+        {
+            use webkit2gtk::WebViewExt;
+            use wry::WebViewExtUnix;
+            tab.webview.webview().stop_loading();
+        }
         match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| tab.webview.load_url(url))) {
             Ok(Ok(())) => Ok(()),
             Ok(Err(e)) => Err(anyhow::anyhow!("{e}")),
@@ -1211,8 +1218,18 @@ impl BrowserWindow {
                     &u,
                     &self.status.prefs.popup_policy,
                 ) {
-                    // Background tab: don't steal focus from the page that opened it.
-                    self.open_tab(Some(u), false)?;
+                    // Login/OAuth must be foreground: GIS waits on that window.
+                    // Background tab = original page looks frozen, and on Linux
+                    // WebKitGTK then ignores later loads.
+                    let login = {
+                        let l = u.to_ascii_lowercase();
+                        l.contains("accounts.google.")
+                            || l.contains("/oauth")
+                            || l.contains("/signin")
+                            || l.contains("/authorize")
+                            || l.contains("login.")
+                    };
+                    self.open_tab(Some(u), login)?;
                 }
             }
             "close" => {
@@ -1330,8 +1347,14 @@ impl BrowserWindow {
                         }
                         t.error = None;
                     }
-                    // Load start re-stacks content WKWebView — pin chrome immediately.
-                    let _ = self.layout();
+                    // Don't layout() here: Google login is a redirect storm and
+                    // remapping every WebKitGTK tab on each hop freezes later loads.
+                    #[cfg(target_os = "linux")]
+                    linux_pin_chrome(&self.chrome);
+                    #[cfg(target_os = "macos")]
+                    {
+                        let _ = self.layout();
+                    }
                     self.push_status();
                 }
             }
@@ -1355,8 +1378,12 @@ impl BrowserWindow {
                             }
                         }
                     }
-                    // Page paint can reorder child WKWebViews — pin chrome on top.
-                    let _ = self.layout();
+                    #[cfg(target_os = "linux")]
+                    linux_pin_chrome(&self.chrome);
+                    #[cfg(target_os = "macos")]
+                    {
+                        let _ = self.layout();
+                    }
                     self.push_status();
                 }
             }
