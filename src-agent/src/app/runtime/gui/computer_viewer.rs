@@ -120,6 +120,8 @@ impl Viewer {
                     .ok_or_else(|| anyhow::anyhow!("viewer GTK container unavailable"))?,
             )?
         };
+        #[cfg(target_os = "linux")]
+        super::linux_disable_webkit_prefetch(&webview);
         #[cfg(not(target_os = "linux"))]
         let webview = builder.build(&window)?;
         let viewer = Self {
