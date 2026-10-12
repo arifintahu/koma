@@ -386,6 +386,9 @@ pub(super) struct PushBashJob {
     pub(super) id: String,
     pub(super) cmd: String,
     pub(super) status: &'static str,
+    /// Whether this job currently PARKS the main turn (`tool_call_id` still set).
+    /// Only `running && blocking` is eligible for the chat-card background button.
+    pub(super) blocking: bool,
     /// Captured OUTPUT TAIL of the VIEWED job (from the shadow's inert job, baked from the
     /// projection's `output_tail`). `None` for every non-viewed row. `Some("")` = viewed
     /// but no output (a restored job, or one with none yet).

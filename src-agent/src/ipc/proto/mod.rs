@@ -391,6 +391,11 @@ pub enum ClientRequest {
     BashKill {
         id: usize,
     },
+    /// Promote one still-blocking foreground bash job by numeric id (GUI chat-card
+    /// background button). Job keeps running; the parked turn unblocks. gui-gated.
+    BackgroundBash {
+        id: usize,
+    },
     /// Set THIS client's read-only STREAM VIEW — which sub-agent / bash job the GUI is
     /// live-streaming into an Explore stream tab (the non-key equivalent of the TUI's
     /// full-screen sub-agent viewer, generalised to bash). `subagent`/`bash` are the

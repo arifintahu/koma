@@ -828,6 +828,10 @@ impl DaemonHub {
                 self.background_all_subagents(idx, state, client, handle);
             }
 
+            ClientRequest::BackgroundBash { id } => {
+                self.background_bash(idx, state, client, handle, id);
+            }
+
             // GUI model quick-picker: set (or clear) the foreground session's LOCAL Main
             // override. `Some(uuid)` CLONES the matching GLOBAL `config.models` entry into a
             // session-local Main `ModelEntry` (reusing an existing matching local override

@@ -356,6 +356,18 @@ impl DaemonHub {
         self.ack_or_error(idx, result);
     }
 
+    pub(super) fn background_bash(
+        &mut self,
+        idx: usize,
+        state: &mut AppState,
+        client: &mut Option<Arc<OpenRouterClient>>,
+        handle: &tokio::runtime::Handle,
+        id: usize,
+    ) {
+        let result = apply_action(Action::BackgroundBash(id), state, client, handle);
+        self.ack_or_error(idx, result);
+    }
+
     // The client reports the on-screen editor wrap width so the daemon's
     // TextEditorState can navigate soft-wrapped rows with the same visual
     // width the client renders. Only meaningful when the daemon is in the

@@ -611,6 +611,7 @@ fn push_snapshot_if_changed(
                     crate::app::bgbash::BashJobStatus::Killed => "killed",
                     crate::app::bgbash::BashJobStatus::Error(_) => "error",
                 },
+                blocking: job.is_blocking(),
                 output_tail: viewed.then(|| job.output_snapshot()),
             }
         })
@@ -776,6 +777,7 @@ fn push_snapshot_if_changed(
             b.id.hash(&mut h);
             b.cmd.hash(&mut h);
             b.status.hash(&mut h);
+            b.blocking.hash(&mut h);
             // Fold the VIEWED job's output tail in so its live output re-emits the Snapshot
             // (only the viewed row carries `Some`; every other hashes a cheap `None`).
             b.output_tail.hash(&mut h);

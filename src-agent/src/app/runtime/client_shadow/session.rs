@@ -179,7 +179,11 @@ pub(crate) fn shadow_bash_job(v: &BashJobSnapshot) -> BashJob {
         id: v.id,
         command: v.command.clone(),
         started_at: started,
-        tool_call_id: None,
+        tool_call_id: if v.blocking {
+            Some(String::from("blocking"))
+        } else {
+            None
+        },
         suppress_completion_nudge: false,
         shared: Arc::new(BashJobShared {
             // Baked from the projection: the viewed job's captured output tail, else empty.
@@ -243,7 +247,11 @@ pub(crate) fn shadow_subagent(sa: &SubAgentSnapshot) -> SubAgent {
         // viewer renders the streaming report on the client exactly as the daemon
         // does. Empty between turns (cleared on each committed Snapshot).
         live_text: sa.live_text.clone(),
-        tool_call_id: None,
+        tool_call_id: if sa.blocking {
+            Some(String::from("blocking"))
+        } else {
+            None
+        },
         // Detachment IS rendered client-side (the transcript footer + cadence
         // predicate filter on `!detached`), so carry the projected flag. The
         // nudge-latch is daemon-only bookkeeping, so it keeps its inert default.

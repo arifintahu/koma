@@ -77,15 +77,34 @@ function toolLooksFailed(output: string | null): boolean {
   return /^error:/i.test(t) || /exit code:\s*[1-9]\d*/.test(t)
 }
 
+function toolArgString(args: string, key: string): string {
+  try {
+    const v = JSON.parse(args)?.[key]
+    return typeof v === 'string' ? v.trim() : ''
+  } catch {
+    return ''
+  }
+}
+
+function toolArgFlag(args: string, key: string): boolean {
+  try {
+    return JSON.parse(args)?.[key] === true
+  } catch {
+    return false
+  }
+}
+
 const TOOL_PANE_LINE = 1.45
 
 function ToolPane({ text }: { text: string }) {
   const body = text.replace(/\s+$/, '')
-  const n = Math.min(Math.max(body.split('\n').length, 1), 10)
   return (
     <pre
       className="overflow-auto px-2.5 py-1.5 font-mono text-[11.5px] leading-[1.45] text-koma-fg whitespace-pre-wrap break-words"
-      style={{ maxHeight: `calc(${n} * ${TOOL_PANE_LINE}em + 0.75rem)` }}
+      style={{
+        minHeight: `calc(5 * ${TOOL_PANE_LINE}em + 0.75rem)`,
+        maxHeight: `calc(10 * ${TOOL_PANE_LINE}em + 0.75rem)`,
+      }}
     >
       {body || ' '}
     </pre>
@@ -116,6 +135,8 @@ const ToolCallRow = memo(function ToolCallRow({ call }: { call: ToolCallView }) 
       s.session.pendingCall?.name === 'plan_ready' ||
       s.session.pendingCall?.name === 'mission_ready',
   )
+  const subagents = useKoma((s) => s.session.subagents)
+  const bashJobs = useKoma((s) => s.session.bash)
   const [open, setOpen] = useState(false)
 
   if (call.name === 'plan_ready' || call.name === 'mission_ready') {
@@ -185,31 +206,105 @@ const ToolCallRow = memo(function ToolCallRow({ call }: { call: ToolCallView }) 
     }
   }
 
-  const status = !done ? 'running' : failed ? 'failed' : 'done'
+  const startedAsBg = toolArgFlag(call.args, 'run_in_background')
+  const taskMatch =
+    call.name === 'task'
+      ? subagents.find((a) => {
+          const agent = toolArgString(call.args, 'agent')
+          return agent === '' || a.name === agent
+        })
+      : undefined
+  const bashMatch =
+    call.name === 'bash'
+      ? bashJobs.find((b) => {
+          const cmd = toolArgString(call.args, 'command')
+          return cmd !== '' && b.cmd === cmd
+        })
+      : undefined
+  const liveFinished =
+    (taskMatch != null && taskMatch.status !== 'running') ||
+    (bashMatch != null && bashMatch.status !== 'running')
+  const liveBackgrounded =
+    startedAsBg ||
+    taskMatch?.detached === true ||
+    (bashMatch != null && bashMatch.status === 'running' && bashMatch.blocking === false)
+  const settled = done || liveFinished || liveBackgrounded
+  const canBackgroundTask =
+    !settled &&
+    taskMatch != null &&
+    taskMatch.id != null &&
+    taskMatch.status === 'running' &&
+    !taskMatch.detached &&
+    taskMatch.blocking === true
+  const canBackgroundBash =
+    !settled &&
+    bashMatch != null &&
+    bashMatch.status === 'running' &&
+    bashMatch.blocking === true
+  const status = !settled ? 'running' : failed ? 'failed' : 'done'
 
   return (
     <div className="overflow-hidden rounded-md border border-koma-border bg-koma-panel/30">
-      <button
-        type="button"
-        aria-expanded={open}
-        aria-label={`${call.name} ${status}`}
-        onClick={() => setOpen((v) => !v)}
-        className="flex w-full items-center gap-2 px-2.5 py-1.5 text-left text-[12px] hover:bg-koma-hover"
-      >
-        {!done ? (
-          <BrailleSpinner size={12} className="flex-none text-koma-accent" />
-        ) : failed ? (
-          <AlertCircle size={12} className="flex-none text-koma-error" />
-        ) : (
-          <Check size={12} className="flex-none text-koma-accent" />
+      <div className="flex w-full items-center gap-1.5 px-2.5 py-1.5 text-[12px]">
+        <button
+          type="button"
+          aria-expanded={open}
+          aria-label={`${call.name} ${status}`}
+          onClick={() => setOpen((v) => !v)}
+          className="flex min-w-0 flex-1 items-center gap-2 text-left hover:opacity-90"
+        >
+          {!settled ? (
+            <BrailleSpinner size={12} className="flex-none text-koma-accent" />
+          ) : failed ? (
+            <AlertCircle size={12} className="flex-none text-koma-error" />
+          ) : (
+            <Check size={12} className="flex-none text-koma-accent" />
+          )}
+          <meta.Icon size={12} className="flex-none text-koma-accent" />
+          <span className="min-w-0 flex-1 truncate font-medium text-koma-fg">{call.name}</span>
+        </button>
+        {canBackgroundTask && taskMatch?.id != null && (
+          <button
+            type="button"
+            title="Run in background (keeps going, unblocks chat)"
+            aria-label="Run in background"
+            onClick={() => req({ r: 'BackgroundSubagent', id: taskMatch.id as number })}
+            className="flex-none rounded border border-koma-border px-1.5 py-0.5 text-[10px] leading-none text-koma-dim transition-colors hover:border-koma-accent hover:text-koma-accent"
+          >
+            bg
+          </button>
         )}
-        <meta.Icon size={12} className="flex-none text-koma-accent" />
-        <span className="min-w-0 flex-1 truncate font-medium text-koma-fg">{call.name}</span>
-        <ChevronDown
-          size={12}
-          className={`flex-none text-koma-dim transition-transform ${open ? 'rotate-180' : ''}`}
-        />
-      </button>
+        {canBackgroundBash && (
+          <button
+            type="button"
+            title="Run in background (keeps going, unblocks chat)"
+            aria-label="Run in background"
+            onClick={() => {
+              const n = Number(String(bashMatch?.id ?? '').replace(/^bash-/, ''))
+              if (Number.isFinite(n)) req({ r: 'BackgroundBash', id: n })
+            }}
+            className="flex-none rounded border border-koma-border px-1.5 py-0.5 text-[10px] leading-none text-koma-dim transition-colors hover:border-koma-accent hover:text-koma-accent"
+          >
+            bg
+          </button>
+        )}
+        {liveBackgrounded && !canBackgroundTask && !canBackgroundBash && (
+          <span className="flex-none text-[10px] font-medium uppercase tracking-wide text-koma-dim opacity-60" title="Running in the background">
+            bg
+          </span>
+        )}
+        <button
+          type="button"
+          aria-label={open ? 'Collapse' : 'Expand'}
+          onClick={() => setOpen((v) => !v)}
+          className="flex flex-none items-center text-koma-dim hover:text-koma-fg"
+        >
+          <ChevronDown
+            size={12}
+            className={`transition-transform ${open ? 'rotate-180' : ''}`}
+          />
+        </button>
+      </div>
       {open && (
         <div className="border-t border-koma-border">
           <div className="px-2.5 pt-1 text-[10px] uppercase tracking-wide text-koma-dim">payload</div>

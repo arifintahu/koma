@@ -374,6 +374,9 @@ pub enum Action {
     /// promote path (take tool_call_id, clear deadline). The park gate in
     /// `deferred.rs` resumes the turn automatically when pending lists empty.
     BackgroundAllSubagents,
+    /// GUI chat-card background button: promote ONE still-blocking foreground bash
+    /// job by numeric id. TUI does not emit this (composer Ctrl+B uses All).
+    BackgroundBash(usize),
     // --- Skill hub actions ---
     /// Esc in the `/skill` hub — close it and return to Chat.
     CloseSkill,

@@ -688,6 +688,12 @@ pub(super) enum GuiReq {
     /// promote every still-blocking FG bash job at once (mirrors the TUI composer's
     /// Ctrl+B). Forwarded as [`ClientRequest::BackgroundAllSubagents`].
     BackgroundAll,
+    /// The chat tool-card BACKGROUND button for a still-blocking FG bash job:
+    /// promote job `id` (numeric part of `bash-<id>`) without killing it. Forwarded as
+    /// [`ClientRequest::BackgroundBash`].
+    BackgroundBash {
+        id: usize,
+    },
     /// The Explore sidepanel bash-row KILL button: kill bg-bash job `id` (the numeric part
     /// of the row's `bash-<id>`). Forwarded as [`ClientRequest::BashKill`].
     KillBash {

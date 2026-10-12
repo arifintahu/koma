@@ -81,6 +81,22 @@ pub(super) fn handle_background_subagent(id: usize, state: &mut AppState) -> Res
     Ok(())
 }
 
+/// Promote one still-blocking foreground bash job by numeric id.
+pub(super) fn handle_background_bash(id: usize, state: &mut AppState) -> Result<()> {
+    let fg = state.rest.foreground;
+    let Some(job_idx) = state.rest.sessions[fg]
+        .bash_jobs
+        .iter()
+        .position(|j| j.id == id)
+    else {
+        return Ok(());
+    };
+    if promote_bash_job_at(state, fg, job_idx) {
+        state.rest.sessions[fg].status = format!("↳ backgrounded bash-{id}");
+    }
+    Ok(())
+}
+
 /// Promote one still-blocking foreground bash job: take `tool_call_id`, clear
 /// deadline, remove from `pending_tool_tasks`, push synthetic tool result.
 /// Returns true if a job was promoted.
