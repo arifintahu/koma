@@ -19,7 +19,7 @@ impl Tool for ScreenBrowser {
                 "Capture a screenshot of an on-screen browser tab and attach it. Returns observation_id for screen_browser_act. The user's live window is separate from this model observation. Frames are capped at 1920px/edge and ~2MP. Call after navigate, act, or human handoff."
             }
             "screen_browser_act" => {
-                "Run up to 16 ordered inputs against the current on-screen browser observation (click, dblclick, hover, scroll, type, key, wait). Prefer CSS selectors; coordinates are image pixels of the last observation. Enabling On-screen browser grants consent until pause/stop; no per-action workspace approval. Do not use when paused—call wait_human or ask the user to give control. observation must be the exact observation_id from screen_browser_observe."
+                "Run up to 16 ordered inputs against the current on-screen browser observation (click, dblclick, hover, scroll, type, key, drag, wait). Prefer CSS selectors; coordinates are image pixels of the last observation. Enabling On-screen browser grants consent until pause/stop; no per-action workspace approval. Do not use when paused—call wait_human or ask the user to give control. observation must be the exact observation_id from screen_browser_observe."
             }
             "screen_browser_read" => {
                 "Read structured data from the active (or specified) on-screen browser tab. Modes: markdown, text, html, query, actions_inventory. Bounded output. Prefer this over eval for extraction."
@@ -66,6 +66,7 @@ impl Tool for ScreenBrowser {
                         {"type":"object","properties":{"kind":{"const":"scroll"},"selector":{"type":"string"},"x":{"type":"number"},"y":{"type":"number"},"delta":{"type":"integer"},"to":{"type":"string"}},"required":["kind"],"additionalProperties":false},
                         {"type":"object","properties":{"kind":{"const":"type"},"text":{"type":"string","maxLength":8192},"selector":{"type":"string"}},"required":["kind","text"],"additionalProperties":false},
                         {"type":"object","properties":{"kind":{"const":"key"},"keys":{"type":"array","minItems":1,"maxItems":5,"items":{"type":"string"}}},"required":["kind","keys"],"additionalProperties":false},
+                        {"type":"object","properties":{"kind":{"const":"drag"},"selector":{"type":"string"},"x":{"type":"number"},"y":{"type":"number"},"to_selector":{"type":"string"},"to_x":{"type":"number"},"to_y":{"type":"number"}},"required":["kind"],"additionalProperties":false},
                         {"type":"object","properties":{"kind":{"const":"wait"},"selector":{"type":"string"},"url_contains":{"type":"string"},"timeout_ms":{"type":"integer","minimum":0,"maximum":120000}},"required":["kind"],"additionalProperties":false}
                     ]}}
                 },

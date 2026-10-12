@@ -445,6 +445,20 @@ pub enum Action {
     Key {
         keys: Vec<String>,
     },
+    Drag {
+        #[serde(default)]
+        selector: Option<String>,
+        #[serde(default)]
+        x: Option<f64>,
+        #[serde(default)]
+        y: Option<f64>,
+        #[serde(default)]
+        to_selector: Option<String>,
+        #[serde(default)]
+        to_x: Option<f64>,
+        #[serde(default)]
+        to_y: Option<f64>,
+    },
     Wait {
         #[serde(default)]
         selector: Option<String>,

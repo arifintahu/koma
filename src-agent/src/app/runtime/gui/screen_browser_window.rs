@@ -1599,43 +1599,41 @@ mod capture {
 
         type SnapshotSlot = Rc<RefCell<Option<Result<Vec<u8>, String>>>>;
 
-        pub fn snapshot_tab(webview: &WebView, full_page: bool) -> Result<Vec<u8>> {
+        fn snapshot_error_msg(error: *mut NSError) -> String {
+            if error.is_null() {
+                return "WKWebView takeSnapshot failed".into();
+            }
+            match unsafe { objc2::rc::Retained::retain(error) } {
+                Some(err) => {
+                    format!(
+                        "WKWebView takeSnapshot failed: {}",
+                        err.localizedDescription()
+                    )
+                }
+                None => "WKWebView takeSnapshot failed".into(),
+            }
+        }
+
+        fn snapshot_once(
+            as_wk: &WKWebView,
+            mtm: MainThreadMarker,
+            rect: Option<objc2_foundation::NSRect>,
+            after_updates: bool,
+        ) -> Result<Vec<u8>> {
             use objc2::rc::Retained;
 
-            let mtm = MainThreadMarker::new().ok_or_else(|| {
-                anyhow::anyhow!("page screenshot must run on the GUI main thread")
-            })?;
-            let wk = webview.webview();
-            let as_wk: &WKWebView = wk.as_ref();
             let slot: SnapshotSlot = Rc::new(RefCell::new(None));
             let out = Rc::clone(&slot);
-
             let config = unsafe { WKSnapshotConfiguration::new(mtm) };
             unsafe {
-                config.setAfterScreenUpdates(true);
-                let bounds = as_wk.bounds();
-                if bounds.size.width < 2.0 || bounds.size.height < 2.0 {
-                    bail!(
-                        "webview has no layout ({:.0}x{:.0})",
-                        bounds.size.width,
-                        bounds.size.height
-                    );
+                config.setAfterScreenUpdates(after_updates);
+                if let Some(r) = rect {
+                    config.setRect(r);
                 }
-                let mut rect = bounds;
-                rect.origin.x = 0.0;
-                rect.origin.y = 0.0;
-                if full_page {
-                    if let Some((cw, ch)) = super::page_content_size(webview) {
-                        rect.size.width = rect.size.width.max(cw);
-                        rect.size.height = rect.size.height.max(ch).min(8192.0);
-                    }
-                }
-                config.setRect(rect);
             }
-
             let block = RcBlock::new(move |image: *mut NSImage, error: *mut NSError| {
                 let res = if !error.is_null() {
-                    Err("WKWebView takeSnapshot failed".into())
+                    Err(snapshot_error_msg(error))
                 } else {
                     match unsafe { Retained::retain(image) } {
                         Some(img) => nsimage_to_png(&img).map_err(|e| e.to_string()),
@@ -1644,11 +1642,9 @@ mod capture {
                 };
                 *out.borrow_mut() = Some(res);
             });
-
             unsafe {
                 as_wk.takeSnapshotWithConfiguration_completionHandler(Some(&config), &block);
             }
-
             let deadline = Instant::now() + WAIT;
             while slot.borrow().is_none() {
                 if Instant::now() > deadline {
@@ -1658,7 +1654,6 @@ mod capture {
                 let until = NSDate::dateWithTimeIntervalSinceNow(0.02);
                 let _ = unsafe { run_loop.runMode_beforeDate(NSDefaultRunLoopMode, &until) };
             }
-
             let taken = slot.borrow_mut().take();
             match taken {
                 Some(Ok(png)) if !png.is_empty() => Ok(png),
@@ -1666,6 +1661,58 @@ mod capture {
                 Some(Err(e)) => bail!(e),
                 None => bail!("WKWebView takeSnapshot produced no result"),
             }
+        }
+
+        pub fn snapshot_tab(webview: &WebView, full_page: bool) -> Result<Vec<u8>> {
+            let mtm = MainThreadMarker::new().ok_or_else(|| {
+                anyhow::anyhow!("page screenshot must run on the GUI main thread")
+            })?;
+            let wk = webview.webview();
+            let as_wk: &WKWebView = wk.as_ref();
+            let bounds = as_wk.bounds();
+            if bounds.size.width < 2.0 || bounds.size.height < 2.0 {
+                bail!(
+                    "webview has no layout ({:.0}x{:.0})",
+                    bounds.size.width,
+                    bounds.size.height
+                );
+            }
+            let mut viewport = bounds;
+            viewport.origin.x = 0.0;
+            viewport.origin.y = 0.0;
+            let mut custom = viewport;
+            let mut used_custom_rect = false;
+            if full_page {
+                if let Some((cw, ch)) = super::page_content_size(webview) {
+                    let nw = custom.size.width.max(cw);
+                    let nh = custom.size.height.max(ch).min(8192.0);
+                    if (nw - custom.size.width).abs() > 0.5 || (nh - custom.size.height).abs() > 0.5
+                    {
+                        custom.size.width = nw;
+                        custom.size.height = nh;
+                        used_custom_rect = true;
+                    }
+                }
+            }
+
+            let mut last = snapshot_once(as_wk, mtm, Some(custom), true);
+            if last.is_ok() {
+                return last;
+            }
+            super::pump_brief();
+            last = snapshot_once(as_wk, mtm, Some(custom), true);
+            if last.is_ok() {
+                return last;
+            }
+            if used_custom_rect {
+                last = snapshot_once(as_wk, mtm, Some(viewport), true);
+                if last.is_ok() {
+                    return last;
+                }
+            }
+            let fallback_rect = if used_custom_rect { viewport } else { custom };
+            last = snapshot_once(as_wk, mtm, Some(fallback_rect), false);
+            last
         }
 
         fn nsimage_to_png(image: &NSImage) -> Result<Vec<u8>> {

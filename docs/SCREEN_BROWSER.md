@@ -14,7 +14,7 @@ Koma-owned multi-tab browser window (system webview: WKWebView / WebView2 / webk
 |------|---------|
 | `screen_browser_tabs` | open / list / navigate / close / select / reload / stop / back / forward |
 | `screen_browser_observe` | screenshot + observation_id (capped 1920px / ~2MP) |
-| `screen_browser_act` | click / type / scroll / key / wait (prefer CSS selectors) |
+| `screen_browser_act` | click / type / scroll / key / drag / wait (prefer CSS selectors) |
 | `screen_browser_read` | markdown / text / html / query / actions_inventory |
 | `screen_browser_eval` | page JS (Settings toggle required) |
 | `screen_browser_wait_human` | pause for login / CAPTCHA / 2FA |
@@ -58,6 +58,11 @@ Observation frames are **Chrome-style visible-tab screenshots of the page conten
 | Windows | WebView2 `CapturePreview` | CDP `Page.captureScreenshot` (`captureBeyondViewport`) | viewport `CapturePreview` |
 | Linux | webkit2gtk `snapshot(Visible)` | `snapshot(FullDocument)` | viewport `Visible` |
 
+On macOS, `takeSnapshot` retries once after a short pump; if a custom full-page
+rect fails it retries the default viewport; if `afterScreenUpdates: true` fails it
+retries `false`. The NSError description is kept on failure. Only then does
+observe fall back to `screencapture -l` (`capture_quality: window`).
+
 `capture_quality` is `webview` when the native path succeeds, else `window` (macOS only).
 Desktop-region capture (`screencapture -R` / grim) is **not** used — it composites
 whatever is on screen, so a koma chat window covering the browser would appear in
@@ -69,7 +74,7 @@ the PNG. Grant screen-recording permission only if the macOS window-id fallback 
 |------------|-----|
 | `screen_browser_read` | JS eval with return value (markdown/text/html/query/actions_inventory) |
 | `screen_browser_eval` | JS eval with JSON return (Settings → allow eval) |
-| `screen_browser_act` | click / type / scroll / key / wait via in-page DOM events |
+| `screen_browser_act` | click / type / scroll / key / drag / wait via in-page DOM events |
 | `screen_browser_observe` | visible-tab PNG + observation_id |
 
 All three desktop OSes share the same wry `evaluate_script_with_callback` path for
@@ -77,6 +82,30 @@ read/eval/act confirmation.
 
 ### Act details
 
+All pointer actions run as in-page JS in the tab webview (`run_actions` → eval →
+`pump_brief`). There is no OS cursor, Accessibility click, or CDP `Input.dispatch*`.
+
+- **selectors** use `querySelectorAll` (invalid CSS throws `invalid CSS selector: …`).
+  `:contains()` is rejected in Rust before eval. When several nodes match, the
+  first **visible** one wins (`getBoundingClientRect` ≥ 1×1, not
+  `visibility:hidden` / `display:none` / `opacity:0`); otherwise the first match.
+- **click / dblclick** (selector or coordinates): `scrollIntoView`, then
+  `pointerdown` → `mousedown` → `pointerup` → `mouseup` → `click`, then
+  `el.click()` when it exists. Right-click fires `contextmenu`; double-click
+  adds `dblclick`. Coordinate clicks use the same sequence as selector clicks.
+- **hover**: `pointermove` + `mouseover` + `mouseenter`.
+- **type**: focuses first, sets value via the native
+  `HTMLInputElement` / `HTMLTextAreaElement` setter, then `beforeinput` +
+  `InputEvent('input', {inputType:'insertText'})` + `change`. `contenteditable`
+  / no `value` falls back to `document.execCommand('insertText')`.
+- **key** `Enter` / `NumpadEnter`: `keydown`/`keyup` (`keyCode` 13), then
+  `form.requestSubmit()`, else click the first visible
+  `button[type=submit], input[type=submit]`, else `el.click()` if it is a
+  button. Enter is **not** PageDown. `End` / `Home` / `PageDown` / `PageUp` /
+  `Space` / arrows still apply real scroll. Other keys dispatch `KeyboardEvent`.
+- **drag**: needs a start (`selector` and/or `x,y`) and an end (`to_selector`
+  and/or `to_x,to_y`). `pointerdown` at start, a few `pointermove`/`mousemove`
+  steps, `pointerup` at end.
 - **wait** with no `selector` and no `url_contains` is a delay of `timeout_ms`
   (default 5s). It always succeeds; the GUI loop is pumped so the page stays
   live. With a selector and/or `url_contains`, it polls until true or times out
@@ -85,9 +114,6 @@ read/eval/act confirmation.
   (case-insensitive) scroll that axis; any other `to` is a CSS selector for
   `scrollIntoView`. If the document root does not overflow, the largest
   `overflow-y: auto|scroll|overlay` descendant is used (capped at ~500 nodes).
-- **key** `End` / `Home` / `PageDown` / `PageUp` / `Space` / arrows apply real
-  scroll on that same node. Other keys dispatch `KeyboardEvent` (browsers do
-  not apply default scroll for synthetic key events).
 
 ## Always on top
 
