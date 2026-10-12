@@ -169,6 +169,7 @@ pub fn ingest_image_bytes(
             marker_n: nn,
             rel_path,
             mime,
+            label: None,
         },
         marker,
     ))
@@ -232,9 +233,36 @@ pub fn ingest_image_from_raw_bytes(
             marker_n: nn,
             rel_path,
             mime: effective_mime,
+            label: None,
         },
         marker,
     ))
+}
+
+/// Basename safe to show on a composer chip. Strips directories and control
+/// characters. `None` when nothing displayable remains.
+pub fn sanitize_paste_label(name: &str) -> Option<String> {
+    let base = std::path::Path::new(name)
+        .file_name()
+        .map(|s| s.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    let cleaned: String = base
+        .chars()
+        .filter(|c| !c.is_control() && *c != '/' && *c != '\\')
+        .take(180)
+        .collect();
+    let cleaned = cleaned.trim().to_string();
+    if cleaned.is_empty() || cleaned == "." || cleaned == ".." {
+        None
+    } else {
+        Some(cleaned)
+    }
+}
+
+/// Whether a paste body may be staged. File drops pass `force` so a one-line
+/// file still becomes a chip; clipboard paste stays collapse-gated.
+pub fn accept_paste_body(text: &str, force: bool) -> bool {
+    text.len() <= PASTE_SOFT_MAX_BYTES && (force || should_collapse_paste(text))
 }
 
 /// Ingest pasted `text` into `pastes_dir` as `NN-paste.txt`, returning the
@@ -264,6 +292,7 @@ pub fn ingest_paste_text(pastes_dir: &Path, text: &str) -> Result<(Attachment, S
             marker_n: nn,
             rel_path,
             mime: "text/plain".to_string(),
+            label: None,
         },
         marker,
     ))

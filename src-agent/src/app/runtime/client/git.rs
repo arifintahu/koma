@@ -238,11 +238,19 @@ fn push_ordinary(
 
 /// Compute a host-side GIT STATUS for the Explore "GIT" panel, answering a
 /// [`super::HostCtl::GitStatus`]. Resolves the repo root off `session`'s primary
-/// workdir ([`repo_root_for`]), then parses `git status --porcelain=v2 -z --branch`
-/// (NUL-separated records — a rename/copy `2` record consumes an EXTRA NUL field for
-/// its original path). ALWAYS returns a result — a non-git workdir sets `error`
-/// rather than panicking, mirroring [`super::diff::compute_file_diff`]'s always-reply
-/// rule so the GUI panel can never hang waiting on a spinner.
+/// workdir ([`repo_root_for`]), then parses `git status --porcelain=v2 -z --branch
+/// -uall` (NUL-separated records — a rename/copy `2` record consumes an EXTRA NUL
+/// field for its original path).
+///
+/// `-uall` / `--untracked-files=all` is required so untracked *directories* expand
+/// to individual files (VS Code / GitKraken style). The default `normal` mode
+/// collapses a whole tree to one `? .koma/` row — which the GUI then tries to
+/// open as a file diff (`Is a directory (os error 21)`). Staging still works
+/// because `git add` accepts directories; only the unstaged list was wrong.
+///
+/// ALWAYS returns a result — a non-git workdir sets `error` rather than panicking,
+/// mirroring [`super::diff::compute_file_diff`]'s always-reply rule so the GUI
+/// panel can never hang waiting on a spinner.
 pub(crate) fn compute_git_status(session: Option<&str>) -> GitStatusResult {
     let empty = |error: Option<String>| GitStatusResult {
         root: None,
@@ -263,7 +271,17 @@ pub(crate) fn compute_git_status(session: Option<&str>) -> GitStatusResult {
         return empty(Some("not a git repository".to_string()));
     };
 
-    let status_out = match git_cmd(&root, &["status", "--porcelain=v2", "-z", "--branch"]) {
+    let status_out = match git_cmd(
+        &root,
+        &[
+            "status",
+            "--porcelain=v2",
+            "-z",
+            "--branch",
+            // Expand untracked dirs to files — see fn docs.
+            "--untracked-files=all",
+        ],
+    ) {
         Some(out) if out.status.success() => out.stdout,
         _ => return empty(Some("git status failed".to_string())),
     };
@@ -356,14 +374,20 @@ pub(crate) fn compute_git_status(session: Option<&str>) -> GitStatusResult {
                     });
                 }
             }
-            // Untracked: `? <path>`.
+            // Untracked: `? <path>`. With `-uall`, directories are expanded to files;
+            // still normalize a trailing slash if a bare dir ever slips through.
             "?" => {
-                unstaged.push(GitFileEntry {
-                    path: rest.to_string(),
-                    orig_path: None,
-                    status: "?".to_string(),
-                    staged: false,
-                });
+                let path = rest.trim_end_matches('/').to_string();
+                if path.is_empty() {
+                    // skip
+                } else {
+                    unstaged.push(GitFileEntry {
+                        path,
+                        orig_path: None,
+                        status: "?".to_string(),
+                        staged: false,
+                    });
+                }
             }
             // Ignored: `! <path>` — skipped, never surfaced in the panel.
             "!" => {}
@@ -486,6 +510,11 @@ pub(crate) fn compute_git_diff(path: &str, staged: bool, session: Option<&str>) 
     let Some(abs) = safe_join(&root, path) else {
         return empty(Some("invalid path".to_string()), false);
     };
+    // Status should never hand us a directory (`-uall` expands untracked trees),
+    // but guard anyway so a stale row cannot surface raw "os error 21".
+    if abs.is_dir() {
+        return empty(Some("path is a directory — open a file inside it".to_string()), false);
+    }
 
     let show = |spec: &str| -> Vec<u8> {
         match git_cmd(&root, &["show", spec]) {

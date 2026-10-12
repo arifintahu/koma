@@ -27,7 +27,7 @@ export function pushSession(set: StoreSet, get: StoreGet, env: PushEnvelope): bo
         if (switched) {
           cancelGitRequests()
           useComputerPreview.getState().hide()
-          set({ computer: null, computerError: null })
+          set({ computer: null, computerError: null, screenBrowser: null, screenBrowserError: null })
           // Preview.7 releases host resources on a real A→B switch. A guided
           // detached first-chat attach must retain its captured editor layout.
           if (previousSessionId !== null && !preserveEditorTabs) {
@@ -213,7 +213,7 @@ export function pushSession(set: StoreSet, get: StoreGet, env: PushEnvelope): bo
       }
       case 'Switching':
         useComputerPreview.getState().hide()
-        set({ computer: null, computerError: null })
+        set({ computer: null, computerError: null, screenBrowser: null, screenBrowserError: null })
         cancelGitRequests()
         set((s) => {
           // Prefer an optimistic label ResumePalette already raised (the

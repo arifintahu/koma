@@ -3,9 +3,11 @@ import { AnimatePresence, motion } from 'framer-motion'
 import { Info, OctagonAlert, TriangleAlert, X } from 'lucide-react'
 import { useKoma } from '../store/koma'
 import type { ToastEntry } from '../store/koma'
+import { acceptToastConfirm } from '../lib/toast'
 
 // How long a toast stays before it auto-dismisses. Errors (safeguard blocks,
 // harness flags) linger a touch longer than info notices so they're not missed.
+// Toast-confirm (action present) does not auto-dismiss — user must act or close.
 const INFO_MS = 4_000
 const ERROR_MS = 7_000
 
@@ -46,8 +48,9 @@ export function ToastContainer() {
   // Arm a fresh auto-dismiss timer whenever a new toast id appears. Keyed on the
   // id (not the object) so a re-fired identical-text toast still restarts the
   // clock, and so a dismissed→null gap doesn't leave a stale timer running.
+  // Confirm toasts stay until the user accepts or dismisses.
   useEffect(() => {
-    if (!toast) return
+    if (!toast || toast.action) return
     const ttl = toast.kind === 'error' ? ERROR_MS : INFO_MS
     const t = window.setTimeout(() => dismissToast(toast.id), ttl)
     return () => window.clearTimeout(t)
@@ -81,12 +84,32 @@ export function ToastContainer() {
             animate={{ opacity: 1, y: 0, scale: 1 }}
             exit={{ opacity: 0, y: 8, scale: 0.98 }}
             transition={{ duration: 0.16, ease: 'easeOut' }}
-            className="pointer-events-auto flex max-w-[340px] items-start gap-2 rounded-md border border-koma-border bg-koma-panel/95 px-2.5 py-1.5 text-koma-fg shadow-lg backdrop-blur-sm"
+            className="pointer-events-auto flex max-w-[360px] items-start gap-2 rounded-md border border-koma-border bg-koma-panel/95 px-2.5 py-1.5 text-koma-fg shadow-lg backdrop-blur-sm"
           >
             <Icon size={14} className="mt-0.5 flex-none" style={{ color: tint }} />
-            <span className="min-w-0 flex-1 whitespace-pre-wrap break-words text-[12px] leading-snug">
-              {toast.text}
-            </span>
+            <div className="min-w-0 flex-1">
+              <span className="whitespace-pre-wrap break-words text-[12px] leading-snug">
+                {toast.text}
+              </span>
+              {toast.action && (
+                <div className="mt-1.5 flex items-center gap-1.5">
+                  <button
+                    type="button"
+                    onClick={() => acceptToastConfirm(toast.id)}
+                    className="rounded border border-koma-border bg-koma-accent/15 px-2 py-0.5 text-[11px] font-medium text-koma-accent transition hover:bg-koma-accent/25"
+                  >
+                    {toast.action.label}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => dismissToast(toast.id)}
+                    className="rounded px-2 py-0.5 text-[11px] text-koma-dim transition hover:bg-koma-hover hover:text-koma-fg"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              )}
+            </div>
             <button
               onClick={() => dismissToast(toast.id)}
               aria-label="Dismiss"

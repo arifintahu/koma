@@ -33,6 +33,7 @@ import { countTurns, isHistoryPrepend, nextRenderFrom, visibleFromTurn } from '.
 import { useKoma, type AttachmentEntry, type ChatMessage, type ToolCallView } from '../store/koma'
 import { ChatScrollRootContext, MessageBody } from './MessageBody'
 import { ComputerObservationCard, ComputerToolCall } from './ComputerObservationCard'
+import { ScreenBrowserObservationCard } from './ScreenBrowserObservationCard'
 import { DiagramObservationCard } from './DiagramVisual'
 import { diagramMessageParts, splitDiagramMessage } from '../lib/diagramMermaid'
 import { splitDesignMessage } from '../lib/design'
@@ -355,7 +356,7 @@ function UserMessage({
   // → no pencil (e.g. the live view, where the index isn't a committed message).
   onEdit?: () => void
 }) {
-  const pasted = splitPasteMessage(content)
+  const pasted = splitPasteMessage(content, { preserveMarkers: true })
   const split = splitDiagramMessage(pasted.prose)
   const designed = splitDesignMessage(split.prose)
   // A diagram reference stays a drawing here. A design reference stays a chip.
@@ -492,6 +493,7 @@ function Message({ m, index }: { m: ChatMessage; index: number }) {
   const rewindIndex = typeof m.idx === 'number' ? m.idx : index
   if (m.role === 'user') {
     if (m.computer) return <ComputerObservationCard observation={m.computer} />
+    if (m.screenBrowser) return <ScreenBrowserObservationCard observation={m.screenBrowser} />
     if (m.kind === 'shell') return <ShellMessage content={m.content} />
     if (m.kind === 'bashNudge') return <BashNudgeMessage content={m.content} />
     // Edit → STAGE a rewind (does NOT truncate on click): refill the composer with

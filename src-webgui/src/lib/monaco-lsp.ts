@@ -1025,7 +1025,10 @@ function modelToRootPath(
   model: monaco.editor.ITextModel,
   roots: string[],
 ): { root: string; path: string } | null {
-  const meta = model as unknown as { __komaRoot?: string; __komaPath?: string }
+  // Keep notebook cell/raw JSON models outside ordinary file query/edit
+  // authority; notebook-aware synchronization must register them separately.
+  const meta = model as unknown as { __komaRoot?: string; __komaPath?: string; __komaNotebook?: boolean }
+  if (meta.__komaNotebook || ['koma-notebook-cell', 'vscode-notebook-cell', 'koma-notebook-raw'].includes(model.uri.scheme) || /\.ipynb$/i.test(meta.__komaPath ?? model.uri.path)) return null
   if (meta.__komaRoot && meta.__komaPath != null) {
     return { root: meta.__komaRoot, path: meta.__komaPath }
   }

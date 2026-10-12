@@ -177,6 +177,8 @@ export type ToastEntry = {
   id: number
   text: string
   kind: 'error' | 'warn' | 'success' | 'info'
+  /** Primary action label for toast-confirm. Resolver lives outside the store (see `showToastConfirm`). */
+  action?: { label: string }
 }
 
 // The host's FileDiff reply payload for a `kind:'diff'` editor tab — the

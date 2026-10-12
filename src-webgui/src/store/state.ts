@@ -18,6 +18,8 @@ export type KomaState = {
   webSearchValues: import('../types/web-search').SearchReply | null
   computer: import('../types/computer').ComputerStatus | null
   computerError: string | null
+  screenBrowser: import('../types/screenBrowser').ScreenBrowserStatus | null
+  screenBrowserError: string | null
   session: SessionSlice
   hub: HubSlice
   palette: PaletteColors
@@ -147,8 +149,8 @@ export type KomaState = {
   // Live language-server processes (starting / indexing / ready). Footer drawer.
   lspRuntime: LspRuntimeServer[]
   // One docked panel shared by Tasks, Language Servers and Problems.
-  bottomPanelTab: 'tasks' | 'lsp' | 'problems' | null
-  setBottomPanelTab: (tab: 'tasks' | 'lsp' | 'problems' | null) => void
+  bottomPanelTab: 'tasks' | 'lsp' | 'problems' | 'packs' | null
+  setBottomPanelTab: (tab: 'tasks' | 'lsp' | 'problems' | 'packs' | null) => void
   // The SSH Keys section's transient "Copy public key" / "Reveal private key"
   // result (latest KeyReveal push), or `null` when nothing has been revealed
   // yet / the reveal box was dismissed. Kept separate from `keys` (the list

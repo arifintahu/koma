@@ -41,6 +41,10 @@ pub(crate) fn dispatch_deferred(state: &mut AppState, sess_idx: usize, call: &To
         crate::app::runtime::computer::bridge::dispatch(state, sess_idx, call);
         return;
     }
+    if call.function.name.starts_with("screen_browser_") {
+        crate::app::runtime::screen_browser::bridge::dispatch(state, sess_idx, call);
+        return;
+    }
     // Lazily create THIS session's result channel once, then reuse it. The
     // spawned thread fires back over session `sess_idx`'s own `tool_task_tx`, so
     // the result is routed structurally to that session's drain (no id tag

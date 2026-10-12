@@ -1,4 +1,6 @@
+import { isExternalFileDrag } from '../lib/externalFileDrag'
 import { pagePoint } from '../lib/uiScale'
+import { isNotebookPath } from '../lib/notebook-workspace'
 import { CodingTests } from '../components/CodingTests'
 import { CodingDebug } from '../components/CodingDebug'
 import { createRootRoute, createRoute, Outlet } from '@tanstack/react-router'
@@ -16,9 +18,9 @@ import { ResumePalette } from '../components/ResumePalette'
 import { RenameOverlay } from '../components/RenameOverlay'
 import { OmniSearchPalette } from '../components/OmniSearchPalette'
 import { CodingPalette } from '../components/CodingPalette'
-import { CodingPacks } from '../components/CodingPacks'
 import { CodingTransactions } from '../components/CodingTransactions'
 import { CodingHistory } from '../components/CodingHistory'
+import { NotebookCreateDialog } from '../components/NotebookCreateDialog'
 import { CodingRefactor } from '../components/CodingRefactor'
 import { startCodingDiskMonitor } from '../lib/coding-disk'
 import { SwitchingOverlay } from '../components/SwitchingOverlay'
@@ -442,10 +444,10 @@ function RootLayout() {
       {overlay === 'rename' && <RenameOverlay onClose={() => setOverlay('none')} />}
       {omnisearchOpen && <OmniSearchPalette onClose={closeOmniSearch} />}
       <CodingPalette />
-      <CodingPacks />
       <CodingDebug />
       <CodingTests />
       <CodingHistory />
+      <NotebookCreateDialog />
       <CodingTransactions />
       <CodingRefactor />
       <SwitchingOverlay
@@ -533,6 +535,7 @@ const InstalledExtensionTab = lazy(() => import('../components/InstalledExtensio
 
 // Coding panel Monaco editor — lazy so its chunk only loads when a file is opened.
 const CodeEditorTab = lazy(() => import('../components/CodeEditorTab'))
+const NotebookTab = lazy(() => import('../components/NotebookTab'))
 const LocalFileTab = lazy(() => import('../components/LocalFileTab'))
 const MarkdownPreviewTab = lazy(() => import('../components/MarkdownPreviewTab'))
 
@@ -552,6 +555,13 @@ function DiffFallback() {
 }
 
 function TabBody({ tab, visible }: { tab: Exclude<Tab, { kind: 'chat' }>; visible: boolean }) {
+  // Keep coding editors mounted after first show (view state / model reuse), but
+  // do not spin Monaco + LSP for every background tab the moment it is opened.
+  const [codingArmed, setCodingArmed] = useState(visible && tab.kind === 'codingFile')
+  useEffect(() => {
+    if (visible && tab.kind === 'codingFile') setCodingArmed(true)
+  }, [visible, tab.kind])
+
   return (
     <Suspense fallback={<DiffFallback />}>
       {tab.kind === 'gitTool' ? (
@@ -587,7 +597,15 @@ function TabBody({ tab, visible }: { tab: Exclude<Tab, { kind: 'chat' }>; visibl
       ) : tab.kind === 'extension' ? (
         <ExtensionPanelFrame extId={tab.extId} panelId={tab.panelId} title={tab.title} />
       ) : tab.kind === 'codingFile' ? (
-        tab.preview ? <MarkdownPreviewTab tab={tab} /> : <CodeEditorTab tab={tab} />
+        !codingArmed ? (
+          <DiffFallback />
+        ) : tab.preview ? (
+          <MarkdownPreviewTab tab={tab} />
+        ) : isNotebookPath(tab.path) ? (
+          <NotebookTab tab={tab} />
+        ) : (
+          <CodeEditorTab tab={tab} />
+        )
       ) : tab.kind === 'localFile' ? (
         <LocalFileTab tab={tab} />
       ) : tab.kind === 'terminal' ? (
@@ -741,7 +759,22 @@ function TabbedMain() {
       endDragSession()
     }
 
+    // OS file drops navigate the webview to file:// unless dragover is cancelled.
+    // That replaces the GUI (white or transparent window) for html, md, js, and
+    // any other non-image. preventDefault only — the composer still receives the
+    // event and attaches images.
+    const keepFileDropInPage = (e: DragEvent) => {
+      if (!isExternalFileDrag(e.dataTransfer)) return
+      e.preventDefault()
+      try {
+        if (e.dataTransfer) e.dataTransfer.dropEffect = 'copy'
+      } catch {
+        /* Some webviews lock dropEffect outside dragover. */
+      }
+    }
+
     const onDragOver = (e: DragEvent) => {
+      keepFileDropInPage(e)
       if (!sessionRef.current || !isEditorBodyDrag(e.dataTransfer)) return
       const hit = hitTestPane(e.clientX, e.clientY)
       if (!hit) {
@@ -766,6 +799,7 @@ function TabbedMain() {
     }
 
     const onDrop = (e: DragEvent) => {
+      keepFileDropInPage(e)
       if (!sessionRef.current || !isEditorBodyDrag(e.dataTransfer)) {
         stop()
         return
@@ -824,6 +858,7 @@ function TabbedMain() {
 
     window.addEventListener('dragstart', arm)
     window.addEventListener('dragend', stop)
+    window.addEventListener('dragenter', keepFileDropInPage, true)
     window.addEventListener('dragover', onDragOver, true)
     window.addEventListener('drop', onDrop, true)
     window.addEventListener('blur', stop)
@@ -831,6 +866,7 @@ function TabbedMain() {
     return () => {
       window.removeEventListener('dragstart', arm)
       window.removeEventListener('dragend', stop)
+      window.removeEventListener('dragenter', keepFileDropInPage, true)
       window.removeEventListener('dragover', onDragOver, true)
       window.removeEventListener('drop', onDrop, true)
       window.removeEventListener('blur', stop)

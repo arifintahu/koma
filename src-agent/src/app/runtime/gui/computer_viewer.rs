@@ -79,6 +79,7 @@ impl Viewer {
         let initial = serde_json::to_string(&status)?;
         let builder = wry::WebViewBuilder::new()
             .with_url("koma://localhost/index.html#computer-preview")
+            .with_navigation_handler(|url| super::allow_webview_navigation(&url))
             .with_initialization_script(format!(
                 "window.__komaComputerInitial={initial};window.__komaComputerPalette={palette};"
             ))
@@ -195,6 +196,12 @@ fn clamp_preview_size(size: PhysicalSize<u32>, screen: PhysicalSize<u32>) -> Phy
     )
 }
 
+impl Drop for Viewer {
+    fn drop(&mut self) {
+        self.save();
+    }
+}
+
 #[cfg(test)]
 mod sizing_tests {
     use super::*;
@@ -280,10 +287,5 @@ mod native_tests {
         });
         assert!(routed, "viewer IPC did not route the window refresh");
         assert!(!focus_stolen, "floating viewer stole focus from the target");
-    }
-}
-impl Drop for Viewer {
-    fn drop(&mut self) {
-        self.save();
     }
 }

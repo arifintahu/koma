@@ -27,6 +27,7 @@ pub(crate) fn save_web_search_config(
 pub(crate) mod client;
 mod client_shadow;
 pub(crate) mod computer;
+pub(crate) mod screen_browser;
 mod event_loop;
 mod manage;
 mod stream;

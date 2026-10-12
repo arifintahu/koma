@@ -700,6 +700,84 @@ pub(super) fn push_loop(
                     #[cfg(not(feature = "gui"))]
                     let _ = (action, window);
                 }
+                #[cfg(feature = "gui")]
+                Ok(super::HostCtl::ScreenBrowser {
+                    action,
+                    window: _,
+                    prefs,
+                    url,
+                    tab_id: _,
+                    tabs,
+                    active_tab,
+                    window_open,
+                    reply,
+                }) => {
+                    if remote_ctx.is_some() {
+                        push(serde_json::json!({"k":"ScreenBrowserError","message":"On-screen browser is limited to local GUI sessions"}).to_string());
+                    } else if action == "composer_attach" {
+                        // Manual chrome shot: path in `url` → daemon paste → composer chip.
+                        if let Some(path) = url.filter(|p| !p.trim().is_empty()) {
+                            let _ = req_tx.send(ClientRequest::Paste { text: path });
+                        }
+                    } else {
+                        use crate::app::runtime::screen_browser::{Capabilities, Control, Prefs};
+                        let control = match action.as_str() {
+                            "enable" => {
+                                let prefs = prefs.unwrap_or_default();
+                                Some(Control::Enable {
+                                    capabilities: Capabilities::gui_default(prefs.allow_eval),
+                                    prefs,
+                                })
+                            }
+                            "pause" => Some(Control::Pause),
+                            "take_over" => Some(Control::TakeOver),
+                            "resume" => Some(Control::Resume),
+                            "stop" => Some(Control::Stop),
+                            "open_window" => Some(Control::OpenWindow),
+                            "clear_data" => Some(Control::ClearData),
+                            "continue_human" => Some(Control::ContinueHuman),
+                            "set_prefs" => Some(Control::SetPrefs {
+                                prefs: prefs.unwrap_or_default(),
+                            }),
+                            "window_state" => Some(Control::WindowState {
+                                window_open,
+                                tabs: tabs.unwrap_or_default(),
+                                active_tab,
+                            }),
+                            "result" => reply.map(Control::Result),
+                            _ => None,
+                        };
+                        if let Some(control) = control {
+                            let _ = req_tx.send(ClientRequest::ScreenBrowser(control));
+                        }
+                        if matches!(action.as_str(), "enable" | "open_window") {
+                            // Main thread opens the wry window.
+                            let _ = push; // status push arrives after enable
+                        }
+                    }
+                }
+                #[cfg(feature = "gui")]
+                Ok(super::HostCtl::ScreenBrowserChrome {
+                    action,
+                    url,
+                    tab_id,
+                }) => {
+                    // Forward to main thread via push envelope the GUI event loop
+                    // already understands — use a dedicated push kind.
+                    push(
+                        serde_json::json!({
+                            "k": "ScreenBrowserChrome",
+                            "action": action,
+                            "url": url,
+                            "tab_id": tab_id,
+                        })
+                        .to_string(),
+                    );
+                }
+                #[cfg(feature = "gui")]
+                Ok(super::HostCtl::ScreenBrowserOpenWindow) => {
+                    push(serde_json::json!({"k":"ScreenBrowserOpen"}).to_string());
+                }
                 Ok(super::HostCtl::ConfigMutate(req)) => {
                     let _ = req_tx.send(req);
                 }
@@ -1751,6 +1829,24 @@ pub(super) fn push_loop(
                             // Native GUI visibility must be applied before dispatching input/capture.
                             computer_preparing = Some(request.clone());
                             push(serde_json::json!({"k":"ComputerPrepare","id":request.id,"hide": !matches!(request.operation, crate::app::runtime::computer::Operation::Windows)}).to_string());
+                        }
+                        DaemonEvent::ScreenBrowserStatus(status) if remote_ctx.is_none() => {
+                            // Only request a window open when the session is enabled and
+                            // no window is tracked yet. Re-firing ScreenBrowserOpen on
+                            // every tab/title/load status update forces macOS
+                            // makeKeyAndOrderFront via set_visible(true) and steals
+                            // focus whenever a page finishes loading.
+                            let need_open = status.enabled && !status.window_open;
+                            push(serde_json::json!({"k":"ScreenBrowser","status":status}).to_string());
+                            if need_open {
+                                push(serde_json::json!({"k":"ScreenBrowserOpen"}).to_string());
+                            }
+                        }
+                        DaemonEvent::ScreenBrowserOperation(request) if remote_ctx.is_none() => {
+                            push(
+                                serde_json::json!({"k":"ScreenBrowserOp","request":request})
+                                    .to_string(),
+                            );
                         }
                         _ => {}
                     }

@@ -149,3 +149,10 @@ export function loneHttpUrl(text: string): string | null {
   const trimmed = text.trim()
   return LONE_URL.test(trimmed) ? trimmed : null
 }
+
+/** `[url](url)` with identical label/href (clipboard HTML often produces this). */
+export function sameLabelMarkdownLink(text: string): string | null {
+  const trimmed = text.trim()
+  const match = trimmed.match(/^\[(https?:\/\/[^\s\]]+)\]\(\1\)$/i)
+  return match?.[1] ?? null
+}

@@ -1,7 +1,75 @@
 # Language packs and project environments
 
-Open **Language Packs: Install, Update and Select Environment** in the command
-palette. The workspace dropdown binds every action to its host and root. Status
+Language Packs live in the **workspace BottomPanel** (same dock as Tasks,
+Problems, and Language Servers) — not a floating card. Open via:
+
+- Command palette: **Language Packs: Install, Update and Select Environment**
+- Status footer **Packs** control
+- Bottom panel tab **LANGUAGE PACKS**
+- Notebook kernel recovery (**Language Packs** action)
+
+## UI design signature (BottomPanel tool dock)
+
+Match `CodingTasks` chrome. Do **not** reintroduce a floating
+`absolute inset-x-10 bottom-6 … shadow-xl` dialog for packs.
+
+| Rule | Detail |
+|------|--------|
+| Shell | `#workspace-bottom-panel` tab content only |
+| Title chrome | Owned by BottomPanel tablist (`TASKS · PROBLEMS · LANGUAGE SERVERS · LANGUAGE PACKS`) + collapse/close |
+| Body root | `section` with `flex min-h-0 flex-1 flex-col overflow-hidden text-[11px]` — no rounded card, no own `X` |
+| Tool rows | Workspace strip + language/view strip; thin borders, compact muted controls |
+| Density | Separate Environment from Tools; one scrollable content body with 12px padding, 16px section gaps, maximum width 48rem |
+| Buttons | `flex h-6 items-center … rounded px-1.5 text-koma-dim hover:bg-koma-hover` |
+| Selects | `KomaSelect` + `h-6 … bg-koma-panel2 pl-2 text-[11px]` |
+| Paths | Hidden behind (?) help, except the editable environment path and reviewed install commands |
+| Copy | Short names + status only. Explanations belong in click/keyboard-accessible (?) disclosures, not permanent paragraphs. |
+| Errors | compact `role="alert"` strip under tools (or toast for one-shots) |
+| Open API | `showCodingPacks()` → `setBottomPanelTab('packs')` (listener stays mounted with the panel) |
+| Install progress | Stays on Language Packs after `packApply` (live output + Stop). **Open in Tasks** is optional. |
+| Components | Tools always offers **Language server**, with debugger, runtime, and Python notebook kernel where applicable. Aligned checkbox · name · short status · (?) rows. |
+
+```text
+BottomPanel
+├── tablist: Tasks | Problems | Language Servers | Language Packs
+└── packs tab
+    ├── row: workspace select · refresh · open .koma/coding.json
+    ├── row: language (bounded field, arrow inside) · Environment | Tools
+    └── scrollable body
+        ├── Environment: executable + Apply · Manage tools
+        └── Tools: checkbox · component · Installed / Not installed / Manual setup · (?)
+            └── Review changes → exact commands → Install / update → progress
+```
+
+Preserve the dock signature, not its former cramped density. Never put language
+selection, installation checkboxes, and a primary action on one crowded toolbar.
+Environment is the default view; notebook recovery opens Tools with ipykernel
+checked. Keep one primary action per step. Checkboxes choose what to install;
+they are not green indicators of installation status. Unmanaged LLVM debugging
+shows **Manual setup**, never a checked but disabled installation choice.
+
+Explanations and full installed paths live in (?) disclosures that work by click
+and keyboard. Do not turn tool rows into paragraphs or expose managed directory
+paths by default. Help stays in flow to avoid clipping in small docks. Exact
+commands remain visible during review so short copy does not hide consent.
+
+The language select uses a bounded outer wrapper and a full-width inner control:
+never apply a maximum width only to the inner select while its chevron wrapper
+stretches across the dock. The workspace and view controls stay outside the
+scroll body. Progress stays on Packs; **Open in Tasks** is secondary. All colors
+remain theme tokens; use the accent for active chrome and the primary action.
+
+## Notebook kernel (ipykernel)
+
+Python pack plans can include **Notebook kernel (ipykernel)** — a reviewed
+`{workspace python} -m pip install ipykernel` step. Progress stays on **Language
+Packs** (optional **Open in Tasks**). Koma never silent-pip-installs when a
+notebook opens. From a notebook missing-ipykernel strip, **Install ipykernel…**
+opens Language Packs with Python + the notebook checkbox already on.
+
+## Behavior
+
+The workspace dropdown binds every action to its host and root. Status
 only inspects installed files. Review installation shows the exact command vector;
 Install consumes a host-bound plan valid for ten minutes. Progress and cancellation
 use Tasks, independent of chat selection. Pack installations are serialized per
@@ -47,7 +115,9 @@ documents. The command palette also exposes Restart Workspace Language Servers.
 PHP offers Intelephense or Phpactor on Unix; save the choice with Use for workspace.
 Test Explorer uses the selected Python interpreter, a project virtualenv, or the
 managed debugpy/pytest environment in that order. Project virtualenvs must provide
-their own pytest dependency.
+their own pytest dependency. Notebooks default their kernel interpreter to the
+same workspace Python (see `CODING_NOTEBOOKS.md`); the notebook Select Kernel
+chip can override per document without changing the workspace default.
 Selecting an environment refuses to overwrite unsaved coding settings.
 
 No native installations or functional tests were performed by the implementation

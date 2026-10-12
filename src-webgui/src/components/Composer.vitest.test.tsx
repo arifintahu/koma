@@ -85,3 +85,29 @@ it('stages image-only selections from an empty draft, renders the snapshot inven
   const requests = (window.ipc!.postMessage as ReturnType<typeof vi.fn>).mock.calls.map(([wire]) => JSON.parse(wire))
   expect(requests.at(-1)).toMatchObject({ r: 'Submit', text: '[Image #1] [Image #2]' })
 })
+
+it('shows the existing chip with a braille spinner, then attaches a short text file by name', async () => {
+  render(<Composer />)
+  const picker = document.querySelector('input[type="file"]') as HTMLInputElement
+  expect(picker.accept).toContain('.md')
+  const notes = new File(['hi'], 'notes.md', { type: 'text/plain' })
+  fireEvent.change(picker, { target: { files: [notes] } })
+  const chip = await screen.findByRole('group', { name: 'notes.md' })
+  expect(chip.textContent).toMatch(/[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏]/)
+  await waitFor(() => {
+    const requests = (window.ipc!.postMessage as ReturnType<typeof vi.fn>).mock.calls.map(([wire]) => JSON.parse(wire))
+    expect(requests.some((request) => request.r === 'AttachPaste' && request.force === true && request.name === 'notes.md' && request.text === 'hi')).toBe(true)
+  })
+})
+
+it('rejects a zip drop without attaching it', async () => {
+  render(<Composer />)
+  const picker = document.querySelector('input[type="file"]') as HTMLInputElement
+  fireEvent.change(picker, { target: { files: [new File(['PK'], 'archive.zip', { type: 'application/zip' })] } })
+  await waitFor(() => {
+    expect(useKoma.getState().ui.toast?.text).toContain("isn't a text or image file")
+  })
+  const requests = (window.ipc!.postMessage as ReturnType<typeof vi.fn>).mock.calls.map(([wire]) => JSON.parse(wire))
+  expect(requests.some((request) => request.r === 'AttachFile' || request.r === 'AttachPaste')).toBe(false)
+  expect(screen.queryByRole('group')).toBeNull()
+})

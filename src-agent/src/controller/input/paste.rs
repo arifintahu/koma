@@ -2,7 +2,6 @@
 
 use crate::app::mode::Mode;
 use crate::app::state::AppState;
-use crate::controller::input::onboard_provider::arm_catalogue;
 
 /// Feed `text` into a SINGLE-LINE field through `sink`, one char at a time,
 /// dropping every `\r`/`\n` (and bare CR from CRLF) so a multi-line clipboard
@@ -187,14 +186,12 @@ pub fn handle_paste(state: &mut AppState, text: &str) {
             use crate::app::mode::onboard_provider::OnboardProviderStep;
             use crate::app::mode::settings::OAuthFlowState;
             match op.step {
-                // ModelSelect omnisearch: feed the query (single-line) + re-arm the
-                // network catalogue fetch, exactly as a typed char does.
+                // ModelSelect filters cached public OA membership locally.
                 OnboardProviderStep::ModelSelect => {
                     paste_single_line(text, |c| {
                         op.query.push(c);
                         op.result_sel = 0;
                     });
-                    arm_catalogue(op, &mut state.rest);
                 }
                 // Login: only the paste-token field accepts text.
                 OnboardProviderStep::Login => {

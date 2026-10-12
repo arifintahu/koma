@@ -540,3 +540,6 @@ Record OS, SDK, architecture, monitor dimensions/scales, permission state and ex
 errors separately from unit-test and compile results. Native X11 fixture tests remain
 opt-in. The fixture checks that application input is refused before switching to a
 screen for click/type/observe; this does not substitute for mixed-DPI validation.
+
+
+See also: [On-screen browser](SCREEN_BROWSER.md) (Globe / screen_browser_* — separate from this desktop feature).

@@ -577,6 +577,42 @@ pub(crate) fn exec_file_create(
 
     let result = match kind {
         "dir" => std::fs::create_dir(&abs).map_err(|e| format!("failed to create directory: {e}")),
+        "file"
+            if abs
+                .extension()
+                .and_then(|v| v.to_str())
+                .is_some_and(|v| v.eq_ignore_ascii_case("ipynb")) =>
+        {
+            use std::io::Write;
+            // Exclusive creation never turns an existing invalid/empty file into
+            // a new notebook. No kernel selection or execution on creation.
+            std::fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(&abs)
+                .and_then(|mut file| {
+                    file.write_all(
+                        br#"{
+  "cells": [
+    {
+      "cell_type": "code",
+      "execution_count": null,
+      "id": "cell-0",
+      "metadata": {},
+      "outputs": [],
+      "source": []
+    }
+  ],
+  "metadata": { "language_info": { "name": "python" } },
+  "nbformat": 4,
+  "nbformat_minor": 5
+}
+"#,
+                    )?;
+                    file.sync_all()
+                })
+                .map_err(|e| format!("failed to create notebook: {e}"))
+        }
         "file" => std::fs::write(&abs, b"").map_err(|e| format!("failed to create file: {e}")),
         other => Err(format!("unknown kind '{other}' (expected 'file' or 'dir')")),
     };

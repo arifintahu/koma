@@ -248,10 +248,8 @@ impl DaemonHub {
     //    SPAWNed on the tokio handle rather than run inline); if that comes back
     //    empty (error OR a genuinely empty catalogue), fall back to the curated
     //    `catalogue_overlay` for that endpoint.
-    //  - A `config.oauth_conns` entry (Codex/Claude/xAI): these have no live
-    //    `/models` fetch worth making (Codex/Claude expose none at all; xAI's ids
-    //    are curated too) — resolve via `catalogue_overlay::models_for_provider(conn.provider)`
-    //    (for KomaRun this merges the base and koma-premium catalogue keys), no network call needed.
+    //  - Any `config.oauth_conns` entry: cached public OA membership only,
+    //    via `catalogue_overlay::oauth_catalogue`, without native requests.
     //  - Neither: unknown provider uuid — reply with an EMPTY list so the picker's
     //    spinner clears instead of hanging with no answer.
     // Every branch ships a `ListModelsReply` over the hub's channel, which
@@ -313,60 +311,15 @@ impl DaemonHub {
             .iter()
             .find(|c| c.uuid == provider)
         {
-            if conn.provider == crate::model::app_config::OAuthProvider::KomaRun
-                && !conn.access_token.is_empty()
-            {
-                // KomaRun: live-fetch from GET …/koma-premium/models with the
-                // OAuth bearer (mirrors the static-key provider branch above).
-                // On success, reply with live ids; on error/empty, fall back to
-                // the curated catalogue overlay so the picker isn't blank.
-                let endpoint =
-                    crate::service::oauth::registry::KOMA_PREMIUM_CHAT_ENDPOINT.to_string();
-                let access_token = conn.access_token.clone();
-                let oauth_uuid = conn.uuid.clone();
-                let c = crate::app::runtime::session_mgmt::build_client();
-                handle.spawn(async move {
-                    let conn = crate::service::openrouter::Conn {
-                        endpoint: &endpoint,
-                        api_key: &access_token,
-                        api_type: crate::model::app_config::ApiType::OpenAiCompatible,
-                        account_id: "",
-                        oauth_uuid: &oauth_uuid,
-                        install_id: "",
-                    };
-                    let mut models = c
-                        .list_models(conn)
-                        .await
-                        .map(|v| v.into_iter().map(|m| m.id).collect::<Vec<_>>())
-                        .unwrap_or_default();
-                    if models.is_empty() {
-                        models = crate::service::catalogue_overlay::models_for_provider(
-                            crate::model::app_config::OAuthProvider::KomaRun,
-                        )
-                        .into_iter()
-                        .map(|m| m.id)
-                        .collect();
-                    }
-                    let _ = tx.send(super::core::ListModelsReply {
-                        client_id,
-                        provider,
-                        models,
-                    });
-                });
-            } else {
-                // Other OAuth conns (Codex/Claude/xAI/Extension/CommandCode):
-                // resolve straight to the curated catalogue overlay, no network
-                // call needed.
-                let models = crate::service::catalogue_overlay::models_for_provider(conn.provider)
-                    .into_iter()
-                    .map(|m| m.id)
-                    .collect();
-                let _ = tx.send(super::core::ListModelsReply {
-                    client_id,
-                    provider,
-                    models,
-                });
-            }
+            let models = crate::service::catalogue_overlay::oauth_catalogue(conn.provider)
+                .into_iter()
+                .map(|m| m.id)
+                .collect();
+            let _ = tx.send(super::core::ListModelsReply {
+                client_id,
+                provider,
+                models,
+            });
         } else {
             // Unknown provider uuid — reply empty so the GUI picker's spinner
             // clears rather than hanging with no answer.
@@ -523,15 +476,27 @@ impl DaemonHub {
         Some(fg.session.as_ref()?.path.join(&att.rel_path))
     }
 
-    pub(super) fn attach_paste(&mut self, idx: usize, state: &mut AppState, text: String) {
-        if !crate::model::attachment::should_collapse_paste(&text) {
-            self.send_to(
-                idx,
-                DaemonEvent::Error("paste is short enough to stay inline".into()),
-            );
+    pub(super) fn attach_paste(
+        &mut self,
+        idx: usize,
+        state: &mut AppState,
+        text: String,
+        name: Option<String>,
+        force: bool,
+    ) {
+        if !crate::model::attachment::accept_paste_body(&text, force) {
+            let msg = if text.len() > crate::model::attachment::PASTE_SOFT_MAX_BYTES {
+                "paste too large or no session"
+            } else {
+                "paste is short enough to stay inline"
+            };
+            self.send_to(idx, DaemonEvent::Error(msg.into()));
             return;
         }
-        if !state.rest.try_attach_paste_text(&text) {
+        if !state
+            .rest
+            .try_attach_paste_text_named(&text, name.as_deref())
+        {
             self.send_to(
                 idx,
                 DaemonEvent::Error("paste too large or no session".into()),
@@ -668,32 +633,58 @@ impl DaemonHub {
         state: &mut AppState,
         client: &mut Option<Arc<OpenRouterClient>>,
     ) {
-        use crate::app::runtime::commands::effort::EffortMenu;
-        let event = match crate::app::runtime::commands::effort::effort_menu(state, client) {
-            EffortMenu::Loading(note) => DaemonEvent::EffortOptions {
-                options: Vec::new(),
-                selected: 0,
-                note,
-                state: "loading".to_string(),
-            },
-            EffortMenu::Unsupported(note) => DaemonEvent::EffortOptions {
-                options: Vec::new(),
-                selected: 0,
-                note,
-                state: "unsupported".to_string(),
-            },
-            EffortMenu::Ready {
-                options,
-                selected,
-                note,
-            } => DaemonEvent::EffortOptions {
-                options,
-                selected,
-                note,
-                state: "ready".to_string(),
-            },
-        };
+        let event = effort_event(crate::app::runtime::commands::effort::effort_menu(
+            state, client,
+        ));
         self.send_to(idx, event);
+    }
+
+    /// Completion fan-out: only attached clients whose CURRENT foreground
+    /// matches a refreshed session. Derive inside each client's own bracket.
+    pub(super) fn drain_effort_pushes(&mut self, state: &mut AppState) {
+        let refreshed = std::mem::take(&mut state.rest.effort_refresh_sessions);
+        if refreshed.is_empty() {
+            return;
+        }
+        let saved_fg = state.rest.foreground;
+        for idx in 0..self.clients.len() {
+            if !self.clients[idx].attached {
+                continue;
+            }
+            let fg = state
+                .rest
+                .resolve_foreground(self.clients[idx].foreground.as_deref());
+            let session = &state.rest.sessions[fg];
+            let identity = session
+                .session
+                .as_ref()
+                .and_then(|s| {
+                    crate::app::resolve::resolve_role(
+                        &state.rest.config,
+                        &s.settings,
+                        crate::model::app_config::ModelRole::Main,
+                    )
+                })
+                .map(|route| {
+                    (
+                        crate::app::runtime::commands::effort::route_catalogue_key(
+                            &state.rest.config,
+                            &route,
+                        ),
+                        route.model_id,
+                    )
+                });
+            let Some(expected) = refreshed.get(&session.id) else {
+                continue;
+            };
+            if session.closed || identity.as_ref() != Some(expected) {
+                continue;
+            }
+            state.rest.foreground = fg;
+            let menu = crate::app::runtime::commands::effort::derive_effort_menu(state);
+            self.send_to(idx, effort_event(menu));
+        }
+        state.rest.foreground = saved_fg;
     }
 
     // GUI Explore stream tab: set THIS client's read-only stream view (which
@@ -843,3 +834,35 @@ impl DaemonHub {
         );
     }
 }
+
+fn effort_event(menu: crate::app::runtime::commands::effort::EffortMenu) -> DaemonEvent {
+    use crate::app::runtime::commands::effort::EffortMenu;
+    match menu {
+        EffortMenu::Loading(note) => DaemonEvent::EffortOptions {
+            options: Vec::new(),
+            selected: 0,
+            note,
+            state: "loading".to_string(),
+        },
+        EffortMenu::Unsupported(note) => DaemonEvent::EffortOptions {
+            options: Vec::new(),
+            selected: 0,
+            note,
+            state: "unsupported".to_string(),
+        },
+        EffortMenu::Ready {
+            options,
+            selected,
+            note,
+        } => DaemonEvent::EffortOptions {
+            options,
+            selected,
+            note,
+            state: "ready".to_string(),
+        },
+    }
+}
+
+#[cfg(test)]
+#[path = "requests_effort_tests.rs"]
+mod effort_tests;

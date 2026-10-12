@@ -32,6 +32,7 @@ export type ChatMessage = {
   // Image attachments on a user message (mirrors the TUI warn attachment card).
   attachments?: AttachmentEntry[]
   computer?: import('../../types/computer').ComputerObservationView
+  screenBrowser?: import('../../types/screenBrowser').ScreenBrowserObservation
 }
 
 // The full palette roles the host pushes (render.rs `PushPalette`,

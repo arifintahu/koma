@@ -165,13 +165,21 @@ impl AppStateRest {
     /// Returns `false` (composer untouched) when there is no active session or
     /// ingest fails (e.g. soft-cap). Callers should only invoke this after
     /// [`crate::model::attachment::should_collapse_paste`] is true; small pastes
-    /// stay inline via the normal `push_str` path.
+    /// stay inline via the normal `push_str` path. Dropped files use
+    /// [`Self::try_attach_paste_text_named`] so a one-line file still stages.
     pub fn try_attach_paste_text(&mut self, text: &str) -> bool {
+        self.try_attach_paste_text_named(text, None)
+    }
+
+    /// Like [`Self::try_attach_paste_text`], storing `name` as the chip label
+    /// when it sanitizes to a basename. Disk stays `NN-paste.txt`.
+    pub fn try_attach_paste_text_named(&mut self, text: &str, name: Option<&str>) -> bool {
         let Some(pastes_dir) = self.fg().session.as_ref().map(|s| s.pastes_dir()) else {
             return false;
         };
         match crate::model::attachment::ingest_paste_text(&pastes_dir, text) {
-            Ok((att, marker)) => {
+            Ok((mut att, marker)) => {
+                att.label = name.and_then(crate::model::attachment::sanitize_paste_label);
                 self.insert_marker(&marker);
                 self.fg_mut().pending_attachments.push(att);
                 true
@@ -190,5 +198,33 @@ impl AppStateRest {
     /// stashed live input and leave recall mode.
     pub fn history_next(&mut self, users: &[crate::app::state::HistoryRecallEntry]) {
         self.fg_mut().history_next(users);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::app::mode::Mode;
+    use crate::app::state::AppState;
+
+    #[test]
+    fn named_drop_stages_a_one_line_file() {
+        let mut state = AppState::new(Mode::Chat);
+        let dir = std::env::temp_dir().join(format!("koma-paste-drop-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir(&dir).unwrap();
+        state.rest.fg_mut().session = Some(crate::model::session::Session::new(
+            "s".into(),
+            dir.clone(),
+            "test".into(),
+            Default::default(),
+            crate::model::conversation::Conversation::new(""),
+        ));
+        assert!(state.rest.try_attach_paste_text_named("hi", Some("notes.md")));
+        let fg = state.rest.fg();
+        let att = fg.pending_attachments.last().unwrap();
+        assert!(att.is_pasted_text());
+        assert_eq!(att.label.as_deref(), Some("notes.md"));
+        assert!(att.rel_path.ends_with("-paste.txt"));
+        assert!(fg.input.contains("[Pasted Text #"));
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

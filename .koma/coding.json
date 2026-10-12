@@ -1,0 +1,8 @@
+{
+  "toolchains": {
+    "python": {
+      "executable": "/usr/bin/python3"
+    }
+  },
+  "version": 1
+}

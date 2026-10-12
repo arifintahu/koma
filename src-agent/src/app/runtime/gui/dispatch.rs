@@ -85,6 +85,38 @@ pub(super) fn handle_gui_req(req: GuiReq, ctx: &GuiReqCtx) {
         }
         GuiReq::Computer { action, window } => {
             let _ = ctx.ctl.send(HostCtl::Computer { action, window });
+        }
+        GuiReq::ScreenBrowser {
+            action,
+            window,
+            prefs,
+            url,
+            tab_id,
+        } => {
+            let open = action == "enable" || action == "open_window";
+            let stop = action == "stop";
+            let _ = ctx.ctl.send(HostCtl::ScreenBrowser {
+                action: action.clone(),
+                window,
+                prefs,
+                url,
+                tab_id,
+                tabs: None,
+                active_tab: None,
+                window_open: false,
+                reply: None,
+            });
+            if open {
+                let _ = ctx.loop_proxy.send_event(super::proto::UserEvent::Win(
+                    super::proto::WinCmd::ScreenBrowser,
+                ));
+            }
+            if stop {
+                // Close the native window immediately; daemon status follows.
+                let _ = ctx.loop_proxy.send_event(super::proto::UserEvent::Win(
+                    super::proto::WinCmd::ScreenBrowserClose,
+                ));
+            }
         } // Page (re)booted: ask the client-thread to re-push full state.
         GuiReq::Ready => {
             let _ = ctx.ctl.send(HostCtl::Ready);
@@ -181,10 +213,10 @@ pub(super) fn handle_gui_req(req: GuiReq, ctx: &GuiReqCtx) {
                 }
             }
         }
-        GuiReq::AttachPaste { text } => {
+        GuiReq::AttachPaste { text, name, force } => {
             if let Ok(g) = ctx.req.lock() {
                 if let Some(tx) = g.as_ref() {
-                    let _ = tx.send(ClientRequest::AttachPaste { text });
+                    let _ = tx.send(ClientRequest::AttachPaste { text, name, force });
                 }
             }
         }

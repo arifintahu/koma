@@ -1,6 +1,7 @@
 import { useKoma } from '../store/koma'
 import { emptyFileState, fileKey, type FileReadPush } from '../store/coding'
 import { codingRequest, workspaceKey, type WorkspaceRef } from './coding-service'
+import { isNotebookPath } from './notebook-workspace'
 
 /** Polling fallback also works over SSH and on filesystems without watch events.
  * Responses are scoped to a host/session and the exact pre-request buffer. */
@@ -58,7 +59,10 @@ export function startCodingDiskMonitor() {
               [key]: emptyFileState({ content: disk.content, savedContent: disk.content, fingerprint: disk.fingerprint }),
             } } }))
             // Keep the already-open language document in sync with an external edit.
-            useKoma.getState().req({ r: 'LspDidChange', root, path: row.path, text: disk.content })
+            // Notebook JSON must never be pushed as ordinary Python/text-document source.
+            if (!isNotebookPath(row.path)) {
+              useKoma.getState().req({ r: 'LspDidChange', root, path: row.path, text: disk.content })
+            }
           }
         }
       }

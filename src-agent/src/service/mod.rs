@@ -118,6 +118,12 @@ pub enum StreamEvent {
 #[allow(clippy::enum_variant_names)]
 #[derive(Debug, Clone)]
 pub enum WarmEvent {
+    /// One terminal response on the dedicated lifetime OA detail lane.
+    WarmOaDetail {
+        catalogue_key: String,
+        model_id: String,
+        result: Result<catalogue_overlay::OverlayModel, String>,
+    },
     /// The catalogue fetch for `endpoint` succeeded; carries the fetched models.
     /// The drain sets `models_cache = Some(models)` and
     /// `models_cache_endpoint = Some(endpoint)`, clears any `models_cache_failed`

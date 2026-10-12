@@ -111,15 +111,6 @@ fn enforce_cap_holds_across_interleaved_push_cycles() {
 }
 
 #[test]
-fn oauth_success_primes_only_live_catalogue_providers() {
-    use crate::model::app_config::OAuthProvider;
-
-    assert!(should_prime_catalogue(OAuthProvider::KomaRun, true));
-    assert!(!should_prime_catalogue(OAuthProvider::KomaRun, false));
-    assert!(!should_prime_catalogue(OAuthProvider::Codex, true));
-}
-
-#[test]
 fn catalogue_error_diagnostic_redacts_bearer_shaped_values() {
     let token = "eyJhbGciOiJIUzI1NiJ9.payload.signature";
     let error = anyhow::anyhow!("401 Unauthorized: Bearer {token}");

@@ -26,7 +26,7 @@ export type CodingOperation =
   | { op: 'debugRequest'; sessionId: string; command: string; arguments: Record<string, unknown>; generation?: number }
   | { op: 'debugStop'; sessionId: string }
   | { op: 'packs' }
-  | { op: 'packPlan'; packId: string; runtime: boolean; server?: string }
+  | { op: 'packPlan'; packId: string; runtime: boolean; notebook?: boolean; lsp?: boolean; adapter?: boolean; server?: string }
   | { op: 'packApply'; planId: string }
   | { op: 'environmentSelect'; language: string; executable: string; fingerprint: string; server?: string }
   | { op: 'lspRestartWorkspace' | 'lspReleaseClient' }
@@ -55,6 +55,12 @@ export type CodingOperation =
   | { op: 'checkpoint'; path: string; content: string; reason: string }
   | { op: 'history'; path: string }
   | { op: 'historyRead'; checkpoint: number }
+  | { op: 'notebookConsent'; path: string; interpreter: string; documentEpoch: number }
+  | { op: 'notebookKernelStart'; path: string; documentEpoch: number; interpreter?: string; kernelspecArgv?: string[] }
+  | { op: 'notebookKernelStop' | 'notebookKernelInterrupt' | 'notebookKernelRestart' | 'notebookKernelRelease'; kernelId: string }
+  | { op: 'notebookKernelStatus'; kernelId?: string }
+  | { op: 'notebookIpykernelProbe'; interpreter?: string }
+  | { op: 'notebookExecute'; kernelId: string; path: string; cellId?: string; code: string; generation: number; documentEpoch: number }
 
 export type CodingConfig = {
   version: 1
@@ -143,7 +149,14 @@ export function codingRequest<T>(workspace: WorkspaceRef, operation: CodingOpera
       reject(error)
     }
     const abort = () => finishError(new Error('Canceled'))
-    const timeout = operation.op === 'file' && operation.body.saveAs === true ? 600_000 : 30_000
+    const timeout =
+      operation.op === 'file' && operation.body.saveAs === true
+        ? 600_000
+        : operation.op === 'notebookExecute'
+          ? 600_000
+          : operation.op === 'notebookKernelStart' || operation.op === 'notebookKernelRestart'
+            ? 60_000
+            : 30_000
     const timer = setTimeout(() => finishError(new Error('Coding operation timed out; check its outcome before retrying')), timeout)
     pending.set(id, {
       workspace: { ...workspace }, resolve: (value) => resolve(value as T), reject,

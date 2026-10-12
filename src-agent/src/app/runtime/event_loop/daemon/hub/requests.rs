@@ -189,6 +189,7 @@ impl DaemonHub {
     ) {
         match req {
             ClientRequest::Computer(control) => self.computer(idx, state, control),
+            ClientRequest::ScreenBrowser(control) => self.screen_browser(idx, state, control),
             // --- read-only / control (honoured for everyone) ---
             ClientRequest::Attach { .. } => {
                 self.attach(idx, state);
@@ -435,8 +436,8 @@ impl DaemonHub {
                 self.submit_input(idx, state, client, handle, text);
             }
 
-            ClientRequest::AttachPaste { text } => {
-                self.attach_paste(idx, state, text);
+            ClientRequest::AttachPaste { text, name, force } => {
+                self.attach_paste(idx, state, text, name, force);
             }
             ClientRequest::UpdatePaste { marker_n, text } => {
                 self.update_paste(idx, state, marker_n, text);
@@ -935,7 +936,7 @@ impl DaemonHub {
             // through to a mutation, so it must NOT reach this Ack path in practice.
             // (`ExtPanelMsg` is NOT here: it is handled above by the `ext` group arm — the
             // whole extension family, incl. panel.msg, is routed to `self.ext(..)`.)
-            ClientRequest::Computer(_) | ClientRequest::Attach { .. }
+            ClientRequest::Computer(_) | ClientRequest::ScreenBrowser(_) | ClientRequest::Attach { .. }
             | ClientRequest::Detach
             | ClientRequest::Resync
             | ClientRequest::ListSessions

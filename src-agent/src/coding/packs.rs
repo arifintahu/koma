@@ -275,11 +275,15 @@ fn runtime_commands(p: &Pack) -> Result<Vec<Value>> {
         "No supported runtime package manager on this host. Select an existing executable."
     )
 }
+#[allow(clippy::too_many_arguments)]
 pub(super) fn plan(
     workspace: &WorkspaceRef,
     root: &Path,
     pack_id: &str,
     runtime: bool,
+    notebook: bool,
+    include_lsp: bool,
+    include_adapter: bool,
     server: Option<&str>,
 ) -> Result<Value> {
     let p = PACKS
@@ -291,29 +295,57 @@ pub(super) fn plan(
         server == p.lsp || (p.id == "php" && server == "phpactor" && !cfg!(windows)),
         "Unsupported language server for this pack and host"
     );
+    anyhow::ensure!(
+        runtime || notebook || include_lsp || include_adapter,
+        "Select at least one component to install"
+    );
     let exe = std::env::current_exe()?.to_string_lossy().into_owned();
     let mut commands = Vec::new();
     if runtime {
         commands.extend(runtime_commands(p)?);
     }
-    let provision_lsp = matches!(server, "lua-language-server" | "zls" | "nil");
-    commands.push(command(
-        &exe,
-        if provision_lsp {
-            vec!["coding-provision".into(), server.into()]
-        } else {
-            vec![
-                "lsp".into(),
-                "install".into(),
-                server.into(),
-                "--force".into(),
-            ]
-        },
-    ));
-    if !p.adapter.is_empty() && p.adapter != "lldb-dap" {
+    if include_lsp {
+        let provision_lsp = matches!(server, "lua-language-server" | "zls" | "nil");
+        commands.push(command(
+            &exe,
+            if provision_lsp {
+                vec!["coding-provision".into(), server.into()]
+            } else {
+                vec![
+                    "lsp".into(),
+                    "install".into(),
+                    server.into(),
+                    "--force".into(),
+                ]
+            },
+        ));
+    }
+    if include_adapter && !p.adapter.is_empty() && p.adapter != "lldb-dap" {
         commands.push(command(
             &exe,
             vec!["coding-provision".into(), p.adapter.into()],
+        ));
+    }
+    // Notebook kernel dependency: install ipykernel into the *selected* workspace
+    // interpreter (not a managed tools venv). Reviewed only — PackApply runs it.
+    if notebook {
+        anyhow::ensure!(
+            p.id == "python",
+            "Notebook kernel (ipykernel) install is only available for the Python pack"
+        );
+        let python = super::environment::executable(
+            root,
+            if cfg!(windows) { "python" } else { "python3" },
+        )?;
+        commands.push(command(
+            &python.to_string_lossy(),
+            vec![
+                "-m".into(),
+                "pip".into(),
+                "install".into(),
+                "--disable-pip-version-check".into(),
+                "ipykernel".into(),
+            ],
         ));
     }
     for step in &mut commands {
@@ -341,8 +373,20 @@ pub(super) fn plan(
             step["env"] = json!(env);
         }
     }
+    let mut note_parts = Vec::new();
+    if include_lsp {
+        note_parts.push(format!("Language server: {server}."));
+    }
+    if notebook && p.id == "python" {
+        note_parts.push("ipykernel installs into the workspace Python (pip); never silent on notebook open.".into());
+    }
+    if p.adapter == "lldb-dap" && include_adapter {
+        note_parts.push("LLVM's lldb-dap must be on PATH.".into());
+    }
+    note_parts.push("Project test dependencies remain project-owned.".into());
+    let notes = note_parts.join(" ");
     let id = uuid::Uuid::new_v4().to_string();
-    let result = json!({"id":id,"label":p.label,"commands":commands,"notes": if p.adapter=="lldb-dap" {"LLVM's lldb-dap must be on PATH. Some distributions package it separately. Project test dependencies remain project-owned."} else {"Project test dependencies remain project-owned. PHP debugging requires Xdebug; Bash debugging requires bashdb."}});
+    let result = json!({"id":id,"label":p.label,"commands":commands,"notes": notes});
     let mut registry = plans().lock().map_err(|_| {
         anyhow::anyhow!("Installation plan registry is poisoned; restart the coding service")
     })?;

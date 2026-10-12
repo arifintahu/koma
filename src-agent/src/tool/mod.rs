@@ -20,6 +20,7 @@ use std::sync::{Arc, RwLock};
 
 pub mod cd;
 mod computer;
+mod screen_browser;
 pub mod dircache;
 pub mod fs;
 pub mod git_cred;
@@ -83,6 +84,12 @@ pub(crate) fn tool_allowed_in_plan(name: &str) -> bool {
             | "computer_observe"
             | "computer_select_window"
             | "computer_act"
+            | "screen_browser_tabs"
+            | "screen_browser_observe"
+            | "screen_browser_act"
+            | "screen_browser_read"
+            | "screen_browser_eval"
+            | "screen_browser_wait_human"
             | "read"
             | "grep"
             | "glob"
@@ -602,6 +609,12 @@ pub fn all_tools() -> Vec<Box<dyn Tool>> {
         Box::new(computer::Computer("computer_select_window")),
         Box::new(computer::Computer("computer_observe")),
         Box::new(computer::Computer("computer_act")),
+        Box::new(screen_browser::ScreenBrowser("screen_browser_tabs")),
+        Box::new(screen_browser::ScreenBrowser("screen_browser_observe")),
+        Box::new(screen_browser::ScreenBrowser("screen_browser_act")),
+        Box::new(screen_browser::ScreenBrowser("screen_browser_read")),
+        Box::new(screen_browser::ScreenBrowser("screen_browser_eval")),
+        Box::new(screen_browser::ScreenBrowser("screen_browser_wait_human")),
         Box::new(fs::Read),
         Box::new(search::Grep),
         Box::new(search::Glob),
@@ -663,6 +676,12 @@ const AGENT_PICKER_EXCLUDED: &[&str] = &[
     "computer_select_window",
     "computer_observe",
     "computer_act",
+    "screen_browser_tabs",
+    "screen_browser_observe",
+    "screen_browser_act",
+    "screen_browser_read",
+    "screen_browser_eval",
+    "screen_browser_wait_human",
     "task",
     "task_send",
     "pong",
@@ -702,6 +721,12 @@ pub const DEFERRED_TOOLS: &[&str] = &[
     "computer_select_window",
     "computer_observe",
     "computer_act",
+    "screen_browser_tabs",
+    "screen_browser_observe",
+    "screen_browser_act",
+    "screen_browser_read",
+    "screen_browser_eval",
+    "screen_browser_wait_human",
     "read",
     "write",
     "edit",

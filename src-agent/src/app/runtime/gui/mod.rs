@@ -24,6 +24,13 @@ use std::borrow::Cow;
 use std::path::PathBuf;
 use wry::http::{Request, Response, StatusCode};
 
+/// OS file drops navigate the document to `file://…` and replace the GUI with a
+/// white or transparent page. App pages stay on `koma://` (Windows WebView2
+/// shows those as `http://koma.`). Every other scheme is left alone.
+pub(crate) fn allow_webview_navigation(url: &str) -> bool {
+    !url.trim().to_ascii_lowercase().starts_with("file:")
+}
+
 /// Dock icon from the bundle written by [`crate::app::launcher::install_for_launch`].
 /// Missing on the first open, until that install finishes.
 #[cfg(target_os = "macos")]
@@ -45,6 +52,7 @@ fn apply_dock_icon() {
 // compiling unchanged. `dispatch_git`/`dispatch_forward` are `dispatch`'s own
 // split-out git/key routing + generic forwarding helpers (file size).
 mod computer_viewer;
+mod screen_browser_window;
 mod dispatch;
 mod dispatch_forward;
 mod dispatch_git;
@@ -107,6 +115,22 @@ fn handle_koma_request(request: Request<Vec<u8>>) -> Response<Cow<'static, [u8]>
     } else {
         url_path
     };
+
+    // Product mark for chrome (browser tabs, welcome, etc.).
+    if url_path == "product-icon.png" || url_path == "icon-128.png" {
+        return Response::builder()
+            .status(StatusCode::OK)
+            .header("Content-Type", "image/png")
+            .header("Cache-Control", "private, max-age=86400")
+            .body(Cow::Borrowed(
+                include_bytes!(concat!(
+                    env!("CARGO_MANIFEST_DIR"),
+                    "/../assets/icon-128.png"
+                ))
+                .as_slice(),
+            ))
+            .unwrap_or_else(|_| internal_error_response());
+    }
 
     // `koma://localhost/image/<encoded_path>`: serve a local image file for
     // inline rendering in the React transcript. The path is URL-encoded to
@@ -502,6 +526,7 @@ pub fn run_gui(opts: crate::cli::Opts) -> Result<()> {
         // hint the React chrome reads at boot is injected here.
         .with_initialization_script(format!("window.__komaOS='{}';", std::env::consts::OS))
         .with_url("koma://localhost/index.html")
+        .with_navigation_handler(|url| allow_webview_navigation(&url))
         .with_transparent(true)
         .with_custom_protocol("koma".into(), |_webview_id, request| {
             handle_koma_request(request)
@@ -533,6 +558,8 @@ pub fn run_gui(opts: crate::cli::Opts) -> Result<()> {
                 ClientMsg::Win { a } => {
                     let cmd = match a.as_str() {
                         "computer-viewer" => Some(WinCmd::ComputerViewer),
+                        "screen-browser" => Some(WinCmd::ScreenBrowser),
+                        "screen-browser-close" => Some(WinCmd::ScreenBrowserClose),
                         "drag" => Some(WinCmd::Drag),
                         "min" => Some(WinCmd::Minimize),
                         "max" => Some(WinCmd::ToggleMax),
@@ -629,6 +656,14 @@ pub fn run_gui(opts: crate::cli::Opts) -> Result<()> {
     let mut computer_status: Option<crate::app::runtime::computer::Status> = None;
     let computer_ctl = ctl_tx.clone();
     let mut computer_palette = serde_json::Value::Null;
+    let mut screen_browser: Option<screen_browser_window::BrowserWindow> = None;
+    let mut screen_browser_status: Option<crate::app::runtime::screen_browser::Status> = None;
+    let screen_browser_ctl = ctl_tx.clone();
+    let mut screen_browser_palette = serde_json::Value::Null;
+    // Primary session workdir — keys the per-PWD browser profile (cookies/storage).
+    // Updated from SettingsValues; falls back to process cwd until the first push.
+    let mut screen_browser_workdir = std::env::current_dir()
+        .unwrap_or_else(|_| std::path::PathBuf::from("."));
     // Taken on the first loop turn. The install must not run before `run`,
     // and it must not stay on this thread: a folder dialog here is the only
     // thing the user sees.
@@ -692,8 +727,12 @@ pub fn run_gui(opts: crate::cli::Opts) -> Result<()> {
                     usage_ticker.observe_push(&value);
                     if let Some(palette) = value.get("palette").filter(|v| v.is_object()) {
                         computer_palette = palette.clone();
+                        screen_browser_palette = palette.clone();
                         if let Some(viewer) = &computer_viewer {
                             viewer.palette(&computer_palette);
+                        }
+                        if let Some(browser) = &screen_browser {
+                            browser.palette(&screen_browser_palette);
                         }
                     }
                     let kind = value.get("k").and_then(|v| v.as_str());
@@ -734,6 +773,97 @@ pub fn run_gui(opts: crate::cli::Opts) -> Result<()> {
                             computer_status = Some(status);
                         }
                     }
+                    if kind == Some("ScreenBrowser") {
+                        if let Some(status) = value.get("status").and_then(|v| {
+                            serde_json::from_value::<crate::app::runtime::screen_browser::Status>(v.clone()).ok()
+                        }) {
+                            if !status.enabled {
+                                screen_browser = None;
+                            } else if let Some(browser) = &mut screen_browser {
+                                if status.message.contains("Clear browsing data") {
+                                    let _ = browser.clear_profile();
+                                }
+                                browser.apply_status(status.clone());
+                            } else if status.enabled && screen_browser.is_none() {
+                                // Status re-enabled (or first enable) without a separate
+                                // ScreenBrowserOpen — open the window now.
+                                let _ = proxy.send_event(UserEvent::Win(WinCmd::ScreenBrowser));
+                            }
+                            screen_browser_status = Some(status);
+                        }
+                    }
+                    if kind == Some("ScreenBrowserOpen") {
+                        let _ = proxy.send_event(UserEvent::Win(WinCmd::ScreenBrowser));
+                    }
+                    if kind == Some("ScreenBrowserChrome") {
+                        let action = value
+                            .get("action")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("")
+                            .to_string();
+                        let url = value
+                            .get("url")
+                            .and_then(|v| v.as_str())
+                            .map(str::to_owned);
+                        let tab_id = value
+                            .get("tab_id")
+                            .and_then(|v| v.as_str())
+                            .map(str::to_owned);
+                        let _ = proxy.send_event(UserEvent::ScreenBrowserChrome {
+                            action,
+                            url,
+                            tab_id,
+                        });
+                        return;
+                    }
+                    if kind == Some("ScreenBrowserOp") {
+                        if let Some(request) = value.get("request").and_then(|v| {
+                            serde_json::from_value::<
+                                crate::app::runtime::screen_browser::Request,
+                            >(v.clone())
+                            .ok()
+                        }) {
+                            let _ = proxy.send_event(UserEvent::ScreenBrowserOp(request));
+                        }
+                        return;
+                    }
+                    if kind == Some("Palette") {
+                        if let Some(p) = value.get("palette") {
+                            computer_palette = p.clone();
+                            screen_browser_palette = p.clone();
+                            if let Some(viewer) = &computer_viewer {
+                                viewer.palette(&computer_palette);
+                            }
+                            if let Some(browser) = &screen_browser {
+                                browser.palette(&screen_browser_palette);
+                            }
+                        }
+                    }
+                    // Track primary workdir so the browser profile stays on the project
+                    // pwd hash (cookies shared across sessions with the same workdir).
+                    if kind == Some("SettingsValues") {
+                        if let Some(first) = value
+                            .get("workdir")
+                            .and_then(|v| v.as_array())
+                            .into_iter()
+                            .flatten()
+                            .filter_map(|v| v.as_str())
+                            .map(str::trim)
+                            .find(|s| !s.is_empty())
+                        {
+                            let next = std::path::PathBuf::from(first);
+                            let next_hash = crate::model::store::pwd_hash(&next);
+                            if screen_browser
+                                .as_ref()
+                                .is_some_and(|b| b.pwd_hash() != next_hash)
+                            {
+                                // Workdir moved to another project — drop the window so the
+                                // next open loads that project's profile (tabs stay ephemeral).
+                                screen_browser = None;
+                            }
+                            screen_browser_workdir = next;
+                        }
+                    }
                     let switched = kind == Some("Snapshot")
                         && computer_status.as_ref().is_some_and(|s| {
                             value.get("session").and_then(|v| v.as_str()) != Some(s.session.as_str())
@@ -742,6 +872,8 @@ pub fn run_gui(opts: crate::cli::Opts) -> Result<()> {
                         let _ = webview.evaluate_script("delete document.documentElement.dataset.computerPreparing;");
                         computer_viewer = None;
                         computer_status = None;
+                        screen_browser = None;
+                        screen_browser_status = None;
                     }
                 }
                 pending_pushes.push_back(json);
@@ -856,6 +988,112 @@ pub fn run_gui(opts: crate::cli::Opts) -> Result<()> {
                         }
                     }
                 }
+                WinCmd::ScreenBrowser => {
+                    let want_hash = crate::model::store::pwd_hash(&screen_browser_workdir);
+                    // Wrong project profile still open (workdir changed) → rebuild.
+                    if screen_browser
+                        .as_ref()
+                        .is_some_and(|b| b.pwd_hash() != want_hash)
+                    {
+                        screen_browser = None;
+                    }
+                    if screen_browser.is_none() {
+                        let status = screen_browser_status.clone().unwrap_or_default();
+                        // Create when daemon says enabled. If status is stale-disabled
+                        // after a partial stop, enable's status push will re-open via
+                        // ScreenBrowserOpen — still try when enabled.
+                        if status.enabled {
+                            match screen_browser_window::BrowserWindow::new(
+                                target,
+                                &status,
+                                &screen_browser_palette,
+                                screen_browser_ctl.clone(),
+                                &screen_browser_workdir,
+                            ) {
+                                Ok(browser) => screen_browser = Some(browser),
+                                Err(e) => {
+                                    pending_pushes.push_back(serde_json::json!({
+                                        "k": "ScreenBrowserError",
+                                        "message": format!("On-screen browser unavailable: {e}"),
+                                    }).to_string());
+                                    next_push_at = Some(Instant::now());
+                                }
+                            }
+                        }
+                    } else if let Some(browser) = &screen_browser {
+                        // Show only if hidden. On macOS tao's set_visible(true) is
+                        // makeKeyAndOrderFront — calling it on an already-visible
+                        // window steals focus every time (e.g. after page load status).
+                        if !browser.window.is_visible() {
+                            browser.window.set_visible(true);
+                            // Pin-on-top preference: raise when actually revealing.
+                            if browser.always_on_top() {
+                                browser.window.set_focus();
+                            }
+                        }
+                    }
+                }
+                WinCmd::ScreenBrowserClose => {
+                    screen_browser = None;
+                    // Always stop daemon-side so ownership clears and enable works again.
+                    let _ = screen_browser_ctl.send(crate::app::runtime::client::HostCtl::ScreenBrowser {
+                        action: "stop".into(),
+                        window: None,
+                        prefs: None,
+                        url: None,
+                        tab_id: None,
+                        tabs: None,
+                        active_tab: None,
+                        window_open: false,
+                        reply: None,
+                    });
+                    // Optimistic UI: grey the globe immediately (don't wait for daemon round-trip).
+                    if let Some(status) = screen_browser_status.as_mut() {
+                        status.enabled = false;
+                        status.window_open = false;
+                        status.busy = false;
+                        status.paused = false;
+                        status.waiting_human = false;
+                        status.tabs.clear();
+                        status.active_tab = None;
+                        status.observation = None;
+                        status.message = "Stopped".into();
+                        pending_pushes.push_back(
+                            serde_json::json!({"k":"ScreenBrowser","status":status}).to_string(),
+                        );
+                        next_push_at = Some(Instant::now());
+                    } else {
+                        pending_pushes.push_back(
+                            serde_json::json!({
+                                "k": "ScreenBrowser",
+                                "status": {
+                                    "session": "",
+                                    "generation": "",
+                                    "enabled": false,
+                                    "paused": false,
+                                    "busy": false,
+                                    "waiting_human": false,
+                                    "window_open": false,
+                                    "always_on_top": false,
+                                    "capabilities": {
+                                        "tabs": true, "capture": true, "input": true,
+                                        "eval": false, "downloads": true, "floating": true,
+                                        "limitations": []
+                                    },
+                                    "prefs": {
+                                        "always_on_top": false, "auto_screenshot": true,
+                                        "stop_on_close": true, "allow_eval": false,
+                                        "popup_policy": "new_tab"
+                                    },
+                                    "tabs": [],
+                                    "message": "Stopped"
+                                }
+                            })
+                            .to_string(),
+                        );
+                        next_push_at = Some(Instant::now());
+                    }
+                }
                 WinCmd::Drag => {
                     let _ = window.drag_window();
                 }
@@ -891,14 +1129,104 @@ pub fn run_gui(opts: crate::cli::Opts) -> Result<()> {
                 if computer_viewer.as_ref().is_some_and(|v| v.window.id() == window_id) => {
                     computer_viewer = None;
                 }
+            Event::WindowEvent { window_id, event: WindowEvent::CloseRequested, .. }
+                if screen_browser.as_ref().is_some_and(|v| v.window.id() == window_id) => {
+                    // Closing the window = Stop (same as the titlebar Power control):
+                    // tear down + disable so the browser does not re-spawn.
+                    screen_browser = None;
+                    let _ = screen_browser_ctl.send(crate::app::runtime::client::HostCtl::ScreenBrowser {
+                        action: "stop".into(),
+                        window: None,
+                        prefs: None,
+                        url: None,
+                        tab_id: None,
+                        tabs: None,
+                        active_tab: None,
+                        window_open: false,
+                        reply: None,
+                    });
+                    // Optimistic UI: grey the globe immediately (mirror ScreenBrowserClose).
+                    if let Some(status) = screen_browser_status.as_mut() {
+                        status.enabled = false;
+                        status.window_open = false;
+                        status.busy = false;
+                        status.paused = false;
+                        status.waiting_human = false;
+                        status.tabs.clear();
+                        status.active_tab = None;
+                        status.observation = None;
+                        status.message = "Stopped".into();
+                        pending_pushes.push_back(
+                            serde_json::json!({"k":"ScreenBrowser","status":status}).to_string(),
+                        );
+                        next_push_at = Some(Instant::now());
+                    }
+                }
             Event::WindowEvent { window_id, event: WindowEvent::Resized(_), .. }
                 if computer_viewer.as_ref().is_some_and(|v| v.window.id() == window_id) => {
                     if let Some(viewer) = &computer_viewer { viewer.resized(); viewer.save(); }
+                }
+            Event::WindowEvent { window_id, event: WindowEvent::Resized(_), .. }
+                if screen_browser.as_ref().is_some_and(|v| v.window.id() == window_id) => {
+                    if let Some(browser) = &mut screen_browser { browser.resized(); }
                 }
             Event::WindowEvent { window_id, event: WindowEvent::Moved(_), .. }
                 if computer_viewer.as_ref().is_some_and(|v| v.window.id() == window_id) => {
                     if let Some(viewer) = &computer_viewer { viewer.save(); }
                 }
+            Event::WindowEvent { window_id, event: WindowEvent::Moved(_), .. }
+                if screen_browser.as_ref().is_some_and(|v| v.window.id() == window_id) => {
+                    if let Some(browser) = &screen_browser { browser.save(); }
+                }
+            Event::UserEvent(UserEvent::ScreenBrowserOp(request)) => {
+                if let Some(browser) = &mut screen_browser {
+                    let reply = browser.execute(request);
+                    let _ = screen_browser_ctl.send(crate::app::runtime::client::HostCtl::ScreenBrowser {
+                        action: "result".into(),
+                        window: None,
+                        prefs: None,
+                        url: None,
+                        tab_id: None,
+                        tabs: None,
+                        active_tab: None,
+                        window_open: true,
+                        reply: Some(Box::new(reply)),
+                    });
+                } else {
+                    let reply = crate::app::runtime::screen_browser::Reply {
+                        id: request.id,
+                        session: request.session,
+                        generation: request.generation,
+                        error: Some("On-screen browser window is not open".into()),
+                        ..Default::default()
+                    };
+                    let _ = screen_browser_ctl.send(crate::app::runtime::client::HostCtl::ScreenBrowser {
+                        action: "result".into(),
+                        window: None,
+                        prefs: None,
+                        url: None,
+                        tab_id: None,
+                        tabs: None,
+                        active_tab: None,
+                        window_open: false,
+                        reply: Some(Box::new(reply)),
+                    });
+                }
+            }
+            Event::UserEvent(UserEvent::ScreenBrowserChrome { action, url, tab_id }) => {
+                // Custom close from frameless chrome — same teardown as native X.
+                if action == "win_close" {
+                    let _ = proxy.send_event(UserEvent::Win(WinCmd::ScreenBrowserClose));
+                } else if let Some(browser) = &mut screen_browser {
+                    if let Err(e) = browser.handle_chrome(&action, url, tab_id) {
+                        pending_pushes.push_back(serde_json::json!({
+                            "k": "ScreenBrowserError",
+                            "message": e.to_string(),
+                        }).to_string());
+                        next_push_at = Some(Instant::now());
+                    }
+                }
+            }
             Event::UserEvent(UserEvent::LauncherReady) => {
                 // The background install may have just written icon-256.png.
                 #[cfg(target_os = "macos")]
@@ -940,3 +1268,22 @@ pub fn run_gui(opts: crate::cli::Opts) -> Result<()> {
 #[cfg(test)]
 #[path = "mod_koma_request_tests.rs"]
 mod koma_request_tests;
+
+#[cfg(test)]
+mod navigation_tests {
+    use super::allow_webview_navigation;
+
+    #[test]
+    fn file_drops_cannot_replace_the_gui() {
+        assert!(!allow_webview_navigation("file:///tmp/notes.md"));
+        assert!(!allow_webview_navigation("FILE:///Users/a/page.html"));
+        assert!(!allow_webview_navigation("  file://C:/code/app.js"));
+        assert!(allow_webview_navigation("koma://localhost/index.html"));
+        assert!(allow_webview_navigation(
+            "koma://localhost/index.html#computer-preview"
+        ));
+        assert!(allow_webview_navigation("http://koma.localhost/index.html"));
+        assert!(allow_webview_navigation("http://koma.extension/panel/index.html"));
+        assert!(allow_webview_navigation("about:blank"));
+    }
+}

@@ -8,6 +8,7 @@
 
 /// Events delivered to the main `tao` event loop from the ipc handler (window
 /// commands) or the host-relay client-thread (state pushes).
+#[allow(clippy::large_enum_variant)]
 pub(super) enum UserEvent {
     #[cfg_attr(not(any(target_os = "macos", target_os = "windows")), allow(dead_code))]
     PickSettingsFolder { request_id: String },
@@ -26,6 +27,14 @@ pub(super) enum UserEvent {
     /// heavy attach envelopes (Snapshot/Loading/Config/…) one frame at a time —
     /// stream/chat traffic is never queued behind them.
     Push(String),
+    /// Execute an on-screen browser tool operation on the tao main thread.
+    ScreenBrowserOp(crate::app::runtime::screen_browser::Request),
+    /// Chrome IPC from the browser window, routed back if needed.
+    ScreenBrowserChrome {
+        action: String,
+        url: Option<String>,
+        tab_id: Option<String>,
+    },
     /// Background app-list install finished. The Dock icon is applied on this
     /// thread; `NSApplication` calls are main-thread only.
     LauncherReady,
@@ -46,6 +55,9 @@ pub(super) enum UserEvent {
 #[derive(Clone, Copy)]
 pub(super) enum WinCmd {
     ComputerViewer,
+    ScreenBrowser,
+    /// Tear down the on-screen browser window (stop).
+    ScreenBrowserClose,
     Drag,
     Minimize,
     ToggleMax,
@@ -140,6 +152,17 @@ pub(super) enum GuiReq {
         #[serde(flatten)]
         request: crate::app::runtime::computer::PreviewRequest,
     },
+    ScreenBrowser {
+        action: String,
+        #[serde(default)]
+        window: Option<String>,
+        #[serde(default)]
+        prefs: Option<crate::app::runtime::screen_browser::Prefs>,
+        #[serde(default)]
+        url: Option<String>,
+        #[serde(default)]
+        tab_id: Option<String>,
+    },
     Ready,
     Submit {
         text: String,
@@ -211,9 +234,15 @@ pub(super) enum GuiReq {
         #[serde(default)]
         kind: Option<String>,
     },
-    /// Long composer paste. The host forwards it as [`ClientRequest::AttachPaste`].
+    /// Long composer paste, or a dropped text file. The host forwards it as
+    /// [`ClientRequest::AttachPaste`]. `name` labels the chip; `force` keeps a
+    /// short file as a chip instead of rejecting it as inline paste.
     AttachPaste {
         text: String,
+        #[serde(default)]
+        name: Option<String>,
+        #[serde(default)]
+        force: bool,
     },
     /// Edit the body of a staged `[Pasted Text #N]` chip.
     UpdatePaste {

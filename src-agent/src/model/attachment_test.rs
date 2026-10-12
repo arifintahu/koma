@@ -127,9 +127,23 @@ fn expand_paste_markers_leaves_marker_when_file_missing() {
         marker_n: 9,
         rel_path: "pastes/09-paste.txt".into(),
         mime: "text/plain".into(),
+        label: None,
     };
     let text = "x [Pasted Text #9] y";
     let expanded = expand_paste_markers(text, &[att], &session);
     assert_eq!(expanded, text);
     std::fs::remove_dir_all(&session).ok();
+}
+
+#[test]
+fn sanitize_paste_label_keeps_basename() {
+    assert_eq!(
+        sanitize_paste_label("dir/notes.md").as_deref(),
+        Some("notes.md")
+    );
+    assert_eq!(sanitize_paste_label(".."), None);
+    assert_eq!(sanitize_paste_label("   "), None);
+    assert!(!accept_paste_body("hi", false));
+    assert!(accept_paste_body("hi", true));
+    assert!(!accept_paste_body(&"x".repeat(PASTE_SOFT_MAX_BYTES + 1), true));
 }

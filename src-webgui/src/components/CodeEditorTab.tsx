@@ -32,16 +32,19 @@ import { showCodingRefactor } from './CodingRefactor'
 import { undoWorkspaceEdit } from '../lib/coding-edits'
 import { showCodingHistory } from './CodingHistory'
 import { isMarkdownPath } from '../lib/markdownPreview'
+import { useCodingAutosave } from '../lib/coding-autosave'
+import { isNotebookPath } from '../lib/notebook-workspace'
 
 type CodingTab = Extract<Tab, { kind: 'codingFile' }>
 
-const AUTOSAVE_MS = 750
 // Diagnostics / CodeLens can lag typing; completion flushes pending didChange
 // immediately via registerLspDidChangeFlusher so the server stays current.
 const LSP_CHANGE_MS = 120
 // CodeLens ref-counts are expensive (documentSymbol + N references RPCs) and
 // share the host LSP mutex with hover/completion. Only warm on open / save idle.
 const CODELENS_IDLE_MS = 2500
+/** Soft threshold: skip CodeLens warm + some chrome on huge buffers (open feels heavy). */
+const LARGE_FILE_CHARS = 200_000
 const viewStates = new Map<string, monaco.editor.ICodeEditorViewState>()
 
 export default function CodeEditorTab({ tab }: { tab: CodingTab }) {
@@ -59,7 +62,6 @@ function WorkspaceCodeEditor({ tab }: { tab: CodingTab }) {
   // while applyGenRef !== 0 (sync) AND until the matching clear runs after Monaco
   // flushes. A plain boolean + rAF was still losing races on split/layout.
   const applyGenRef = useRef(0)
-  const autosaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const lspChangeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const lspOpenedRef = useRef(false)
 
@@ -132,55 +134,14 @@ function WorkspaceCodeEditor({ tab }: { tab: CodingTab }) {
     return 'Saved'
   }, [fileState, codingAutosave])
 
-  useEffect(() => {
-    if (autosaveTimerRef.current) {
-      clearTimeout(autosaveTimerRef.current)
-      autosaveTimerRef.current = null
-    }
-    if (!codingAutosave || fileState?.manualSaveRequired) return
-    if (!fileState?.dirty) return
-    if (fileState.content == null) return
-    if (fileState.saving || fileState.conflict || fileState.binary || fileState.tooLarge || fileState.error) {
-      return
-    }
-    if (fileState.content === (fileState.savedContent ?? '')) return
-
-    autosaveTimerRef.current = setTimeout(() => {
-      autosaveTimerRef.current = null
-      const cur = useKoma.getState().coding.files[fileKey(tab.root, tab.path)]
-      if (!cur?.dirty || cur.content == null || cur.saving || cur.conflict || cur.manualSaveRequired) return
-      if (cur.binary || cur.tooLarge || cur.error) return
-      if (cur.content === (cur.savedContent ?? '')) return
-      if (!useKoma.getState().settingsValues?.codingAutosave) return
-      useKoma.getState().saveCodingFile(tab.root, tab.path)
-    }, AUTOSAVE_MS)
-
-    return () => {
-      if (autosaveTimerRef.current) {
-        clearTimeout(autosaveTimerRef.current)
-        autosaveTimerRef.current = null
-      }
-    }
-  }, [
-    codingAutosave,
-    fileState?.manualSaveRequired,
-    fileState?.dirty,
-    fileState?.content,
-    fileState?.savedContent,
-    fileState?.saving,
-    fileState?.conflict,
-    fileState?.binary,
-    fileState?.tooLarge,
-    fileState?.error,
-    tab.root,
-    tab.path,
-  ])
-
+  useCodingAutosave(tab.root, tab.path, fileState, codingAutosave)
   useEffect(() => {
     const host = containerRef.current
     if (!host) return
     initMonaco()
     const theme = applyKomaTheme()
+    // Content may still be loading; prefer conservative defaults then upgrade after paint.
+    const largeOpen = (fileState?.content?.length ?? 0) >= LARGE_FILE_CHARS
     const editor = monaco.editor.create(host, {
       value: '',
       language: langFromPath(tab.path),
@@ -192,7 +153,8 @@ function WorkspaceCodeEditor({ tab }: { tab: CodingTab }) {
       fontSize: 12,
       lineNumbersMinChars: 3,
       theme,
-      wordWrap: 'on',
+      // Word-wrap on multi-hundred-KB buffers is a known Monaco cost spike on open.
+      wordWrap: largeOpen ? 'off' : 'on',
       quickSuggestions: true,
       suggestOnTriggerCharacters: true,
       parameterHints: { enabled: true },
@@ -202,7 +164,7 @@ function WorkspaceCodeEditor({ tab }: { tab: CodingTab }) {
       // Alt = multi-cursor so Ctrl/Cmd+click is free for Go to Definition (VS Code).
       multiCursorModifier: 'alt',
       definitionLinkOpensInPeek: false,
-      codeLens: true,
+      codeLens: !largeOpen,
       gotoLocation: {
         multipleDefinitions: 'goto',
         // Always prefer peek for multi-ref; CodeLens forces peek even for 1 hit.
@@ -214,11 +176,11 @@ function WorkspaceCodeEditor({ tab }: { tab: CodingTab }) {
       // Peek chrome tracks koma theme (title actions, tree focus).
       peekWidgetDefaultFocus: 'tree',
       renderValidationDecorations: 'on',
-      matchBrackets: 'always',
-      bracketPairColorization: { enabled: true },
-      guides: { indentation: true, bracketPairs: false },
-      stickyScroll: { enabled: true },
-      inlayHints: { enabled: 'on' },
+      matchBrackets: largeOpen ? 'near' : 'always',
+      bracketPairColorization: { enabled: !largeOpen },
+      guides: { indentation: !largeOpen, bracketPairs: false },
+      stickyScroll: { enabled: !largeOpen },
+      inlayHints: { enabled: largeOpen ? 'off' : 'on' },
       // Dim CodeLens to match VS Code secondary chrome.
       // (color comes from editorCodeLens.foreground theme token)
     })
@@ -324,6 +286,8 @@ function WorkspaceCodeEditor({ tab }: { tab: CodingTab }) {
         })
       }, LSP_CHANGE_MS)
       // Defer CodeLens warm until typing goes idle — never on every didChange.
+      // Skip for large buffers (documentSymbol + N references thrash the LSP mutex).
+      if (text.length >= LARGE_FILE_CHARS) return
       if (codeLensIdleTimer) clearTimeout(codeLensIdleTimer)
       codeLensIdleTimer = setTimeout(() => {
         codeLensIdleTimer = null
@@ -481,6 +445,17 @@ function WorkspaceCodeEditor({ tab }: { tab: CodingTab }) {
 
     editor.updateOptions({
       readOnly: fileState.binary || fileState.tooLarge || fileState.loading,
+      ...(next.length >= LARGE_FILE_CHARS
+        ? {
+            wordWrap: 'off' as const,
+            codeLens: false,
+            matchBrackets: 'near' as const,
+            bracketPairColorization: { enabled: false },
+            guides: { indentation: false, bracketPairs: false },
+            stickyScroll: { enabled: false },
+            inlayHints: { enabled: 'off' as const },
+          }
+        : {}),
     })
 
     // Go-to-def / Problems may open this tab before content is ready — apply
@@ -530,6 +505,8 @@ function WorkspaceCodeEditor({ tab }: { tab: CodingTab }) {
   // without remounting the tab, so this effect must re-run and send LspDidOpen.
   useEffect(() => {
     if (lspOpenedRef.current) return
+    // Notebooks use NotebookTab and must never open ordinary text-document LSP.
+    if (isNotebookPath(tab.path)) return
     if (
       !fileState ||
       fileState.content == null ||
@@ -567,12 +544,14 @@ function WorkspaceCodeEditor({ tab }: { tab: CodingTab }) {
           const m =
             monaco.editor.getModel(monacoUriFromPath(tab.root, tab.path)) ??
             modelRef.current
-          warmCodeLensCache(
-            (body) => useKoma.getState().req(body as never),
-            tab.root,
-            tab.path,
-            m?.getVersionId() ?? 1,
-          )
+          if ((fileState.content?.length ?? 0) < LARGE_FILE_CHARS) {
+            warmCodeLensCache(
+              (body) => useKoma.getState().req(body as never),
+              tab.root,
+              tab.path,
+              m?.getVersionId() ?? 1,
+            )
+          }
         }
       }, 2500)
       return () => window.clearTimeout(t)
@@ -594,12 +573,14 @@ function WorkspaceCodeEditor({ tab }: { tab: CodingTab }) {
     {
       const m =
         monaco.editor.getModel(monacoUriFromPath(tab.root, tab.path)) ?? modelRef.current
-      warmCodeLensCache(
-        (body) => useKoma.getState().req(body as never),
-        tab.root,
-        tab.path,
-        m?.getVersionId() ?? 1,
-      )
+      if ((fileState.content?.length ?? 0) < LARGE_FILE_CHARS) {
+        warmCodeLensCache(
+          (body) => useKoma.getState().req(body as never),
+          tab.root,
+          tab.path,
+          m?.getVersionId() ?? 1,
+        )
+      }
     }
   }, [
     fileState?.content,

@@ -5,6 +5,23 @@ use super::rest::AppStateRest;
 use super::types::CataloguePending;
 
 impl AppStateRest {
+    /// Queue at most one OA request per catalogue/model for the app lifetime.
+    pub fn request_oa_detail(
+        &mut self,
+        catalogue_key: &str,
+        provider: Option<crate::model::app_config::OAuthProvider>,
+        model_id: &str,
+    ) {
+        let identity = (catalogue_key.to_string(), model_id.to_string());
+        if self.oa_detail_completed.contains_key(&identity)
+            || !self.oa_detail_inflight.insert(identity)
+        {
+            return;
+        }
+        self.oa_detail_pending
+            .push((catalogue_key.to_string(), provider, model_id.to_string()));
+    }
+
     pub fn remember_creds(&mut self, key: &str, model: &str, provider: &str) {
         self.last_key = Some(key.to_string());
         self.last_model = Some(model.to_string());
@@ -16,7 +33,7 @@ impl AppStateRest {
     /// The model omnisearch calls this on every query keystroke / provider change
     /// / field focus for whatever provider is being edited. It is cheap and
     /// idempotent:
-    /// - empty `endpoint` → no-op (nothing to fetch against);
+    /// - empty `endpoint` or OAuth uuid → no-op (OAuth uses public OA);
     /// - the cache already holds this endpoint (`models_cache_endpoint` matches)
     ///   AND the fetch succeeded → no-op (filter locally);
     /// - a fetch for this endpoint is already in flight → no-op (don't double-fire);
@@ -29,7 +46,8 @@ impl AppStateRest {
     /// lands via the `warm_rx` drain, which sets `models_cache` +
     /// `models_cache_endpoint` and clears `catalogue_fetching`.
     pub fn request_catalogue(&mut self, endpoint: &str, api_key: &str, oauth_uuid: &str) {
-        if endpoint.is_empty() {
+        // OAuth list requests are never sent to native provider endpoints.
+        if endpoint.is_empty() || !oauth_uuid.is_empty() {
             return;
         }
         if self.models_cache_endpoint.as_deref() == Some(endpoint) && self.models_cache.is_some() {

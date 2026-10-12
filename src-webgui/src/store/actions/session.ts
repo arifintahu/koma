@@ -1,6 +1,7 @@
 import { helpContext } from '../../lib/helpContext'
 import { tutorialAssistantWire } from '../../lib/helpKnowledge'
 import { codingRefToken } from '../../lib/codingRef'
+import { settleToastConfirm } from '../../lib/toast-confirm'
 import type { StoreGet, StoreSet } from '../api'
 import { useComputerPreview } from '../computerPreview'
 import { DEFAULT_GROUP, normalizeGroups } from '../editorGroups'
@@ -125,8 +126,10 @@ export function sessionActions(set: StoreSet, get: StoreGet): Pick<KomaState, 'o
       }
     }),
   dismissLoading: () => set((s) => ({ ui: { ...s.ui, loadingDismissed: true } })),
-  dismissToast: (id) =>
-    set((s) => (s.ui.toast?.id === id ? { ui: { ...s.ui, toast: null } } : s)),
+  dismissToast: (id) => {
+    settleToastConfirm(id, false)
+    set((s) => (s.ui.toast?.id === id ? { ui: { ...s.ui, toast: null } } : s))
+  },
   openSettingsTab: () => {
     set((s) => {
       const exists = s.ui.tabs.some((t) => t.id === 'settings')
@@ -289,6 +292,8 @@ export function sessionActions(set: StoreSet, get: StoreGet): Pick<KomaState, 'o
     set((s) => ({
       computer: null,
       computerError: null,
+      screenBrowser: null,
+      screenBrowserError: null,
       skillDeletePending: {},
       // Fresh object (not spread from the old session) — nothing about the
       // just-killed session is worth preserving, mirrors initialSession's

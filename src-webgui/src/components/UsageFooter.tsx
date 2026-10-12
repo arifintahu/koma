@@ -1,7 +1,8 @@
 import { pageRect } from '../lib/uiScale'
 import { useEffect, useRef, useState } from 'react'
-import { Activity, AlertCircle, AlertTriangle, FoldVertical, Server, Terminal } from 'lucide-react'
+import { Activity, AlertCircle, AlertTriangle, FoldVertical, Package, Server, Terminal } from 'lucide-react'
 import { showCodingTasks } from './CodingTasks'
+import { showCodingPacks } from './CodingPacks'
 import { useKoma, visiblePlanTodos } from '../store/koma'
 import { BranchSwitcher } from './BranchSwitcher'
 import { BrailleSpinner } from './BrailleSpinner'
@@ -41,6 +42,7 @@ export function UsageFooter() {
   const errCount = useKoma((s) => s.lspDiagCounts.errors)
   const warnCount = useKoma((s) => s.lspDiagCounts.warnings)
   const tasksOpen = useKoma((s) => s.bottomPanelTab === 'tasks')
+  const packsOpen = useKoma((s) => s.bottomPanelTab === 'packs')
   const setBottomPanelTab = useKoma((s) => s.setBottomPanelTab)
   const problemsOpen = useKoma((s) => s.bottomPanelTab === 'problems')
   const toggleProblemsOpen = useKoma((s) => s.toggleProblemsOpen)
@@ -208,6 +210,9 @@ export function UsageFooter() {
       {/* Workspace tasks retain their own process/output scope. */}
       <button type="button" onClick={() => tasksOpen ? setBottomPanelTab(null) : showCodingTasks()} aria-expanded={tasksOpen} aria-controls="workspace-bottom-panel" aria-label="Project tasks" title="Run / Build / Test tasks" className={`flex h-4 flex-none items-center gap-1 rounded px-1 ${tasksOpen ? 'bg-koma-accent/15 text-koma-accent' : 'text-koma-dim hover:bg-koma-hover hover:text-koma-fg'}`}>
         <Terminal size={11} /><span className="max-[720px]:hidden">Tasks</span>
+      </button>
+      <button type="button" onClick={() => packsOpen ? setBottomPanelTab(null) : showCodingPacks()} aria-expanded={packsOpen} aria-controls="workspace-bottom-panel" aria-label="Language packs" title="Language packs / environments" className={`flex h-4 flex-none items-center gap-1 rounded px-1 ${packsOpen ? 'bg-koma-accent/15 text-koma-accent' : 'text-koma-dim hover:bg-koma-hover hover:text-koma-fg'}`}>
+        <Package size={11} /><span className="max-[720px]:hidden">Packs</span>
       </button>
       {/* Language Servers badge — live runtime / progress drawer */}
       <button

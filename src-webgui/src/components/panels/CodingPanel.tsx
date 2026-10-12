@@ -20,6 +20,7 @@ import {
 } from 'lucide-react'
 import { useKoma } from '../../store/koma'
 import { isMarkdownPath } from '../../lib/markdownPreview'
+import { showNewNotebook } from '../NotebookCreateDialog'
 import {
   setCodingPathDragData,
 } from '../../lib/codingRef'
@@ -728,6 +729,9 @@ export function CodingPanel() {
             <RefreshCw size={12} />
           </IconBtn>
           <IconBtn label="New file in root" onClick={() => activeRoot && onStartCreate('', 'file')}>
+            <FilePlus size={12} />
+          </IconBtn>
+          <IconBtn label="New Notebook" onClick={() => activeRoot && showNewNotebook(activeRoot)}>
             <FilePlus size={12} />
           </IconBtn>
           <IconBtn label="New folder in root" onClick={() => activeRoot && onStartCreate('', 'dir')}>

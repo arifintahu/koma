@@ -48,6 +48,9 @@ portable-pty = "0.8"
 process-wrap = { version = "9.1", default-features = false, features = ["std", "job-object"] }
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "webp", "gif", "bmp"] }
 sha2 = "0.10"
+bytes = "1"
+# Pure-Rust ZMQ for notebook kernel shell/IOPub (no system libzmq).
+zeromq = "0.6"
 rmcp = { version = "1.8", default-features = false, features = ["client", "transport-child-process", "transport-streamable-http-client-reqwest", "macros"] }
 
 # Linker daemon: import-graph scanner (tree-sitter based).
@@ -70,7 +73,7 @@ notify-debouncer-mini = { version = "0.7", optional = true }
 # build pulls NONE of these (headless-safe, lean `cargo install`). ---
 # `devtools` keeps WebView inspector available in release builds too (debug
 # builds always get it). Needed so F12 / Inspect can call open_devtools().
-wry = { version = "0.52", optional = true, features = ["transparent", "devtools"] }
+wry = { version = "0.55", optional = true, features = ["transparent", "devtools"] }
 tao = { version = "0.35", optional = true }
 rfd = { version = "0.15", optional = true }
 
@@ -87,20 +90,58 @@ windows-sys = { version = "0.59", features = [
     "Win32_System_Threading",
     "Win32_System_Registry",
     "Win32_System_Time",
+    "Win32_UI_WindowsAndMessaging",
+] }
+# Match wry 0.55's WebView2 stack so CapturePreview can run on the GUI host.
+webview2-com = { version = "0.38", optional = true }
+windows = { version = "0.61", optional = true, features = [
+    "Win32_Foundation",
+    "Win32_System_Com",
+    "Win32_UI_Shell",
+    "Win32_Storage_FileSystem",
 ] }
 arboard = { version = "3", default-features = false, features = ["image-data"] }
+
+[target.'cfg(any(target_os = "linux", target_os = "dragonfly", target_os = "freebsd", target_os = "openbsd", target_os = "netbsd"))'.dependencies]
+gtk = { version = "0.18", optional = true }
+webkit2gtk = { version = "2.0", optional = true, features = ["v2_40"] }
+# gtk 0.18 does not enable cairo-rs `png`; WebKit snapshot needs Surface::write_to_png.
+cairo-rs = { version = "0.18", optional = true, features = ["png"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2-app-kit = { version = "0.3", optional = true, default-features = false, features = [
     "std",
     "objc2-core-foundation",
     "NSColor",
+    "NSImage",
+    "NSBitmapImageRep",
+    "NSGraphics",
+    "NSImageRep",
+    "NSView",
 ] }
+objc2-web-kit = { version = "0.3", optional = true, default-features = false, features = [
+    "std",
+    "block2",
+    "objc2-core-foundation",
+    "WKWebView",
+    "WKSnapshotConfiguration",
+] }
+objc2-foundation = { version = "0.3", optional = true, default-features = false, features = [
+    "std",
+    "NSData",
+    "NSDate",
+    "NSRunLoop",
+    "NSString",
+    "NSDictionary",
+    "NSError",
+] }
+block2 = { version = "0.6", optional = true }
+objc2 = { version = "0.6", optional = true }
 muda = { version = "0.19", optional = true, default-features = false }
 
 [features]
 default = ["gui", "linker"]
-gui = ["dep:cc", "dep:zbus", "dep:x11-dl", "dep:wry", "dep:tao", "dep:objc2-app-kit", "dep:rfd", "dep:muda", "dep:png"]
+gui = ["dep:cc", "dep:zbus", "dep:x11-dl", "dep:wry", "dep:tao", "dep:objc2-app-kit", "dep:objc2-web-kit", "dep:objc2-foundation", "dep:block2", "dep:objc2", "dep:rfd", "dep:muda", "dep:png", "dep:webview2-com", "dep:windows", "dep:gtk", "dep:webkit2gtk", "dep:cairo-rs"]
 linker = [
     "dep:tree-sitter",
     "dep:tree-sitter-rust",

@@ -5,6 +5,7 @@ import { useKoma } from '../store/koma'
 import { TerminalPicker } from './TerminalPicker'
 import type { TerminalShell } from '../lib/terminalShells'
 import { ComputerShortcut } from './ComputerShortcut'
+import { ScreenBrowserShortcut } from './ScreenBrowserShortcut'
 
 export type Platform = 'macos' | 'linux' | 'windows'
 
@@ -87,6 +88,7 @@ export function Titlebar({ onSearch, onRename, onTerminal, overlayOpen }: Titleb
               #winctl when the window narrows. Side padding reserves chrome. */}
           <div className="pointer-events-none flex min-w-0 max-w-full items-center gap-1.5">
             <ComputerShortcut />
+            <ScreenBrowserShortcut />
             <TerminalPicker onSelect={onTerminal} />
             <motion.button
               layoutId="cmd-search"

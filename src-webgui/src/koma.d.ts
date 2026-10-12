@@ -1,12 +1,19 @@
 declare global {
   interface Window { __komaFolderReply?: (reply: { requestId: string; path: string | null }) => void }
-  interface Window { __komaUiScaleReply?: (reply: import('./lib/uiScale').UiScaleReply) => void;  __komaComputerPalette?: Record<string, string>; __komaComputerInitial?: import('./types/computer').ComputerStatus | null }
+  interface Window {
+    __komaUiScaleReply?: (reply: import('./lib/uiScale').UiScaleReply) => void
+    __komaComputerPalette?: Record<string, string>
+    __komaComputerInitial?: import('./types/computer').ComputerStatus | null
+    __komaScreenBrowserPalette?: Record<string, string>
+    __komaScreenBrowserInitial?: import('./types/screenBrowser').ScreenBrowserStatus | null
+  }
   // JS -> Rust request payloads, tagged { t: 'req', ...GuiReq } by
   // useKoma().req() (see src/store/koma.ts).
   type GuiReq =
     | { r: 'PickSettingsFolder'; requestId: string }
     | { r: 'SetUiScale'; scale: import('./lib/uiScale').UiScale; requestId: string }
     | { r: 'Computer'; action: 'enable' | 'windows' | 'select' | 'pause' | 'resume' | 'stop' | 'take_over'; window?: string }
+    | { r: 'ScreenBrowser'; action: string; window?: string; prefs?: object; url?: string; tab_id?: string }
     | { r: 'GitWorkbench'; request: import('./lib/gitWorkbench').GitRequest }
     | { r: 'Ready' }
     | { r: 'Submit'; text: string }
@@ -54,7 +61,7 @@ declare global {
     // `kind` is `image` or `pasted_text` so the two sequences can share a number.
     | { r: 'RemoveAttachment'; markerN: number; kind?: 'image' | 'file' | 'pasted_text' }
     // Collapse a long paste into a `[Pasted Text #N]` chip.
-    | { r: 'AttachPaste'; text: string }
+    | { r: 'AttachPaste'; text: string; name?: string; force?: boolean }
     // Replace the saved body of a staged paste chip.
     | { r: 'UpdatePaste'; markerN: number; text: string }
     // Load a staged paste body after reload.

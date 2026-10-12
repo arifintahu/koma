@@ -17,6 +17,7 @@ import {
   Download,
   Library,
   Monitor,
+  Globe,
 } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import { CHAT_TURNS_DEFAULT, clampChatTurns } from '../lib/chatWindow'
@@ -25,6 +26,7 @@ import { ACTIVITY_BAR_ITEMS } from './ActivityBar'
 import { Field, Segmented, TextInput, Toggle } from './panels/form'
 import { WebSearchSettings } from './WebSearchSettings'
 import { ComputerSettings } from './ComputerSettings'
+import { ScreenBrowserSettings } from './ScreenBrowserSettings'
 import { UI_SCALES, pagePoint, setUiScale, useUiScale, type UiScale } from '../lib/uiScale'
 import { BrailleSpinner } from './BrailleSpinner'
 import { SettingsFolderButton } from './SettingsFolderButton'
@@ -37,7 +39,7 @@ import { SettingsFolderButton } from './SettingsFolderButton'
 // credential machinery). Every colour is a theme token (var(--koma-*) via the
 // koma-* Tailwind classes) so it tracks the live palette.
 
-type SectionId = 'webSearch' | 'account' | 'appearance' | 'session' | 'activityBar' | 'skills' | 'lsp' | 'sshKeys' | 'computer'
+type SectionId = 'webSearch' | 'account' | 'appearance' | 'session' | 'activityBar' | 'skills' | 'lsp' | 'sshKeys' | 'computer' | 'screenBrowser'
 
 // Top-to-bottom order of the sections below — shared by `sectionRef` and the
 // scroll-spy so adding/reordering a section only needs a change here. Account
@@ -49,6 +51,7 @@ const SECTION_ORDER: SectionId[] = [
   'session',
   'webSearch',
   'computer',
+  'screenBrowser',
   'activityBar',
   'skills',
   'lsp',
@@ -67,6 +70,7 @@ export default function SettingsTab({ visible = true }: { visible?: boolean }) {
   const sessionRef = useRef<HTMLDivElement>(null)
   const webSearchRef = useRef<HTMLDivElement>(null)
   const computerRef = useRef<HTMLDivElement>(null)
+  const screenBrowserRef = useRef<HTMLDivElement>(null)
   const activityBarRef = useRef<HTMLDivElement>(null)
   const skillsRef = useRef<HTMLDivElement>(null)
   const lspRef = useRef<HTMLDivElement>(null)
@@ -75,7 +79,7 @@ export default function SettingsTab({ visible = true }: { visible?: boolean }) {
 
   const sectionRef = (id: SectionId) => ({
     account: accountRef, appearance: appearanceRef, session: sessionRef,
-    webSearch: webSearchRef, computer: computerRef, activityBar: activityBarRef, skills: skillsRef, lsp: lspRef, sshKeys: sshKeysRef,
+    webSearch: webSearchRef, computer: computerRef, screenBrowser: screenBrowserRef, activityBar: activityBarRef, skills: skillsRef, lsp: lspRef, sshKeys: sshKeysRef,
   })[id]
 
   // Nav click → smooth-scroll the pane to the section header.
@@ -128,6 +132,7 @@ export default function SettingsTab({ visible = true }: { visible?: boolean }) {
         />
         <NavItem icon={<Search size={15} />} label="Web search" active={active === 'webSearch'} onClick={() => goto('webSearch')} />
         <NavItem icon={<Monitor size={15} />} label="Computer use" active={active === 'computer'} onClick={() => goto('computer')} />
+        <NavItem icon={<Globe size={15} />} label="On-screen browser" active={active === 'screenBrowser'} onClick={() => goto('screenBrowser')} />
         <NavItem
           icon={<PanelLeft size={15} />}
           label="Sidebar"
@@ -181,6 +186,11 @@ export default function SettingsTab({ visible = true }: { visible?: boolean }) {
           <section ref={computerRef} className="mt-12">
             <SectionHeader title="Computer use" desc="Share a screen with the model." />
             <ComputerSettings />
+          </section>
+
+          <section ref={screenBrowserRef} className="mt-12">
+            <SectionHeader title="On-screen browser" desc="A koma-owned multi-tab browser the model can drive." />
+            <ScreenBrowserSettings />
           </section>
 
           <section ref={activityBarRef} className="mt-12">

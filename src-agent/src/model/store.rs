@@ -359,6 +359,30 @@ pub fn memory_dir(pwd_hash: &str) -> Result<PathBuf> {
     Ok(dir)
 }
 
+/// On-screen browser webview profile (cookies, localStorage, HTTP cache) for one
+/// project: `<pwd_bucket_dir>/screen-browser/webview`.
+///
+/// Shared by every session whose workdir hashes to the same `pwd_hash`, so
+/// logins survive session reopen and new sessions under the same PWD. Tabs are
+/// NOT stored here — only site data.
+#[cfg(feature = "gui")]
+pub fn screen_browser_profile_dir(pwd_hash: &str) -> Result<PathBuf> {
+    let dir = pwd_bucket_dir(pwd_hash)?
+        .join("screen-browser")
+        .join("webview");
+    std::fs::create_dir_all(&dir)?;
+    Ok(dir)
+}
+
+/// Window placement JSON for the on-screen browser under a pwd bucket:
+/// `<pwd_bucket_dir>/screen-browser/window.json`.
+#[cfg(feature = "gui")]
+pub fn screen_browser_window_path(pwd_hash: &str) -> Result<PathBuf> {
+    let dir = pwd_bucket_dir(pwd_hash)?.join("screen-browser");
+    std::fs::create_dir_all(&dir)?;
+    Ok(dir.join("window.json"))
+}
+
 /// A single session's directory under its bucket:
 /// `<pwd_bucket_dir>/<uuid>/`. Holds the per-session behavioural settings,
 /// messages, memory, and agents.

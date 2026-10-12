@@ -950,6 +950,7 @@ fn picture(n: usize) -> crate::dto::chat::Attachment {
         marker_n: n,
         rel_path: format!("images/{n}.png"),
         mime: "image/png".into(),
+        label: None,
     }
 }
 

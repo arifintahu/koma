@@ -997,6 +997,12 @@ fn host_swapper<P: Fn(String) + Clone + Send + 'static>(
             Ok(HostCtl::Computer { .. }) => {
                 push(serde_json::json!({"k":"ComputerError","message":"Attach a local GUI session first"}).to_string());
             }
+            #[cfg(feature = "gui")]
+            Ok(HostCtl::ScreenBrowser { .. })
+            | Ok(HostCtl::ScreenBrowserChrome { .. })
+            | Ok(HostCtl::ScreenBrowserOpenWindow) => {
+                push(serde_json::json!({"k":"ScreenBrowserError","message":"Attach a local GUI session first"}).to_string());
+            }
             Ok(HostCtl::ConfigMutate(req)) => {
                 apply_swapper_config_mutation(&req, push, push_state);
             }
@@ -2497,6 +2503,12 @@ fn host_remote_hub<P: Fn(String) + Clone + Send + 'static>(
             Ok(HostCtl::ComputerPreview(_)) => {}
             Ok(HostCtl::Computer { .. }) => {
                 push(serde_json::json!({"k":"ComputerError","message":"Attach a local GUI session first"}).to_string());
+            }
+            #[cfg(feature = "gui")]
+            Ok(HostCtl::ScreenBrowser { .. })
+            | Ok(HostCtl::ScreenBrowserChrome { .. })
+            | Ok(HostCtl::ScreenBrowserOpenWindow) => {
+                push(serde_json::json!({"k":"ScreenBrowserError","message":"Attach a local GUI session first"}).to_string());
             }
             Ok(HostCtl::ConfigMutate(req)) => {
                 apply_swapper_config_mutation(&req, push, push_state);

@@ -303,6 +303,7 @@ pub(super) fn run() -> Result<()> {
         if count.load(Ordering::Acquire) > 0
             || super::tasks::has_active()
             || super::debug::has_active()
+            || super::notebook::has_active()
         {
             idle = Instant::now();
         } else if idle.elapsed() > Duration::from_secs(1800)
@@ -315,6 +316,7 @@ pub(super) fn run() -> Result<()> {
     super::SHUTTING_DOWN.store(true, Ordering::Release);
     super::tasks::shutdown();
     super::debug::shutdown();
+    super::notebook::shutdown();
     super::language::shutdown();
     super::watch::shutdown();
     Ok(())

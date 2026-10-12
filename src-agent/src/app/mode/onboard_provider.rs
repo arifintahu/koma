@@ -19,7 +19,6 @@
 use crate::app::mode::settings::{filter_models, OAuthFlowState};
 use crate::dto::openrouter::ModelInfo;
 use crate::model::app_config::OAuthProvider;
-use crate::service::oauth::registry;
 
 /// Which step of the wizard is active.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -128,14 +127,9 @@ impl OnboardProviderState {
 
 /// Compute the filtered candidate model ids for the `ModelSelect` step.
 ///
-/// A network provider's on-demand `models_cache` counts ONLY when it was fetched for
-/// THAT provider's own catalogue endpoint (else the cache is stale / for another
-/// provider). Whenever it doesn't match — Codex/Claude have no network catalogue at
-/// all, and a network provider (e.g. xAI) whose cache hasn't landed yet also lands
-/// here — fall back to the curated [`catalogue_overlay`](crate::service::catalogue_overlay)
-/// for the provider's chat endpoint, served through the SAME [`filter_models`]
-/// omnisearch as a fetched catalogue (mirrors the `/settings` model modal's Codex
-/// substitution, generalized to every OAuth provider the overlay covers).
+/// Membership comes only from the shared public OA catalogue, ignoring native
+/// caches even if they belong to the same provider. Selection and rendering use
+/// the same filtered list.
 ///
 /// Returns OWNED ids (no borrow held) so callers can freely mutate state afterwards.
 /// Shared by the input handler (selection) and the view (render list) so they never
@@ -143,32 +137,35 @@ impl OnboardProviderState {
 pub fn candidate_model_ids(
     provider: Option<OAuthProvider>,
     query: &str,
-    models_cache: &[ModelInfo],
-    models_cache_endpoint: Option<&str>,
+    _models_cache: &[ModelInfo],
+    _models_cache_endpoint: Option<&str>,
 ) -> Vec<String> {
-    // A network provider's live cache only counts when it was fetched for THAT
-    // provider's own catalogue endpoint.
-    let cache_matches = provider
-        .map(|p| registry::meta(p).catalogue_endpoint)
-        .filter(|ep| !ep.is_empty())
-        .map(|ep| models_cache_endpoint == Some(ep))
-        .unwrap_or(false);
-    // Overlay fallback: no matching live cache — resolve the curated catalogue for
-    // this provider's chat endpoint (empty if the provider has none / is unknown).
-    let overlay_cache = if cache_matches {
-        Vec::new()
-    } else {
-        provider
-            .map(crate::service::catalogue_overlay::models_for_provider)
-            .unwrap_or_default()
-    };
-    let cache: &[ModelInfo] = if cache_matches {
-        models_cache
-    } else {
-        &overlay_cache
-    };
-    filter_models(cache, query)
+    // Native model caches must never override OAuth public membership.
+    let catalogue = provider
+        .map(crate::service::catalogue_overlay::oauth_catalogue)
+        .unwrap_or_default();
+    filter_models(&catalogue, query)
         .into_iter()
-        .map(|i| cache[i].id.clone())
+        .map(|i| catalogue[i].id.clone())
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn oauth_candidates_ignore_native_provider_cache() {
+        let native: ModelInfo = serde_json::from_value(serde_json::json!({
+            "id": "native-only-onboarding-unique"
+        }))
+        .unwrap();
+        assert!(candidate_model_ids(
+            Some(OAuthProvider::Xai),
+            "native-only-onboarding-unique",
+            &[native],
+            Some("https://api.x.ai/v1")
+        )
+        .is_empty());
+    }
 }

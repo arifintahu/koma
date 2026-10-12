@@ -7,7 +7,7 @@
 //! Expected files in `src-misc/`:
 //! - `system-prompt.txt`      — the primary system instruction block
 //! - `system-personality.txt` — tone/style addendum appended after the prompt
-//! - `system-tools.txt`       — tool-usage guidance appended at the very bottom
+//! - `system-tools.txt`       — thin tool routing + hard behaviour (not a per-tool manual)
 //!
 //! All files are optional: if absent or empty, hard-coded fallback strings
 //! are used so the binary is always usable out of the box.
@@ -73,7 +73,7 @@ pub fn wanderer_word() -> String {
 }
 
 const FALLBACK_SYSTEM: &str = "You are a precise, concise coding assistant.";
-const FALLBACK_PERSONALITY: &str = "Be direct. No filler. No emoji.";
+const FALLBACK_PERSONALITY: &str = "Speak as yourself. Do not invent what you did not check.";
 
 /// Return the system prompt text from `src-misc/system-prompt.txt`.
 ///
@@ -218,20 +218,11 @@ pub fn build_system_prompt(
         if !sk.is_empty() {
             s.push_str("\n\n# Skills\n");
             s.push_str(
-                "Available skills (name + description only). Load one with \
-                 skill({\"action\":\"load\",\"name\":\"...\"}) only when the task \
-                 matches and the skill is not already active. A body under \
-                 \"# Skill: <name>\" below, or a [ACTIVE] mark from skill(list), \
-                 means that skill is already in context — do not load it again. \
-                 Unload with action=unload when done. \
-                 Create a skill with skill({\"action\":\"create\",\"name\":\"...\",\
-                 \"description\":\"...\",\"instruction\":\"...\"}). scope is \
-                 project (default) or global. Change one with \
-                 skill({\"action\":\"modify\",\"name\":\"...\",\"instruction\":\"...\"}). \
-                 Omit description or instruction on modify to keep it. Do not \
-                 use write or edit; skill folders are outside the workspace. \
-                 Dir-form skills list companion files in the load result; \
-                 read them with `read` using absolute paths under skill_dir.\n",
+                "Name + description only. Load with skill action=load when the task \
+                 matches and the skill is not already active ([ACTIVE] or a \
+                 \"# Skill:\" body means skip reload). Unload when done. Create/modify \
+                 via skill actions (not write/edit). Dir-form companions: read absolute \
+                 paths under skill_dir from the load result.\n",
             );
             s.push_str(sk);
         }
@@ -246,19 +237,9 @@ pub fn build_system_prompt(
         if !sa.is_empty() {
             s.push_str("\n\n# Sub-agents\n");
             s.push_str(
-                "Default to delegating via the `task` tool — do NOT explore the codebase \
-                 yourself when you can delegate it. Specifically: any broad codebase \
-                 exploration, searching, mapping, or research (understanding how something \
-                 works, finding where things live across multiple files, surveying a module) \
-                 MUST go to the explore sub-agent. Scoped, self-contained implementation or \
-                 mechanical work goes to the general sub-agent. Only use your own \
-                 read/grep/glob for small, targeted confirmations on a specific known file or \
-                 line — never for open-ended exploration. The `task` tool runs the agent to \
-                 completion and returns its full report for you to read and react to. You may \
-                 delegate SEVERAL tasks in one turn by calling the task tool multiple times — \
-                 up to 5 sub-agents run concurrently, in parallel, and each returns its own \
-                 report; do this whenever the work splits into independent parts. The \
-                 `agent` argument must be one of the names below:\n",
+                "Broad multi-file survey → task(explore). Known file/line → read it yourself \
+                 (report is summary only). Scoped implement → task(general) or code-implementer. \
+                 Up to 5 parallel task calls. agent must be one of:\n",
             );
             s.push_str(sa);
         }

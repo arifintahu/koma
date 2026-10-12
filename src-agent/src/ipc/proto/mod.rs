@@ -74,6 +74,7 @@ pub enum ClientRequest {
     },
 
     Computer(crate::app::runtime::computer::Control),
+    ScreenBrowser(crate::app::runtime::screen_browser::Control),
     Attach {
         foreground_id: Option<String>,
         cwd: Option<String>,
@@ -144,8 +145,14 @@ pub enum ClientRequest {
         kind: Option<String>,
     },
     /// Collapse a long GUI paste into `pastes/NN-paste.txt` and stage `[Pasted Text #N]`.
+    /// `name` is the dropped filename (display only). `force` stages a short file
+    /// that would otherwise stay inline.
     AttachPaste {
         text: String,
+        #[serde(default)]
+        name: Option<String>,
+        #[serde(default)]
+        force: bool,
     },
     /// Replace the body of a staged pasted-text chip. Disk stays the source of truth.
     UpdatePaste {
@@ -892,6 +899,8 @@ pub enum DaemonEvent {
     },
     ComputerStatus(crate::app::runtime::computer::Status),
     ComputerOperation(crate::app::runtime::computer::Request),
+    ScreenBrowserStatus(crate::app::runtime::screen_browser::Status),
+    ScreenBrowserOperation(crate::app::runtime::screen_browser::Request),
     /// Build-skew handshake (task #142): sent VERY FIRST on attach.
     Hello {
         version: String,
