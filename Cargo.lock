@@ -53,6 +53,7 @@ dependencies = [
  "base64",
  "block2",
  "bytes",
+ "cairo-rs",
  "cc",
  "dirs 5.0.1",
  "dom_smoothie",

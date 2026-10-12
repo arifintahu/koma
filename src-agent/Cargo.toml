@@ -105,6 +105,8 @@ arboard = { version = "3", default-features = false, features = ["image-data"] }
 [target.'cfg(any(target_os = "linux", target_os = "dragonfly", target_os = "freebsd", target_os = "openbsd", target_os = "netbsd"))'.dependencies]
 gtk = { version = "0.18", optional = true }
 webkit2gtk = { version = "2.0", optional = true, features = ["v2_40"] }
+# gtk 0.18 does not enable cairo-rs `png`; WebKit snapshot needs Surface::write_to_png.
+cairo-rs = { version = "0.18", optional = true, features = ["png"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2-app-kit = { version = "0.3", optional = true, default-features = false, features = [
@@ -139,7 +141,7 @@ muda = { version = "0.19", optional = true, default-features = false }
 
 [features]
 default = ["gui", "linker"]
-gui = ["dep:cc", "dep:zbus", "dep:x11-dl", "dep:wry", "dep:tao", "dep:objc2-app-kit", "dep:objc2-web-kit", "dep:objc2-foundation", "dep:block2", "dep:objc2", "dep:rfd", "dep:muda", "dep:png", "dep:webview2-com", "dep:windows", "dep:gtk", "dep:webkit2gtk"]
+gui = ["dep:cc", "dep:zbus", "dep:x11-dl", "dep:wry", "dep:tao", "dep:objc2-app-kit", "dep:objc2-web-kit", "dep:objc2-foundation", "dep:block2", "dep:objc2", "dep:rfd", "dep:muda", "dep:png", "dep:webview2-com", "dep:windows", "dep:gtk", "dep:webkit2gtk", "dep:cairo-rs"]
 linker = [
     "dep:tree-sitter",
     "dep:tree-sitter-rust",
