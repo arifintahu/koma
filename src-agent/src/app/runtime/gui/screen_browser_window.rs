@@ -1064,12 +1064,15 @@ impl BrowserWindow {
         macos_wrap_tab_in_clip(&webview)?;
         #[cfg(target_os = "macos")]
         {
+            // Chrome uses clear underPageBackgroundColor so radius shows the
+            // desktop. The *page* must stay opaque or WKWebView punches through
+            // on navigation the same way WebKitGTK did.
             use objc2_app_kit::NSColor;
             use wry::WebViewExtMacOS;
             unsafe {
                 webview
                     .webview()
-                    .setUnderPageBackgroundColor(Some(&NSColor::clearColor()));
+                    .setUnderPageBackgroundColor(Some(&NSColor::whiteColor()));
             }
         }
 
