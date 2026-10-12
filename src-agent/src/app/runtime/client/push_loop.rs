@@ -739,6 +739,18 @@ pub(super) fn push_loop(
                             "set_prefs" => Some(Control::SetPrefs {
                                 prefs: prefs.unwrap_or_default(),
                             }),
+                            "forget_nav" => {
+                                push(
+                                    serde_json::json!({
+                                        "k": "ScreenBrowserChrome",
+                                        "action": "nav_forget",
+                                        "url": url,
+                                        "tab_id": null,
+                                    })
+                                    .to_string(),
+                                );
+                                None
+                            }
                             "window_state" => Some(Control::WindowState {
                                 window_open,
                                 tabs: tabs.unwrap_or_default(),

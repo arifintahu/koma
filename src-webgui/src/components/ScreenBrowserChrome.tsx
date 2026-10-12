@@ -11,6 +11,7 @@ type SbAction =
   | 'shot' | 'shot_full'
   | 'continue_human' | 'chrome_ready'
   | 'win_drag' | 'win_min' | 'win_max' | 'win_close'
+  | 'nav_allow' | 'nav_always' | 'nav_deny'
 
 function post(action: SbAction, extra?: { url?: string; tab_id?: string }) {
   window.ipc?.postMessage(JSON.stringify({ t: 'sb', a: action, ...extra }))
@@ -181,6 +182,7 @@ export function ScreenBrowserChrome() {
   }, [status?.tabs?.length, status?.active_tab])
 
   const waiting = !!status?.waiting_human
+  const blocked = status?.blocked_nav ?? null
   const tabs = status?.tabs ?? []
   const activeId = status?.active_tab ?? tabs.find(t => t.active)?.id ?? null
   const active = tabs.find(t => t.id === activeId) ?? null
@@ -431,6 +433,46 @@ export function ScreenBrowserChrome() {
           </IconBtn>
         </form>
       </div>
+
+      {blocked && (
+        <div
+          role="alertdialog"
+          data-no-drag
+          className="flex flex-none items-center gap-2 border-t border-koma-border/80 bg-koma-panel px-3 py-1.5 text-[11px] text-koma-fg"
+        >
+          <span className="shrink-0 font-medium">Blocked</span>
+          <span className="min-w-0 flex-1 truncate text-koma-dim" title={blocked.url}>
+            {blocked.can_allow
+              ? `${blocked.label} — allow this navigation?`
+              : blocked.label}
+          </span>
+          {blocked.can_allow && (
+            <>
+              <button
+                type="button"
+                className="inline-flex items-center rounded border border-koma-border bg-koma-bg px-2 py-0.5 text-[11px] hover:bg-koma-hover"
+                onClick={() => post('nav_allow')}
+              >
+                Allow this time
+              </button>
+              <button
+                type="button"
+                className="inline-flex items-center rounded border border-koma-accent/40 bg-koma-bg px-2 py-0.5 text-[11px] text-koma-accent hover:bg-koma-hover"
+                onClick={() => post('nav_always')}
+              >
+                Always allow
+              </button>
+            </>
+          )}
+          <button
+            type="button"
+            className="inline-flex items-center rounded border border-koma-border bg-koma-bg px-2 py-0.5 text-[11px] hover:bg-koma-hover"
+            onClick={() => post('nav_deny')}
+          >
+            {blocked.can_allow ? 'Block' : 'Dismiss'}
+          </button>
+        </div>
+      )}
 
       <style>{`
         .sb-traffic {

@@ -28,22 +28,110 @@ pub fn capture_size(width: u32, height: u32) -> (u32, u32) {
     )
 }
 
-/// Content-tab URL policy: http(s) and about:blank only.
+/// In-webview navigation policy (main frame **and** iframes).
+///
+/// wry's handler cannot tell frames apart, so this must allow what real pages
+/// load in iframes — Cloudflare Turnstile requires `about:blank` / `about:srcdoc`.
+/// `blob:` / `data:` are the same class (widget sandboxes).
+///
+/// Still block `file:`, `javascript:`, `koma://` unless the user reviews and
+/// remembers a grant ([`navigation_allowed`]). Omnibox stays stricter via
+/// [`validate_content_url`].
 pub fn allow_content_url(url: &str) -> bool {
     let u = url.trim();
-    if u.is_empty() {
+    if u.is_empty() || u.chars().any(|c| c.is_control()) {
         return false;
     }
     let lower = u.to_ascii_lowercase();
-    if lower == "about:blank" || lower.starts_with("about:blank?") {
+    if lower == "about:blank"
+        || lower.starts_with("about:blank?")
+        || lower.starts_with("about:blank#")
+        || lower == "about:srcdoc"
+        || lower.starts_with("about:srcdoc?")
+        || lower.starts_with("blob:")
+        || lower.starts_with("data:")
+    {
         return true;
     }
-    if lower.starts_with("https://") || lower.starts_with("http://") {
-        // Reject embedded credentials abuse and control chars.
-        !u.chars().any(|c| c.is_control())
-    } else {
-        false
+    lower.starts_with("https://") || lower.starts_with("http://")
+}
+
+/// Schemes the user must never grant, even with "Always allow".
+pub fn nav_never_allow(url: &str) -> bool {
+    let lower = url.trim().to_ascii_lowercase();
+    lower.starts_with("javascript:")
+        || lower.starts_with("koma:")
+        || lower.starts_with("file:")
+        || lower.starts_with("vbscript:")
+}
+
+/// Stable remember-key for a blocked navigation (`scheme:vscode`, `host:example.com`).
+pub fn nav_remember_key(url: &str) -> Option<String> {
+    if nav_never_allow(url) {
+        return None;
     }
+    let u = url.trim();
+    if u.is_empty() {
+        return None;
+    }
+    if let Ok(parsed) = url::Url::parse(u) {
+        let scheme = parsed.scheme().to_ascii_lowercase();
+        return match scheme.as_str() {
+            "http" | "https" => parsed
+                .host_str()
+                .map(|h| format!("host:{}", h.to_ascii_lowercase())),
+            other if !other.is_empty() => Some(format!("scheme:{other}")),
+            _ => None,
+        };
+    }
+    let lower = u.to_ascii_lowercase();
+    let scheme = lower.split(':').next().unwrap_or("");
+    if scheme.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '+' | '.' | '-'))
+        && !scheme.is_empty()
+    {
+        Some(format!("scheme:{scheme}"))
+    } else {
+        None
+    }
+}
+
+pub fn nav_grant_label(key: &str) -> String {
+    if let Some(host) = key.strip_prefix("host:") {
+        host.to_string()
+    } else if let Some(scheme) = key.strip_prefix("scheme:") {
+        format!("{scheme}: links")
+    } else {
+        key.to_string()
+    }
+}
+
+/// Engine navigation: built-in allowlist, else a remembered / this-session grant.
+pub fn navigation_allowed(
+    url: &str,
+    always: &[String],
+    once: &std::collections::HashSet<String>,
+) -> bool {
+    if allow_content_url(url) {
+        return true;
+    }
+    if nav_never_allow(url) {
+        return false;
+    }
+    match nav_remember_key(url) {
+        Some(k) => always.iter().any(|x| x == &k) || once.contains(&k),
+        None => false,
+    }
+}
+
+/// Pending blocked-nav infobar (Chrome/Firefox site-permission chip).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct BlockedNav {
+    pub url: String,
+    pub key: String,
+    pub label: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tab_id: Option<String>,
+    pub can_allow: bool,
 }
 
 /// True when the tab is the empty/new-tab shell (welcome page lives here).
@@ -54,7 +142,13 @@ pub fn is_blank_url(url: &str) -> bool {
 }
 
 pub fn validate_content_url(url: &str) -> Result<()> {
-    if allow_content_url(url) {
+    let u = url.trim();
+    let lower = u.to_ascii_lowercase();
+    let omnibox_ok = lower == "about:blank"
+        || lower.starts_with("about:blank?")
+        || ((lower.starts_with("https://") || lower.starts_with("http://"))
+            && !u.chars().any(|c| c.is_control()));
+    if omnibox_ok {
         Ok(())
     } else {
         bail!("url must be http://, https://, or about:blank (file: and other schemes are blocked)")
@@ -572,6 +666,9 @@ pub struct Prefs {
     /// "new_tab" (default) or "block"
     #[serde(default = "popup_default")]
     pub popup_policy: String,
+    /// Remembered navigation grants (`scheme:vscode`, `host:example.com`).
+    #[serde(default)]
+    pub allowed_nav: Vec<String>,
 }
 
 fn popup_default() -> String {
@@ -598,6 +695,9 @@ pub struct Status {
     pub message: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub waiting_message: Option<String>,
+    /// Chrome infobar: a page navigation was blocked (review / allow / remember).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub blocked_nav: Option<BlockedNav>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -637,9 +737,49 @@ mod tests {
         assert!(allow_content_url("https://example.com/a"));
         assert!(allow_content_url("http://localhost:3000"));
         assert!(allow_content_url("about:blank"));
+        assert!(allow_content_url("about:blank#"));
+        assert!(allow_content_url("about:srcdoc"));
+        assert!(allow_content_url("blob:https://example.com/uuid"));
+        assert!(allow_content_url("data:text/html,hi"));
         assert!(!allow_content_url("file:///etc/passwd"));
         assert!(!allow_content_url("javascript:alert(1)"));
         assert!(!allow_content_url("koma://localhost"));
+        assert!(validate_content_url("https://elest.io").is_ok());
+        assert!(validate_content_url("about:srcdoc").is_err());
+        assert!(validate_content_url("blob:https://example.com/x").is_err());
+    }
+
+    #[test]
+    fn nav_grants_chrome_style() {
+        use std::collections::HashSet;
+        assert!(nav_never_allow("javascript:alert(1)"));
+        assert!(nav_never_allow("file:///etc/passwd"));
+        assert!(nav_never_allow("koma://localhost"));
+        assert_eq!(nav_remember_key("javascript:x"), None);
+        assert_eq!(
+            nav_remember_key("vscode://file/tmp"),
+            Some("scheme:vscode".into())
+        );
+        assert_eq!(
+            nav_remember_key("https://elest.io/login"),
+            Some("host:elest.io".into())
+        );
+        let mut once = HashSet::new();
+        assert!(!navigation_allowed("vscode://file/tmp", &[], &once));
+        once.insert("scheme:vscode".into());
+        assert!(navigation_allowed("vscode://file/tmp", &[], &once));
+        assert!(navigation_allowed(
+            "vscode://other",
+            &["scheme:vscode".into()],
+            &HashSet::new()
+        ));
+        assert!(!navigation_allowed(
+            "javascript:alert(1)",
+            &["scheme:javascript".into()],
+            &once
+        ));
+        assert_eq!(nav_grant_label("scheme:vscode"), "vscode: links");
+        assert_eq!(nav_grant_label("host:elest.io"), "elest.io");
     }
 
     fn assert_ddg(input: &str) {

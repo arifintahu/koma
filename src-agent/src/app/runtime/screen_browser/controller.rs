@@ -56,6 +56,7 @@ impl Controller {
             observation: None,
             message: "Ready; open the browser window".into(),
             waiting_message: None,
+            blocked_nav: None,
         };
         self.changed = true;
         Ok(())

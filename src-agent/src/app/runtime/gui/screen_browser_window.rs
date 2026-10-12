@@ -4,12 +4,16 @@ use crate::app::runtime::{
     client::HostCtl,
     screen_browser::{
         act::{action_js, wait_is_delay},
-        allow_content_url, duckduckgo_search_url, resolve_omnibox_input, validate_content_url,
-        webview_can_load_url, Action, Observation, Operation, Reply, Request, Status, TabInfo,
-        Transform, Viewport, MAX_TABS,
+        allow_content_url, duckduckgo_search_url, navigation_allowed, nav_grant_label,
+        nav_never_allow, nav_remember_key, resolve_omnibox_input, validate_content_url,
+        webview_can_load_url, Action, BlockedNav, Observation, Operation, Reply, Request, Status,
+        TabInfo, Transform, Viewport, MAX_TABS,
     },
 };
 use anyhow::{bail, Context, Result};
+use std::cell::RefCell;
+use std::collections::HashSet;
+use std::rc::Rc;
 use std::time::{SystemTime, UNIX_EPOCH};
 use tao::{
     dpi::{LogicalPosition, LogicalSize, PhysicalPosition, PhysicalSize},
@@ -564,6 +568,35 @@ fn linux_pin_chrome(chrome: &WebView) {
     }
 }
 
+struct NavGrantState {
+    always: Vec<String>,
+    once: HashSet<String>,
+}
+
+type NavGrants = Rc<RefCell<NavGrantState>>;
+
+fn load_nav_grants(profile_dir: &std::path::Path) -> Vec<String> {
+    let path = profile_dir.join("allowed_nav.json");
+    std::fs::read(&path)
+        .ok()
+        .and_then(|b| serde_json::from_slice::<Vec<String>>(&b).ok())
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|k| k.starts_with("scheme:") || k.starts_with("host:"))
+        .collect()
+}
+
+fn save_nav_grants(profile_dir: &std::path::Path, always: &[String]) {
+    let path = profile_dir.join("allowed_nav.json");
+    if always.is_empty() {
+        let _ = std::fs::remove_file(&path);
+        return;
+    }
+    if let Ok(bytes) = serde_json::to_vec_pretty(always) {
+        let _ = std::fs::write(path, bytes);
+    }
+}
+
 pub(super) struct BrowserWindow {
     pub window: Window,
     chrome: WebView,
@@ -594,6 +627,8 @@ pub(super) struct BrowserWindow {
     always_on_top: bool,
     /// Window stays hidden until chrome React posts chrome_ready / first .sb-chrome metrics.
     chrome_shown: bool,
+    nav_grants: NavGrants,
+    blocked_nav: Option<BlockedNav>,
 }
 
 impl BrowserWindow {
@@ -754,6 +789,17 @@ impl BrowserWindow {
             }
         }
 
+        let mut always = load_nav_grants(&profile_dir);
+        for k in &status.prefs.allowed_nav {
+            if (k.starts_with("scheme:") || k.starts_with("host:")) && !always.contains(k) {
+                always.push(k.clone());
+            }
+        }
+        let nav_grants = Rc::new(RefCell::new(NavGrantState {
+            always,
+            once: HashSet::new(),
+        }));
+
         let mut browser = Self {
             window,
             chrome,
@@ -775,14 +821,43 @@ impl BrowserWindow {
             status: status.clone(),
             always_on_top,
             chrome_shown: false,
+            nav_grants,
+            blocked_nav: None,
         };
         browser.open_tab(Some("about:blank".into()), true)?;
         browser.layout()?;
+        {
+            let always = browser.nav_grants.borrow().always.clone();
+            if !always.is_empty() {
+                browser.status.prefs.allowed_nav = always;
+                let _ = browser.ctl.send(HostCtl::ScreenBrowser {
+                    action: "set_prefs".into(),
+                    window: None,
+                    prefs: Some(browser.status.prefs.clone()),
+                    url: None,
+                    tab_id: None,
+                    tabs: None,
+                    active_tab: None,
+                    window_open: true,
+                    reply: None,
+                });
+            }
+        }
         browser.push_status();
         Ok(browser)
     }
 
-    pub fn apply_status(&mut self, status: Status) {
+    pub fn apply_status(&mut self, mut status: Status) {
+        let local = self.nav_grants.borrow().always.clone();
+        if status.prefs.allowed_nav != local {
+            if status.prefs.allowed_nav.is_empty() && !local.is_empty() {
+                status.prefs.allowed_nav = local;
+            } else {
+                self.nav_grants.borrow_mut().always = status.prefs.allowed_nav.clone();
+                save_nav_grants(&self.profile_dir, &status.prefs.allowed_nav);
+            }
+        }
+        status.blocked_nav = self.blocked_nav.clone();
         self.status = status.clone();
         if status.always_on_top != self.always_on_top {
             self.always_on_top = status.always_on_top;
@@ -946,7 +1021,6 @@ impl BrowserWindow {
         let id_nav = id.clone();
         let id_load = id.clone();
         let id_title = id.clone();
-        let ctl = self.ctl.clone();
         let ctl_load = self.ctl.clone();
         let ctl_title = self.ctl.clone();
         let size = self.window.inner_size();
@@ -979,16 +1053,23 @@ impl BrowserWindow {
             builder.with_url(&start)
         };
         let builder = builder
-            .with_navigation_handler(move |u| {
-                let ok = allow_content_url(&u);
-                if !ok {
-                    let _ = ctl.send(HostCtl::ScreenBrowserChrome {
-                        action: "nav_blocked".into(),
-                        url: Some(u),
-                        tab_id: Some(id_nav.clone()),
-                    });
+            .with_navigation_handler({
+                let ctl = self.ctl.clone();
+                let grants = self.nav_grants.clone();
+                move |u| {
+                    let ok = {
+                        let g = grants.borrow();
+                        navigation_allowed(&u, &g.always, &g.once)
+                    };
+                    if !ok {
+                        let _ = ctl.send(HostCtl::ScreenBrowserChrome {
+                            action: "nav_blocked".into(),
+                            url: Some(u),
+                            tab_id: Some(id_nav.clone()),
+                        });
+                    }
+                    ok
                 }
-                ok
             })
             .with_on_page_load_handler(move |event, url| {
                 let action = match event {
@@ -1142,6 +1223,8 @@ impl BrowserWindow {
         status.tabs = self.tab_infos();
         status.active_tab = self.active.clone();
         status.window_open = true;
+        status.blocked_nav = self.blocked_nav.clone();
+        status.prefs.allowed_nav = self.nav_grants.borrow().always.clone();
         let _ = self.chrome.evaluate_script(&format!(
             "window.dispatchEvent(new CustomEvent('koma-screen-browser',{{detail:{}}}));",
             serde_json::to_string(&status).unwrap_or_else(|_| "null".into())
@@ -1472,13 +1555,97 @@ impl BrowserWindow {
                 });
             }
             "nav_blocked" => {
-                if let Some(id) = tab_id {
-                    if let Some(t) = self.tabs.iter_mut().find(|t| t.id == id) {
-                        t.error = Some(format!("Blocked navigation: {}", url.unwrap_or_default()));
-                        t.loading = false;
-                    }
-                    self.push_status();
+                let u = url.unwrap_or_default();
+                if u.is_empty() {
+                    return Ok(());
                 }
+                let can_allow = !nav_never_allow(&u);
+                let key = nav_remember_key(&u).unwrap_or_default();
+                if can_allow && key.is_empty() {
+                    self.chrome_toast(&format!("Blocked navigation: {u}"));
+                    return Ok(());
+                }
+                self.blocked_nav = Some(BlockedNav {
+                    url: u.clone(),
+                    key: key.clone(),
+                    label: if can_allow {
+                        nav_grant_label(&key)
+                    } else {
+                        u.clone()
+                    },
+                    tab_id,
+                    can_allow,
+                });
+                self.push_status();
+            }
+            "nav_allow" | "nav_always" => {
+                let remember = action == "nav_always";
+                let pending = self.blocked_nav.take();
+                let Some(pending) = pending else {
+                    return Ok(());
+                };
+                if !pending.can_allow || pending.key.is_empty() {
+                    self.push_status();
+                    return Ok(());
+                }
+                {
+                    let mut g = self.nav_grants.borrow_mut();
+                    g.once.insert(pending.key.clone());
+                    if remember && !g.always.iter().any(|k| k == &pending.key) {
+                        g.always.push(pending.key.clone());
+                        save_nav_grants(&self.profile_dir, &g.always);
+                    }
+                    if remember {
+                        self.status.prefs.allowed_nav = g.always.clone();
+                    }
+                }
+                if remember {
+                    let _ = self.ctl.send(HostCtl::ScreenBrowser {
+                        action: "set_prefs".into(),
+                        window: None,
+                        prefs: Some(self.status.prefs.clone()),
+                        url: None,
+                        tab_id: None,
+                        tabs: None,
+                        active_tab: None,
+                        window_open: true,
+                        reply: None,
+                    });
+                }
+                let tab = pending.tab_id.clone();
+                let _ = self.handle_chrome("reload", None, tab);
+            }
+            "nav_deny" => {
+                self.blocked_nav = None;
+                self.push_status();
+            }
+            "nav_forget" => {
+                let key = url.unwrap_or_default();
+                if key.is_empty() {
+                    return Ok(());
+                }
+                {
+                    let mut g = self.nav_grants.borrow_mut();
+                    g.always.retain(|k| k != &key);
+                    g.once.remove(&key);
+                    save_nav_grants(&self.profile_dir, &g.always);
+                    self.status.prefs.allowed_nav = g.always.clone();
+                }
+                if self.blocked_nav.as_ref().map(|b| b.key.as_str()) == Some(key.as_str()) {
+                    self.blocked_nav = None;
+                }
+                let _ = self.ctl.send(HostCtl::ScreenBrowser {
+                    action: "set_prefs".into(),
+                    window: None,
+                    prefs: Some(self.status.prefs.clone()),
+                    url: None,
+                    tab_id: None,
+                    tabs: None,
+                    active_tab: None,
+                    window_open: true,
+                    reply: None,
+                });
+                self.push_status();
             }
             _ => {}
         }
