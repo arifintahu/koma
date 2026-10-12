@@ -25,6 +25,7 @@ fn welcome_html() -> String {
         env!("CARGO_MANIFEST_DIR"),
         "/../assets/icon-128.png"
     )));
+    let radius = window_radius_px();
     format!(
         r##"<!DOCTYPE html>
 <html lang="en">
@@ -51,6 +52,9 @@ fn welcome_html() -> String {
     }}
   }}
   * {{ box-sizing: border-box; margin: 0; padding: 0; }}
+  html {{
+    clip-path: inset(0 round 0 0 {radius}px {radius}px);
+  }}
   html, body {{
     height: 100%;
     background: var(--bg);
@@ -118,6 +122,66 @@ fn welcome_html() -> String {
 /// chrome webview reports its measured height so no black gap remains.
 /// Tabs-in-titlebar + address row (measured live via chrome_metrics).
 const CHROME_H_DEFAULT: f64 = 88.0;
+
+fn window_radius_px() -> i32 {
+    if cfg!(target_os = "macos") {
+        16
+    } else {
+        10
+    }
+}
+
+/// Overlay 6px edge/corner handles on every page webview so the south/east/west
+/// of the frameless window can drag-resize (chrome strip only covers the top).
+/// Mirrors `ResizeHandles` in the main GUI. Only `win_resize` is accepted from
+/// page ipc — never chrome commands like close.
+fn page_init_script() -> String {
+    let r = window_radius_px();
+    format!(
+        r#"{EDGE_RESIZE_JS}
+(function(){{
+  var s=document.getElementById('koma-round');
+  if(s) return;
+  s=document.createElement('style');
+  s.id='koma-round';
+  s.textContent='html{{clip-path:inset(0 round 0px 0px {r}px {r}px)!important;}}';
+  (document.head||document.documentElement).appendChild(s);
+}})();"#
+    )
+}
+
+const EDGE_RESIZE_JS: &str = r#"(function(){
+  if (window.__komaRz) return;
+  window.__komaRz = 1;
+  var D=['e','w','s','se','sw'];
+  var C={
+    e:'top:0;right:0;width:6px;height:100%;cursor:ew-resize;',
+    w:'top:0;left:0;width:6px;height:100%;cursor:ew-resize;',
+    s:'bottom:0;left:6px;right:6px;height:6px;cursor:ns-resize;',
+    se:'bottom:0;right:0;width:12px;height:12px;cursor:nwse-resize;',
+    sw:'bottom:0;left:0;width:12px;height:12px;cursor:nesw-resize;'
+  };
+  function go(d){
+    try{window.ipc&&window.ipc.postMessage(JSON.stringify({t:'sb',a:'win_resize',dir:d}))}catch(e){}
+  }
+  function mount(){
+    if(!document.body) return;
+    D.forEach(function(d){
+      if(document.getElementById('koma-rz-'+d)) return;
+      var el=document.createElement('div');
+      el.id='koma-rz-'+d;
+      el.style.cssText='position:fixed;z-index:2147483647;margin:0;padding:0;border:0;background:transparent;pointer-events:auto;'+C[d];
+      el.addEventListener('mousedown',function(e){
+        if(e.button!==0) return;
+        e.preventDefault();e.stopPropagation();
+        go(d);
+      });
+      document.body.appendChild(el);
+    });
+  }
+  if(document.readyState==='loading') document.addEventListener('DOMContentLoaded',mount);
+  else mount();
+})();"#;
 
 /// Desktop browser UA so sites treat the page like a normal browser (not a bot/webview).
 /// macOS uses a Safari-shaped UA (we are WKWebView) so Google WebAuthn/passkey prompts
@@ -310,14 +374,89 @@ fn linux_fixed_overlay(window: &Window) -> Result<gtk::Fixed> {
     let fixed = gtk::Fixed::new();
     fixed.set_hexpand(true);
     fixed.set_vexpand(true);
+    // Frameless window is transparent; don't paint a black plate behind
+    // chrome's rounded corners (same idea as main GUI html/body).
+    vbox.set_app_paintable(true);
+    fixed.set_app_paintable(true);
     fixed.show();
     vbox.pack_start(&fixed, true, true, 0);
     vbox.show_all();
     Ok(fixed)
 }
 
-/// Force size + position on Linux. GtkFixed keeps the original `put` coords and
-/// size-request unless we update both; wry `set_bounds` only `size_allocate`s.
+/// GtkFixed sizes children to their size-request. We keep that request tiny so
+/// the window can shrink; this runs *after* GtkFixed's allocate and stretches
+/// chrome + the visible page to the real window size.
+#[cfg(target_os = "linux")]
+fn linux_follow_allocate(
+    fixed: &gtk::Fixed,
+    chrome: &WebView,
+    chrome_h: std::rc::Rc<std::cell::Cell<f64>>,
+) {
+    use gtk::prelude::*;
+    use wry::WebViewExtUnix;
+    let chrome_widget = chrome.webview();
+    chrome_widget.set_widget_name("koma-sb-chrome");
+    fixed.connect_size_allocate(move |fixed, alloc| {
+        let h = alloc.height().max(1);
+        let w = alloc.width().max(1);
+        let ax = alloc.x();
+        let ay = alloc.y();
+        let ch = chrome_h.get().round().clamp(1.0, h as f64) as i32;
+        chrome_widget.size_allocate(&gtk::Allocation::new(ax, ay, w, ch));
+        let rest = (h - ch).max(1);
+        let page = gtk::Allocation::new(ax, ay + ch, w, rest);
+        fixed.foreach(|child| {
+            if child.widget_name() == "koma-sb-chrome" {
+                return;
+            }
+            if child.is_visible() {
+                child.size_allocate(&page);
+            }
+        });
+    });
+}
+
+/// Clip the frameless GTK window to a rounded rect so opaque page webviews
+/// cannot paint square corners. No-op on some Wayland compositors (CSS clip
+/// on the page is the fallback).
+#[cfg(target_os = "linux")]
+fn linux_apply_window_shape(window: &Window, width: i32, height: i32, scale: f64) {
+    use gtk::gdk::prelude::GdkSurfaceExt;
+    use gtk::prelude::*;
+    use tao::platform::unix::WindowExtUnix;
+    let w = width.max(1);
+    let h = height.max(1);
+    let r = (window_radius_px() as f64 * scale).max(1.0);
+    let Ok(surface) = cairo::ImageSurface::create(cairo::Format::A8, w, h) else {
+        return;
+    };
+    let Ok(cr) = cairo::Context::new(&surface) else {
+        return;
+    };
+    let deg = std::f64::consts::PI / 180.0;
+    let wf = f64::from(w);
+    let hf = f64::from(h);
+    let r = r.min(wf / 2.0).min(hf / 2.0);
+    cr.new_sub_path();
+    cr.arc(wf - r, r, r, -90.0 * deg, 0.0);
+    cr.arc(wf - r, hf - r, r, 0.0, 90.0 * deg);
+    cr.arc(r, hf - r, r, 90.0 * deg, 180.0 * deg);
+    cr.arc(r, r, r, 180.0 * deg, 270.0 * deg);
+    cr.close_path();
+    cr.set_source_rgb(1.0, 1.0, 1.0);
+    let _ = cr.fill();
+    drop(cr);
+    let Some(region) = surface.create_region() else {
+        return;
+    };
+    if let Some(gdk_win) = window.gtk_window().window() {
+        gdk_win.shape_combine_region(Some(&region), 0, 0);
+    }
+}
+
+/// Force position on Linux. Size-request stays 1×1 so GTK will let the window
+/// shrink; `linux_follow_allocate` stretches children to the real allocation.
 #[cfg(target_os = "linux")]
 fn linux_place(fixed: &gtk::Fixed, webview: &WebView, x: f64, y: f64, w: f64, h: f64, visible: bool) {
     use gtk::prelude::*;
@@ -325,9 +464,7 @@ fn linux_place(fixed: &gtk::Fixed, webview: &WebView, x: f64, y: f64, w: f64, h:
     let widget = webview.webview();
     let xi = x.round() as i32;
     let yi = y.round() as i32;
-    let wi = w.round().max(1.0) as i32;
-    let hi = h.round().max(1.0) as i32;
-    widget.set_size_request(wi, hi);
+    widget.set_size_request(1, 1);
     widget.set_visible(visible);
     if widget.parent().is_some() {
         fixed.move_(&widget, xi, yi);
@@ -365,6 +502,9 @@ pub(super) struct BrowserWindow {
     /// Shared GtkFixed so chrome + tabs are absolutely positioned (not GtkBox-split).
     #[cfg(target_os = "linux")]
     linux_fixed: gtk::Fixed,
+    /// Live chrome height for the GtkFixed size-allocate follower.
+    #[cfg(target_os = "linux")]
+    linux_chrome_h: std::rc::Rc<std::cell::Cell<f64>>,
     /// Kept alive so content webviews share cookies/storage.
     #[allow(dead_code)]
     context: WebContext,
@@ -401,12 +541,15 @@ impl BrowserWindow {
             .and_then(|v| serde_json::from_slice::<Placement>(&v).ok());
         let always_on_top =
             status.prefs.always_on_top || saved.as_ref().map(|s| s.always_on_top).unwrap_or(false);
+        #[cfg(target_os = "linux")]
+        let linux_chrome_h = std::rc::Rc::new(std::cell::Cell::new(CHROME_H_DEFAULT));
         let mut builder = WindowBuilder::new()
             .with_title("Koma · Browser")
             .with_inner_size(PhysicalSize::new(1100, 760))
             .with_min_inner_size(PhysicalSize::new(480, 320))
             .with_focused(true)
-            // Match main koma: frameless + transparent so chrome owns the title tab bar.
+            // Match main koma: frameless + transparent so chrome radius shows
+            // the desktop (not a black plate) and edge handles can resize.
             .with_decorations(false)
             .with_transparent(true)
             .with_resizable(true)
@@ -454,7 +597,10 @@ impl BrowserWindow {
                 position: LogicalPosition::new(0.0, 0.0).into(),
                 size: LogicalSize::new(1100.0, CHROME_H_DEFAULT).into(),
             })
-            .with_background_color((14, 17, 23, 255))
+            // Same as main GUI: transparent webview so CSS radius on `.sb-chrome`
+            // is not filled with an opaque plate in the corner pockets.
+            .with_transparent(true)
+            .with_background_color((0, 0, 0, 0))
             .with_navigation_handler(|url| super::allow_webview_navigation(&url))
             .with_initialization_script(format!(
                 "window.__komaOS='{}';window.__komaScreenBrowserInitial={initial};window.__komaScreenBrowserPalette={palette};\
@@ -483,6 +629,13 @@ impl BrowserWindow {
                     .or_else(|| {
                         // chrome_metrics sends height as `h`
                         value.get("h").and_then(|v| v.as_f64()).map(|h| h.to_string())
+                    })
+                    .or_else(|| {
+                        // win_resize sends direction as `dir` (n/s/e/w/ne/…)
+                        value
+                            .get("dir")
+                            .and_then(|v| v.as_str())
+                            .map(str::to_owned)
                     });
                 let tab_id = value
                     .get("tab_id")
@@ -504,6 +657,20 @@ impl BrowserWindow {
         };
         #[cfg(not(target_os = "linux"))]
         let chrome = chrome_builder.build_as_child(&window)?;
+        #[cfg(target_os = "linux")]
+        linux_follow_allocate(&linux_fixed, &chrome, linux_chrome_h.clone());
+        #[cfg(target_os = "macos")]
+        {
+            // wry's transparent flag does not clear underPageBackgroundColor
+            // (see main GUI webview boot). Opaque default = black in the radius.
+            use objc2_app_kit::NSColor;
+            use wry::WebViewExtMacOS;
+            unsafe {
+                chrome
+                    .webview()
+                    .setUnderPageBackgroundColor(Some(&NSColor::clearColor()));
+            }
+        }
 
         let mut browser = Self {
             window,
@@ -513,6 +680,8 @@ impl BrowserWindow {
             chrome_h: CHROME_H_DEFAULT,
             #[cfg(target_os = "linux")]
             linux_fixed,
+            #[cfg(target_os = "linux")]
+            linux_chrome_h,
             context,
             preferences,
             profile_dir,
@@ -565,6 +734,23 @@ impl BrowserWindow {
         self.save();
     }
 
+    /// Unlock GTK min-size, then start a native edge/corner drag-resize.
+    pub fn drag_resize(&self, dir: tao::window::ResizeDirection) {
+        #[cfg(target_os = "linux")]
+        {
+            use gtk::prelude::*;
+            use tao::platform::unix::WindowExtUnix;
+            use wry::WebViewExtUnix;
+            self.chrome.webview().set_size_request(-1, -1);
+            for tab in &self.tabs {
+                tab.webview.webview().set_size_request(-1, -1);
+            }
+            self.linux_fixed.set_size_request(-1, -1);
+            self.window.gtk_window().set_size_request(-1, -1);
+        }
+        let _ = self.window.drag_resize_window(dir);
+    }
+
     pub fn save(&self) {
         let Some(path) = &self.preferences else {
             return;
@@ -593,6 +779,15 @@ impl BrowserWindow {
             .chrome_h
             .clamp(64.0, (logical_h * 0.35).clamp(64.0, 160.0));
         self.chrome_h = chrome_h;
+        #[cfg(target_os = "linux")]
+        self.linux_chrome_h.set(chrome_h);
+        #[cfg(target_os = "linux")]
+        linux_apply_window_shape(
+            &self.window,
+            size.width as i32,
+            size.height as i32,
+            scale,
+        );
         let content_h = (logical_h - chrome_h).max(40.0);
         let active = self.active.clone();
 
@@ -681,11 +876,9 @@ impl BrowserWindow {
         // WebGPU is available when the OS webview supports it (Safari 17+ / Edge 113+).
         let mut builder = WebViewBuilder::new_with_web_context(&mut self.context)
             .with_user_agent(chrome_user_agent())
-            .with_background_color(if blank {
-                (11, 14, 20, 255)
-            } else {
-                (255, 255, 255, 255)
-            })
+            // Transparent so CSS/window-shape radius isn't filled with a square plate.
+            .with_transparent(true)
+            .with_background_color((0, 0, 0, 0))
             .with_back_forward_navigation_gestures(true)
             .with_bounds(Rect {
                 position: LogicalPosition::new(0.0, chrome_h).into(),
@@ -742,6 +935,28 @@ impl BrowserWindow {
                     }
                     NewWindowResponse::Deny
                 }
+            })
+            .with_initialization_script(page_init_script())
+            .with_ipc_handler({
+                let ctl = self.ctl.clone();
+                move |request| {
+                    let Ok(value) = serde_json::from_str::<serde_json::Value>(request.body()) else {
+                        return;
+                    };
+                    let action = value.get("a").and_then(|v| v.as_str()).unwrap_or("");
+                    if action != "win_resize" {
+                        return;
+                    }
+                    let dir = value
+                        .get("dir")
+                        .and_then(|v| v.as_str())
+                        .map(str::to_owned);
+                    let _ = ctl.send(HostCtl::ScreenBrowserChrome {
+                        action: "win_resize".into(),
+                        url: dir,
+                        tab_id: None,
+                    });
+                }
             });
 
         #[cfg(target_os = "linux")]
@@ -755,6 +970,16 @@ impl BrowserWindow {
         let webview = builder.build_as_child(&self.window)?;
         #[cfg(target_os = "macos")]
         macos_wrap_tab_in_clip(&webview)?;
+        #[cfg(target_os = "macos")]
+        {
+            use objc2_app_kit::NSColor;
+            use wry::WebViewExtMacOS;
+            unsafe {
+                webview
+                    .webview()
+                    .setUnderPageBackgroundColor(Some(&NSColor::clearColor()));
+            }
+        }
 
         let loading = !crate::app::runtime::screen_browser::is_blank_url(&start);
         self.tabs.push(Tab {
