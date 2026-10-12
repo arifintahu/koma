@@ -34,8 +34,8 @@ export function ScreenBrowserSettings() {
         : status.busy
           ? 'Working'
           : 'Ready'
-  const control = (action: string, extra?: { prefs?: Partial<ScreenBrowserPrefs> }) =>
-    req({ r: 'ScreenBrowser', action, ...(extra?.prefs ? { prefs: { ...prefs, ...extra.prefs } } : {}) })
+  const control = (action: string, extra?: { prefs?: Partial<ScreenBrowserPrefs>; url?: string }) =>
+    req({ r: 'ScreenBrowser', action, ...(extra?.prefs ? { prefs: { ...prefs, ...extra.prefs } } : {}), ...(extra?.url ? { url: extra.url } : {}) })
 
   const setPref = <K extends keyof ScreenBrowserPrefs>(key: K, value: ScreenBrowserPrefs[K]) => {
     control('set_prefs', { prefs: { [key]: value } as Partial<ScreenBrowserPrefs> })
@@ -101,6 +101,30 @@ export function ScreenBrowserSettings() {
       </div>
       <p className="mt-2 text-xs text-koma-dim">Clears cookies and site data for this project&apos;s browser profile only (same workdir = shared logins). Tabs are never saved.</p>
     </div>
+
+    {(prefs.allowed_nav?.length ?? 0) > 0 && (
+      <div>
+        <h3 className="font-medium">Site permissions</h3>
+        <p className="mt-1 text-xs leading-relaxed text-koma-dim">
+          Navigations you chose Always allow. Same idea as Chrome/Firefox site settings.
+        </p>
+        <ul className="mt-3 space-y-1">
+          {prefs.allowed_nav!.map(key => (
+            <li key={key} className="flex items-center justify-between gap-3 rounded-md border border-koma-border/70 px-3 py-2">
+              <span className="min-w-0 truncate font-mono text-[11px]">{key.replace(/^scheme:/, '').replace(/^host:/, '')}{key.startsWith('scheme:') ? ':' : ''}</span>
+              <button
+                type="button"
+                className={button}
+                disabled={!available || !enabled}
+                onClick={() => control('forget_nav', { url: key })}
+              >
+                Remove
+              </button>
+            </li>
+          ))}
+        </ul>
+      </div>
+    )}
 
     {status && <details>
       <summary className="cursor-pointer font-medium">Capability details</summary>

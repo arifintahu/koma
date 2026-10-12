@@ -18,6 +18,14 @@ export type ScreenBrowserCapabilities = {
   limitations: string[]
 }
 
+export type ScreenBrowserBlockedNav = {
+  url: string
+  key: string
+  label: string
+  tab_id?: string | null
+  can_allow: boolean
+}
+
 export type ScreenBrowserPrefs = {
   always_on_top: boolean
   auto_screenshot: boolean
@@ -25,6 +33,7 @@ export type ScreenBrowserPrefs = {
   allow_eval: boolean
   download_dir?: string | null
   popup_policy: string
+  allowed_nav?: string[]
 }
 
 export type ScreenBrowserObservation = {
@@ -55,6 +64,7 @@ export type ScreenBrowserStatus = {
   observation?: ScreenBrowserObservation | null
   message: string
   waiting_message?: string | null
+  blocked_nav?: ScreenBrowserBlockedNav | null
 }
 
 export const DEFAULT_SCREEN_BROWSER_PREFS: ScreenBrowserPrefs = {
