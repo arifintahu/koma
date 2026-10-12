@@ -28,22 +28,31 @@ pub fn capture_size(width: u32, height: u32) -> (u32, u32) {
     )
 }
 
-/// Content-tab URL policy: http(s) and about:blank only.
+/// In-webview navigation policy (main frame **and** iframes).
+///
+/// wry's handler cannot tell frames apart, so this must allow what real pages
+/// load in iframes — Cloudflare Turnstile requires `about:blank` / `about:srcdoc`.
+/// `blob:` / `data:` are the same class (widget sandboxes).
+///
+/// Still block `file:`, `javascript:`, `koma://`. Omnibox stays stricter via
+/// [`validate_content_url`].
 pub fn allow_content_url(url: &str) -> bool {
     let u = url.trim();
-    if u.is_empty() {
+    if u.is_empty() || u.chars().any(|c| c.is_control()) {
         return false;
     }
     let lower = u.to_ascii_lowercase();
-    if lower == "about:blank" || lower.starts_with("about:blank?") {
+    if lower == "about:blank"
+        || lower.starts_with("about:blank?")
+        || lower.starts_with("about:blank#")
+        || lower == "about:srcdoc"
+        || lower.starts_with("about:srcdoc?")
+        || lower.starts_with("blob:")
+        || lower.starts_with("data:")
+    {
         return true;
     }
-    if lower.starts_with("https://") || lower.starts_with("http://") {
-        // Reject embedded credentials abuse and control chars.
-        !u.chars().any(|c| c.is_control())
-    } else {
-        false
-    }
+    lower.starts_with("https://") || lower.starts_with("http://")
 }
 
 /// True when the tab is the empty/new-tab shell (welcome page lives here).
@@ -54,7 +63,13 @@ pub fn is_blank_url(url: &str) -> bool {
 }
 
 pub fn validate_content_url(url: &str) -> Result<()> {
-    if allow_content_url(url) {
+    let u = url.trim();
+    let lower = u.to_ascii_lowercase();
+    let omnibox_ok = lower == "about:blank"
+        || lower.starts_with("about:blank?")
+        || ((lower.starts_with("https://") || lower.starts_with("http://"))
+            && !u.chars().any(|c| c.is_control()));
+    if omnibox_ok {
         Ok(())
     } else {
         bail!("url must be http://, https://, or about:blank (file: and other schemes are blocked)")
@@ -637,9 +652,16 @@ mod tests {
         assert!(allow_content_url("https://example.com/a"));
         assert!(allow_content_url("http://localhost:3000"));
         assert!(allow_content_url("about:blank"));
+        assert!(allow_content_url("about:blank#"));
+        assert!(allow_content_url("about:srcdoc"));
+        assert!(allow_content_url("blob:https://example.com/uuid"));
+        assert!(allow_content_url("data:text/html,hi"));
         assert!(!allow_content_url("file:///etc/passwd"));
         assert!(!allow_content_url("javascript:alert(1)"));
         assert!(!allow_content_url("koma://localhost"));
+        assert!(validate_content_url("https://elest.io").is_ok());
+        assert!(validate_content_url("about:srcdoc").is_err());
+        assert!(validate_content_url("blob:https://example.com/x").is_err());
     }
 
     fn assert_ddg(input: &str) {
