@@ -63,7 +63,11 @@ rect fails it retries the default viewport; if `afterScreenUpdates: true` fails 
 retries `false`. The NSError description is kept on failure. Only then does
 observe fall back to `screencapture -l` (`capture_quality: window`).
 
-`capture_quality` is `webview` when the native path succeeds, else `window` (macOS only).
+On Linux, chrome and page webviews are children of a `gtk::Fixed` packed into
+tao's `default_vbox`. Attaching them directly to the vbox (`pack_start(expand=true)`)
+splits the window — a dark gap under the toolbar, with the page starting halfway
+down (and disappearing into that gap while loading). wry `set_bounds` only takes
+effect inside `gtk::Fixed`.
 Desktop-region capture (`screencapture -R` / grim) is **not** used — it composites
 whatever is on screen, so a koma chat window covering the browser would appear in
 the PNG. Grant screen-recording permission only if the macOS window-id fallback is used.

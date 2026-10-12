@@ -296,6 +296,65 @@ fn macos_pin_chrome(chrome: &WebView, tabs: &[Tab], active: Option<&str>) {
     }
 }
 
+/// wry `set_bounds` is a no-op unless the webview lives in a `gtk::Fixed`.
+/// `window.default_vbox()` is a GtkBox that `pack_start(..., expand=true)`s every
+/// child, so chrome and the page split the window — dark gap under the toolbar,
+/// page content starting halfway down (and vanishing into that gap while loading).
+#[cfg(target_os = "linux")]
+fn linux_fixed_overlay(window: &Window) -> Result<gtk::Fixed> {
+    use gtk::prelude::*;
+    use tao::platform::unix::WindowExtUnix;
+    let vbox = window
+        .default_vbox()
+        .ok_or_else(|| anyhow::anyhow!("browser GTK container unavailable"))?;
+    let fixed = gtk::Fixed::new();
+    fixed.set_hexpand(true);
+    fixed.set_vexpand(true);
+    fixed.show();
+    vbox.pack_start(&fixed, true, true, 0);
+    vbox.show_all();
+    Ok(fixed)
+}
+
+/// Force size + position on Linux. GtkFixed keeps the original `put` coords and
+/// size-request unless we update both; wry `set_bounds` only `size_allocate`s.
+#[cfg(target_os = "linux")]
+fn linux_place(fixed: &gtk::Fixed, webview: &WebView, x: f64, y: f64, w: f64, h: f64, visible: bool) {
+    use gtk::prelude::*;
+    use wry::WebViewExtUnix;
+    let widget = webview.webview();
+    let xi = x.round() as i32;
+    let yi = y.round() as i32;
+    let wi = w.round().max(1.0) as i32;
+    let hi = h.round().max(1.0) as i32;
+    widget.set_size_request(wi, hi);
+    widget.set_visible(visible);
+    if widget.parent().is_some() {
+        fixed.move_(&widget, xi, yi);
+    } else {
+        fixed.put(&widget, xi, yi);
+    }
+    let _ = webview.set_visible(visible);
+    if visible {
+        let _ = webview.set_bounds(Rect {
+            position: LogicalPosition::new(x, y).into(),
+            size: LogicalSize::new(w, h).into(),
+        });
+    }
+}
+
+/// Keep the toolbar's GDK window above tab webviews without unparenting
+/// (unparent+put on every layout unmaps chrome while a page is loading).
+#[cfg(target_os = "linux")]
+fn linux_pin_chrome(chrome: &WebView) {
+    use gtk::prelude::WidgetExt;
+    use wry::WebViewExtUnix;
+    let widget = chrome.webview();
+    if let Some(win) = widget.window() {
+        win.raise();
+    }
+}
+
 pub(super) struct BrowserWindow {
     pub window: Window,
     chrome: WebView,
@@ -303,6 +362,9 @@ pub(super) struct BrowserWindow {
     active: Option<String>,
     /// Logical height of the chrome strip (tabs + toolbar). Matches measured UI.
     chrome_h: f64,
+    /// Shared GtkFixed so chrome + tabs are absolutely positioned (not GtkBox-split).
+    #[cfg(target_os = "linux")]
+    linux_fixed: gtk::Fixed,
     /// Kept alive so content webviews share cookies/storage.
     #[allow(dead_code)]
     context: WebContext,
@@ -434,14 +496,11 @@ impl BrowserWindow {
             });
 
         #[cfg(target_os = "linux")]
+        let linux_fixed = linux_fixed_overlay(&window)?;
+        #[cfg(target_os = "linux")]
         let chrome = {
-            use tao::platform::unix::WindowExtUnix;
             use wry::WebViewBuilderExtUnix;
-            chrome_builder.build_gtk(
-                window
-                    .default_vbox()
-                    .ok_or_else(|| anyhow::anyhow!("browser GTK container unavailable"))?,
-            )?
+            chrome_builder.build_gtk(&linux_fixed)?
         };
         #[cfg(not(target_os = "linux"))]
         let chrome = chrome_builder.build_as_child(&window)?;
@@ -452,6 +511,8 @@ impl BrowserWindow {
             tabs: Vec::new(),
             active: None,
             chrome_h: CHROME_H_DEFAULT,
+            #[cfg(target_os = "linux")]
+            linux_fixed,
             context,
             preferences,
             profile_dir,
@@ -535,6 +596,7 @@ impl BrowserWindow {
         let content_h = (logical_h - chrome_h).max(40.0);
         let active = self.active.clone();
 
+        let width = logical_w.max(200.0);
         // Content first (lower z), chrome last (must stay above the page).
         for tab in &self.tabs {
             let is_active = Some(tab.id.as_str()) == active.as_deref();
@@ -545,26 +607,51 @@ impl BrowserWindow {
                 is_active,
                 0.0,
                 chrome_h,
-                logical_w.max(200.0),
+                width,
                 content_h,
             );
-            #[cfg(not(target_os = "macos"))]
+            #[cfg(target_os = "linux")]
+            linux_place(
+                &self.linux_fixed,
+                &tab.webview,
+                0.0,
+                chrome_h,
+                width,
+                content_h,
+                is_active,
+            );
+            #[cfg(not(any(target_os = "macos", target_os = "linux")))]
             {
                 let _ = tab.webview.set_visible(is_active);
                 if is_active {
                     let _ = tab.webview.set_bounds(Rect {
                         position: LogicalPosition::new(0.0, chrome_h).into(),
-                        size: LogicalSize::new(logical_w.max(200.0), content_h).into(),
+                        size: LogicalSize::new(width, content_h).into(),
                     });
                 }
             }
         }
 
-        let _ = self.chrome.set_bounds(Rect {
-            position: LogicalPosition::new(0.0, 0.0).into(),
-            size: LogicalSize::new(logical_w.max(200.0), chrome_h).into(),
-        });
-        let _ = self.chrome.set_visible(true);
+        #[cfg(target_os = "linux")]
+        linux_place(
+            &self.linux_fixed,
+            &self.chrome,
+            0.0,
+            0.0,
+            width,
+            chrome_h,
+            true,
+        );
+        #[cfg(not(target_os = "linux"))]
+        {
+            let _ = self.chrome.set_bounds(Rect {
+                position: LogicalPosition::new(0.0, 0.0).into(),
+                size: LogicalSize::new(width, chrome_h).into(),
+            });
+            let _ = self.chrome.set_visible(true);
+        }
+        #[cfg(target_os = "linux")]
+        linux_pin_chrome(&self.chrome);
         #[cfg(target_os = "macos")]
         macos_pin_chrome(&self.chrome, &self.tabs, self.active.as_deref());
         Ok(())
@@ -659,13 +746,8 @@ impl BrowserWindow {
 
         #[cfg(target_os = "linux")]
         let webview = {
-            use tao::platform::unix::WindowExtUnix;
             use wry::WebViewBuilderExtUnix;
-            builder.build_gtk(
-                self.window
-                    .default_vbox()
-                    .ok_or_else(|| anyhow::anyhow!("browser GTK container unavailable"))?,
-            )?
+            builder.build_gtk(&self.linux_fixed)?
         };
         // Content tabs are child webviews so the page sits under the chrome strip
         // (Chrome multi-tab style) and native takeSnapshot sees real page pixels.
@@ -1751,7 +1833,7 @@ mod capture {
             use base64::Engine;
             use webview2_com::CallDevToolsProtocolMethodCompletedHandler;
             use webview2_com::Microsoft::Web::WebView2::Win32::ICoreWebView2;
-            use windows::core::{Interface, PCWSTR};
+            use windows::core::PCWSTR;
 
             let controller = webview.controller();
             let core: ICoreWebView2 = unsafe { controller.CoreWebView2() }
@@ -1815,9 +1897,9 @@ mod capture {
             use webview2_com::Microsoft::Web::WebView2::Win32::{
                 ICoreWebView2, COREWEBVIEW2_CAPTURE_PREVIEW_IMAGE_FORMAT_PNG,
             };
-            use windows::core::{Interface, PCWSTR};
+            use windows::core::PCWSTR;
             use windows::Win32::System::Com::{
-                IStream, STGM_CREATE, STGM_READWRITE, STGM_SHARE_EXCLUSIVE,
+                IStream, STGC, STGM_CREATE, STGM_READWRITE, STGM_SHARE_EXCLUSIVE,
             };
             use windows::Win32::UI::Shell::SHCreateStreamOnFileEx;
 
@@ -1876,7 +1958,7 @@ mod capture {
                 super::pump_main_events();
             }
 
-            let _ = unsafe { stream.Commit(0) };
+            let _ = unsafe { stream.Commit(STGC(0)) };
             let bytes = fs::read(&path)?;
             let _ = fs::remove_file(&path);
             if bytes.is_empty() {

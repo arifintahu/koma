@@ -1,4 +1,5 @@
 .serena/
+.koma/
 .env
 **/*.pyc
 .agents/
