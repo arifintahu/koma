@@ -1217,6 +1217,12 @@ pub fn run_gui(opts: crate::cli::Opts) -> Result<()> {
                 // Custom close from frameless chrome — same teardown as native X.
                 if action == "win_close" {
                     let _ = proxy.send_event(UserEvent::Win(WinCmd::ScreenBrowserClose));
+                } else if action == "win_resize" {
+                    if let Some(browser) = &screen_browser {
+                        if let Some(dir) = url.as_deref().and_then(parse_resize_dir) {
+                            browser.drag_resize(dir);
+                        }
+                    }
                 } else if let Some(browser) = &mut screen_browser {
                     if let Err(e) = browser.handle_chrome(&action, url, tab_id) {
                         pending_pushes.push_back(serde_json::json!({

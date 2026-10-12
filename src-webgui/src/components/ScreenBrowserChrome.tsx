@@ -4,6 +4,7 @@ import {
   ArrowRight, Camera, ChevronLeft, ChevronRight, FileImage, LoaderCircle, Plus, RefreshCw, Square, X,
 } from 'lucide-react'
 import type { ScreenBrowserStatus, ScreenBrowserTab } from '../types/screenBrowser'
+import { ResizeHandles } from './ResizeHandles'
 
 type SbAction =
   | 'navigate' | 'open' | 'close' | 'select' | 'reload' | 'back' | 'forward' | 'stop'
@@ -103,8 +104,14 @@ export function ScreenBrowserChrome() {
     document.documentElement.style.setProperty('--koma-fg', document.documentElement.style.getPropertyValue('--koma-fg') || '#c8d3f5')
     document.documentElement.classList.add(`os-${os}`)
     // Match main app canvas rounding on macOS frameless windows.
+    // Same stack as main GUI: html/body/#root are transparent so #app-like
+    // chrome radius shows the desktop instead of a black webview plate.
     document.documentElement.style.background = 'transparent'
     if (document.body) document.body.style.background = 'transparent'
+    const root = document.getElementById('root')
+    if (root) root.style.background = 'transparent'
+    const radius = os === 'macos' ? 16 : 10
+    document.documentElement.style.clipPath = `inset(0 round ${radius}px ${radius}px 0 0)`
     setStatus(window.__komaScreenBrowserInitial ?? null)
     applyPalette(window.__komaScreenBrowserPalette as Record<string, unknown> | undefined)
     const receive = (event: Event) => {
@@ -214,16 +221,24 @@ export function ScreenBrowserChrome() {
     post('win_drag')
   }
 
+  const radius = os === 'macos' ? 16 : 10
+
   return (
     <main
-      className="sb-chrome flex flex-col overflow-hidden bg-koma-bg text-koma-fg select-none"
+      className="sb-chrome relative flex flex-col overflow-hidden bg-koma-bg text-koma-fg select-none"
       style={{
         height: 'fit-content',
         width: '100%',
-        borderTopLeftRadius: os === 'macos' ? 12 : 10,
-        borderTopRightRadius: os === 'macos' ? 12 : 10,
+        // Same canvas radii as main GUI `#app` / `.os-macos#app` — top only;
+        // the page webview owns the rest of the window.
+        borderTopLeftRadius: radius,
+        borderTopRightRadius: radius,
       }}
     >
+      <ResizeHandles
+        dirs={['n', 'e', 'w', 'ne', 'nw']}
+        message={(dir) => ({ t: 'sb', a: 'win_resize', dir })}
+      />
       {toast && (
         <div
           role="status"
