@@ -144,7 +144,9 @@ fn page_init_script() -> String {
   if(s) return;
   s=document.createElement('style');
   s.id='koma-round';
-  s.textContent='html{{clip-path:inset(0 round 0px 0px {r}px {r}px)!important;}}';
+  // Same idea as main GUI `#app`: opaque canvas on a transparent webview so
+  // clip-path radius shows the desktop, not a hole through the page.
+  s.textContent='html{{background-color:Canvas;min-height:100%;clip-path:inset(0 round 0px 0px {r}px {r}px)!important}}body{{min-height:100%;background-color:Canvas}}';
   (document.head||document.documentElement).appendChild(s);
 }})();"#
     )
@@ -374,14 +376,78 @@ fn linux_fixed_overlay(window: &Window) -> Result<gtk::Fixed> {
     let fixed = gtk::Fixed::new();
     fixed.set_hexpand(true);
     fixed.set_vexpand(true);
-    // Frameless window is transparent; don't paint a black plate behind
-    // chrome's rounded corners (same idea as main GUI html/body).
+    // Window is transparent so chrome radius shows the desktop. Do NOT paint
+    // an opaque plate on the full vbox — that fills the top corner pockets.
     vbox.set_app_paintable(true);
     fixed.set_app_paintable(true);
     fixed.show();
     vbox.pack_start(&fixed, true, true, 0);
     vbox.show_all();
     Ok(fixed)
+}
+
+/// Opaque native window covering the page slot while WebKitGTK has cleared
+/// to alpha 0 (`load-started` → `load-committed`). A GTK draw on the parent
+/// cannot fill that hole: the webview is its own GdkWindow and composites
+/// through the transparent toplevel to the wallpaper. Tab-switch "fixed" it
+/// because hide/show remapped the webview; this plate is the same idea
+/// without changing tabs. Hidden again on committed/finished.
+#[cfg(target_os = "linux")]
+fn linux_page_plate(fixed: &gtk::Fixed) -> gtk::EventBox {
+    use gtk::prelude::*;
+    let plate = gtk::EventBox::new();
+    plate.set_widget_name("koma-sb-plate");
+    plate.set_visible_window(true);
+    plate.set_size_request(1, 1);
+    plate.set_app_paintable(false);
+    plate.set_visible(false);
+    plate.connect_draw(|w, cr| {
+        let a = w.allocation();
+        cr.set_source_rgb(1.0, 1.0, 1.0);
+        cr.rectangle(0.0, 0.0, f64::from(a.width()), f64::from(a.height()));
+        let _ = cr.fill();
+        gtk::glib::Propagation::Proceed
+    });
+    fixed.put(&plate, 0, 0);
+    plate.show();
+    plate.set_visible(false);
+    plate
+}
+
+/// Cover the page slot for an in-place navigation. wry only forwards
+/// Committed as `page_started`, which is after the transparent flash.
+#[cfg(target_os = "linux")]
+fn linux_cover_on_load(webview: &WebView, plate: &gtk::EventBox, chrome: &WebView) {
+    use gtk::prelude::*;
+    use webkit2gtk::WebViewExt;
+    use wry::WebViewExtUnix;
+    let plate = plate.clone();
+    let chrome_w = chrome.webview();
+    let view = webview.webview();
+    let _ = webview.set_background_color((255, 255, 255, 255));
+    view.set_background_color(&gtk::gdk::RGBA::new(1.0, 1.0, 1.0, 1.0));
+    view.connect_load_changed(move |view, ev| {
+        match ev {
+            webkit2gtk::LoadEvent::Started => {
+                view.set_background_color(&gtk::gdk::RGBA::new(1.0, 1.0, 1.0, 1.0));
+                if view.is_visible() {
+                    plate.set_visible(true);
+                    if let Some(win) = plate.window() {
+                        win.raise();
+                    }
+                    if let Some(win) = chrome_w.window() {
+                        win.raise();
+                    }
+                }
+            }
+            webkit2gtk::LoadEvent::Committed | webkit2gtk::LoadEvent::Finished => {
+                if view.is_visible() {
+                    plate.set_visible(false);
+                }
+            }
+            _ => {}
+        }
+    });
 }
 
 /// GtkFixed sizes children to their size-request. We keep that request tiny so
@@ -392,6 +458,7 @@ fn linux_follow_allocate(
     fixed: &gtk::Fixed,
     chrome: &WebView,
     chrome_h: std::rc::Rc<std::cell::Cell<f64>>,
+    plate: gtk::EventBox,
 ) {
     use gtk::prelude::*;
     use wry::WebViewExtUnix;
@@ -406,8 +473,14 @@ fn linux_follow_allocate(
         chrome_widget.size_allocate(&gtk::Allocation::new(ax, ay, w, ch));
         let rest = (h - ch).max(1);
         let page = gtk::Allocation::new(ax, ay + ch, w, rest);
+        plate.set_size_request(1, 1);
+        if plate.parent().is_some() {
+            fixed.move_(&plate, ax, ay + ch);
+        }
+        plate.size_allocate(&page);
         fixed.foreach(|child| {
-            if child.widget_name() == "koma-sb-chrome" {
+            let name = child.widget_name();
+            if name == "koma-sb-chrome" || name == "koma-sb-plate" {
                 return;
             }
             if child.is_visible() {
@@ -505,6 +578,9 @@ pub(super) struct BrowserWindow {
     /// Live chrome height for the GtkFixed size-allocate follower.
     #[cfg(target_os = "linux")]
     linux_chrome_h: std::rc::Rc<std::cell::Cell<f64>>,
+    /// Opaque page-slot cover shown between WebKit load-started and committed.
+    #[cfg(target_os = "linux")]
+    linux_plate: gtk::EventBox,
     /// Kept alive so content webviews share cookies/storage.
     #[allow(dead_code)]
     context: WebContext,
@@ -658,7 +734,14 @@ impl BrowserWindow {
         #[cfg(not(target_os = "linux"))]
         let chrome = chrome_builder.build_as_child(&window)?;
         #[cfg(target_os = "linux")]
-        linux_follow_allocate(&linux_fixed, &chrome, linux_chrome_h.clone());
+        let linux_plate = linux_page_plate(&linux_fixed);
+        #[cfg(target_os = "linux")]
+        linux_follow_allocate(
+            &linux_fixed,
+            &chrome,
+            linux_chrome_h.clone(),
+            linux_plate.clone(),
+        );
         #[cfg(target_os = "macos")]
         {
             // wry's transparent flag does not clear underPageBackgroundColor
@@ -682,6 +765,8 @@ impl BrowserWindow {
             linux_fixed,
             #[cfg(target_os = "linux")]
             linux_chrome_h,
+            #[cfg(target_os = "linux")]
+            linux_plate,
             context,
             preferences,
             profile_dir,
@@ -876,9 +961,14 @@ impl BrowserWindow {
         // WebGPU is available when the OS webview supports it (Safari 17+ / Edge 113+).
         let mut builder = WebViewBuilder::new_with_web_context(&mut self.context)
             .with_user_agent(chrome_user_agent())
-            // Transparent so CSS/window-shape radius isn't filled with a square plate.
-            .with_transparent(true)
-            .with_background_color((0, 0, 0, 0))
+            // Opaque plate like main GUI `#app`. Widget stays non-transparent so
+            // pages cannot composite with the desktop; linux_apply_window_shape
+            // + html clip-path round the bottom corners.
+            .with_background_color(if blank {
+                (11, 14, 20, 255)
+            } else {
+                (255, 255, 255, 255)
+            })
             .with_back_forward_navigation_gestures(true)
             .with_bounds(Rect {
                 position: LogicalPosition::new(0.0, chrome_h).into(),
@@ -964,6 +1054,8 @@ impl BrowserWindow {
             use wry::WebViewBuilderExtUnix;
             builder.build_gtk(&self.linux_fixed)?
         };
+        #[cfg(target_os = "linux")]
+        linux_cover_on_load(&webview, &self.linux_plate, &self.chrome);
         // Content tabs are child webviews so the page sits under the chrome strip
         // (Chrome multi-tab style) and native takeSnapshot sees real page pixels.
         #[cfg(not(target_os = "linux"))]
