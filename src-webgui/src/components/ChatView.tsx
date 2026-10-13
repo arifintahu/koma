@@ -13,7 +13,6 @@ import {
   Check,
   ChevronDown,
   ChevronRight,
-  Circle,
   FileText,
   Files,
   Frame,
@@ -77,6 +76,13 @@ function toolLooksFailed(output: string | null): boolean {
   return /^error:/i.test(t) || /exit code:\s*[1-9]\d*/.test(t)
 }
 
+function toolLooksBlocked(output: string | null): boolean {
+  if (output == null) return false
+  return /^\s*blocked by harness:/i.test(output)
+}
+
+const HARNESS_TOOLS = new Set(['write', 'edit', 'delete'])
+
 function toolArgString(args: string, key: string): string {
   try {
     const v = JSON.parse(args)?.[key]
@@ -130,6 +136,7 @@ const ToolCallRow = memo(function ToolCallRow({ call }: { call: ToolCallView }) 
   const done = call.status === 'done'
   const req = useKoma((s) => s.req)
   const awaitingApproval = useKoma((s) => s.session.awaitingApproval)
+  const pendingCall = useKoma((s) => s.session.pendingCall)
   const pendingIsPlan = useKoma(
     (s) =>
       s.session.pendingCall?.name === 'plan_ready' ||
@@ -197,7 +204,8 @@ const ToolCallRow = memo(function ToolCallRow({ call }: { call: ToolCallView }) 
   const pathHint = isPathToolPreview(call.name)
   const output = call.output != null ? call.output.replace(/\s+$/, '') : ''
   const hasOutput = output.trim() !== ''
-  const failed = done && toolLooksFailed(call.output)
+  const blocked = done && toolLooksBlocked(call.output)
+  const failed = done && !blocked && toolLooksFailed(call.output)
 
   let imageUrl: string | null = null
   if (call.name === 'show_image' && done && hasOutput) {
@@ -243,7 +251,14 @@ const ToolCallRow = memo(function ToolCallRow({ call }: { call: ToolCallView }) 
     bashMatch != null &&
     bashMatch.status === 'running' &&
     bashMatch.blocking === true
-  const status = !settled ? 'running' : failed ? 'failed' : 'done'
+  const status = !settled ? 'running' : blocked ? 'blocked' : failed ? 'failed' : 'done'
+  const harnessWait =
+    !settled &&
+    (HARNESS_TOOLS.has(call.name) ||
+      (awaitingApproval &&
+        pendingCall != null &&
+        !pendingIsPlan &&
+        (pendingCall.id === call.id || pendingCall.name === call.name)))
 
   return (
     <div className="overflow-hidden rounded-md border border-koma-border bg-koma-panel/30">
@@ -317,8 +332,15 @@ const ToolCallRow = memo(function ToolCallRow({ call }: { call: ToolCallView }) 
           type="button"
           aria-label={open ? 'Collapse' : 'Expand'}
           onClick={() => setOpen((v) => !v)}
-          className="flex flex-none items-center text-koma-dim hover:text-koma-fg"
+          className="flex flex-none items-center gap-1 text-koma-dim hover:text-koma-fg"
         >
+          {harnessWait ? (
+            <span title="Waiting on harness">
+              <BrailleSpinner size={12} className="flex-none text-koma-warn" />
+            </span>
+          ) : blocked ? (
+            <AlertCircle size={12} className="flex-none text-koma-error" aria-label="Blocked by harness" />
+          ) : null}
           <ChevronDown
             size={12}
             className={`transition-transform ${open ? 'rotate-180' : ''}`}
