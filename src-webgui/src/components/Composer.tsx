@@ -231,9 +231,6 @@ export function Composer() {
   // Add-only: stale entries that no longer appear in the text are harmless,
   // this is only ever membership-tested, never iterated positionally.
   const [pasteEditMarker, setPasteEditMarker] = useState<number | null>(null)
-  // Mascot swap-on-send: bumped once per submit, telling CatMascot to pick a
-  // different random cat. Otherwise it just keeps looping the current one.
-  const [mascotSwap, setMascotSwap] = useState(0)
   // Thinking-bubble word, re-randomized every 1s while `working` is true (see
   // effect below). Empty when idle; the bubble itself is hidden via
   // `working` so a stale word never flashes on the next turn.
@@ -544,7 +541,6 @@ export function Composer() {
       if (cmd) {
         req({ r: 'Shell', cmd })
         setInput('')
-        setMascotSwap((t) => t + 1)
         requestScrollBottom()
         return
       }
@@ -569,8 +565,6 @@ export function Composer() {
     // Keep cancelled rows that are still waiting for a marker so the late
     // snapshot can drop the chip the user already removed.
     markerInsertQueue.current = markerInsertQueue.current.filter((row) => row.cancelled && row.markerN == null)
-    // Swap the mascot to a new random cat on every send.
-    setMascotSwap((t) => t + 1)
     // Force the transcript back to the bottom on send (re-engages the W4
     // scroll-stick even if the user had scrolled up).
     requestScrollBottom()
@@ -1145,8 +1139,8 @@ export function Composer() {
         }`}
       >
         {/* Mascot + thinking chip: one horizontal cluster on the card's top-right.
-            Bubble sits LEFT of the cat (not stacked above it). Cat is decorative
-            and always on; the chip only appears while `working`. */}
+            Bubble sits LEFT of the cat (not stacked above it). Cat rolls while
+            `working`, black cat when idle; the chip only appears while `working`. */}
         <div
           className="pointer-events-none absolute -top-3 right-3 z-10 flex items-center gap-2"
           aria-hidden="true"
@@ -1158,7 +1152,7 @@ export function Composer() {
           >
             {thinkingWord ? `${thinkingWord.toLowerCase()}…` : '…'}
           </span>
-          <CatMascot swapTrigger={mascotSwap} />
+          <CatMascot working={working} />
         </div>
 
         {designChips.length > 0 && (

@@ -4,7 +4,7 @@
 // animation JSON of each public/lottie/*.lottie archive, images inlined. Rendered
 // by lottie-react in the waiting indicator.
 declare module 'virtual:lottie-animations' {
-  const animations: object[]
+  const animations: Record<string, object>
   export default animations
 }
 
