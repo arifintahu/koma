@@ -91,6 +91,7 @@ windows-sys = { version = "0.59", features = [
     "Win32_System_Registry",
     "Win32_System_Time",
     "Win32_UI_WindowsAndMessaging",
+    "Win32_Graphics_Gdi",
 ] }
 # Match wry 0.55's WebView2 stack so CapturePreview can run on the GUI host.
 webview2-com = { version = "0.38", optional = true }

@@ -139,8 +139,12 @@ fn window_radius_px() -> i32 {
 /// of the frameless window can drag-resize (chrome strip only covers the top).
 /// Mirrors `ResizeHandles` in the main GUI. Only `win_resize` is accepted from
 /// page ipc — never chrome commands like close.
+///
+/// Do **not** inject `clip-path` / `background-color:Canvas` into third-party
+/// pages. WKWebView (and some WebView2 builds) go blank after first paint when
+/// the root element is clipped; Linux survived because `linux_apply_window_shape`
+/// rounds the native window instead. Welcome HTML still has its own clip-path.
 fn page_init_script() -> String {
-    let r = window_radius_px();
     format!(
         r#"(function(){{
   if(!window.__komaNoVT){{
@@ -153,17 +157,7 @@ fn page_init_script() -> String {
     }}catch(e){{}}
   }}
 }})();
-{EDGE_RESIZE_JS}
-(function(){{
-  var s=document.getElementById('koma-round');
-  if(s) return;
-  s=document.createElement('style');
-  s.id='koma-round';
-  // Same idea as main GUI `#app`: opaque canvas on a transparent webview so
-  // clip-path radius shows the desktop, not a hole through the page.
-  s.textContent='html{{background-color:Canvas;min-height:100%;clip-path:inset(0 round 0px 0px {r}px {r}px)!important}}body{{min-height:100%;background-color:Canvas}}';
-  (document.head||document.documentElement).appendChild(s);
-}})();"#
+{EDGE_RESIZE_JS}"#
     )
 }
 
@@ -277,7 +271,8 @@ fn macos_wrap_tab_in_clip(webview: &WebView) -> Result<()> {
             NSAutoresizingMaskOptions::ViewWidthSizable
                 | NSAutoresizingMaskOptions::ViewHeightSizable,
         );
-        tab_view.setClipsToBounds(true);
+        // Never clipsToBounds on the WKWebView itself — that blanks the
+        // out-of-process layer after navigation. The wrapper clips.
     }
     Ok(())
 }
@@ -339,7 +334,6 @@ fn macos_layout_tab(
         }
         tab_view.setFrame(frame);
         tab_view.setHidden(!visible);
-        tab_view.setClipsToBounds(true);
         tab_view.setAutoresizingMask(NSAutoresizingMaskOptions::ViewNotSizable);
     }
 }
@@ -578,6 +572,39 @@ fn linux_apply_window_shape(window: &Window, width: i32, height: i32, scale: f64
     }
 }
 
+/// Round the Win32 window so we do not need CSS `clip-path` on page HTML.
+/// Layered/transparent parents make WebView2 paint a white surface; the
+/// browser window is opaque on Windows and this region cuts the corners.
+#[cfg(target_os = "windows")]
+fn windows_apply_window_shape(window: &Window, width: i32, height: i32, scale: f64) {
+    use tao::platform::windows::WindowExtWindows;
+    use windows_sys::Win32::Foundation::HWND;
+    use windows_sys::Win32::Graphics::Gdi::{CreateRoundRectRgn, DeleteObject};
+    use windows_sys::Win32::UI::WindowsAndMessaging::SetWindowRgn;
+    let w = width.max(1);
+    let h = height.max(1);
+    let r = ((window_radius_px() as f64) * scale).round().max(1.0) as i32;
+    let rgn = unsafe { CreateRoundRectRgn(0, 0, w + 1, h + 1, r * 2, r * 2) };
+    if rgn == 0 {
+        return;
+    }
+    let hwnd = window.hwnd() as HWND;
+    let ok = unsafe { SetWindowRgn(hwnd, rgn, 1) };
+    if ok == 0 {
+        unsafe {
+            DeleteObject(rgn);
+        }
+    }
+}
+
+/// WebView2 blanks after the parent moves/resizes unless the controller
+/// is told the HWND geometry changed.
+#[cfg(target_os = "windows")]
+fn windows_sync_webview(webview: &WebView) {
+    use wry::WebViewExtWindows;
+    let _ = unsafe { webview.controller().NotifyParentWindowPositionChanged() };
+}
+
 /// Force position on Linux. Size-request stays 1×1 so GTK will let the window
 /// shrink; `linux_follow_allocate` stretches children to the real allocation.
 #[cfg(target_os = "linux")]
@@ -705,10 +732,11 @@ impl BrowserWindow {
             .with_inner_size(PhysicalSize::new(1100, 760))
             .with_min_inner_size(PhysicalSize::new(480, 320))
             .with_focused(true)
-            // Match main koma: frameless + transparent so chrome radius shows
-            // the desktop (not a black plate) and edge handles can resize.
+            // Frameless. Transparent on macOS/Linux so chrome CSS radius shows the
+            // desktop. Windows WebView2 in a WS_EX_LAYERED host paints white —
+            // stay opaque there and round with SetWindowRgn.
             .with_decorations(false)
-            .with_transparent(true)
+            .with_transparent(cfg!(not(target_os = "windows")))
             .with_resizable(true)
             .with_always_on_top(always_on_top)
             // Hidden until chrome React has painted tabs (avoids empty "New Tab" flash).
@@ -756,8 +784,13 @@ impl BrowserWindow {
             })
             // Same as main GUI: transparent webview so CSS radius on `.sb-chrome`
             // is not filled with an opaque plate in the corner pockets.
-            .with_transparent(true)
-            .with_background_color((0, 0, 0, 0))
+            // Windows: opaque (layered parent + transparent child = white page).
+            .with_transparent(cfg!(not(target_os = "windows")))
+            .with_background_color(if cfg!(target_os = "windows") {
+                (14, 17, 23, 255)
+            } else {
+                (0, 0, 0, 0)
+            })
             .with_navigation_handler(|url| super::allow_webview_navigation(&url))
             .with_initialization_script(format!(
                 "window.__komaOS='{}';window.__komaScreenBrowserInitial={initial};window.__komaScreenBrowserPalette={palette};\
@@ -996,6 +1029,13 @@ impl BrowserWindow {
             size.height as i32,
             scale,
         );
+        #[cfg(target_os = "windows")]
+        windows_apply_window_shape(
+            &self.window,
+            size.width as i32,
+            size.height as i32,
+            scale,
+        );
         let content_h = (logical_h - chrome_h).max(40.0);
         let active = self.active.clone();
 
@@ -1031,6 +1071,8 @@ impl BrowserWindow {
                         position: LogicalPosition::new(0.0, chrome_h).into(),
                         size: LogicalSize::new(width, content_h).into(),
                     });
+                    #[cfg(target_os = "windows")]
+                    windows_sync_webview(&tab.webview);
                 }
             }
         }
@@ -1052,6 +1094,8 @@ impl BrowserWindow {
                 size: LogicalSize::new(width, chrome_h).into(),
             });
             let _ = self.chrome.set_visible(true);
+            #[cfg(target_os = "windows")]
+            windows_sync_webview(&self.chrome);
         }
         #[cfg(target_os = "linux")]
         linux_pin_chrome(&self.chrome);
@@ -1084,8 +1128,8 @@ impl BrowserWindow {
         let mut builder = WebViewBuilder::new_with_web_context(&mut self.context)
             .with_user_agent(chrome_user_agent())
             // Opaque plate like main GUI `#app`. Widget stays non-transparent so
-            // pages cannot composite with the desktop; linux_apply_window_shape
-            // + html clip-path round the bottom corners.
+            // pages cannot composite with the desktop. Native window shape (Linux /
+            // Windows) rounds the frame; do not clip third-party HTML.
             // macOS: do not pass a color here. wry's transparent feature treats
             // any background color as `drawsBackground = false`, which is the
             // navigation punch-through (tab + URI, no body). Color is applied
@@ -1479,8 +1523,9 @@ impl BrowserWindow {
                         }
                         t.error = None;
                     }
-                    // Don't layout() here: Google login is a redirect storm and
-                    // remapping every WebKitGTK tab on each hop freezes later loads.
+                    // Don't layout() here: remapping the page webview on every
+                    // start/finish blanks WKWebView/WebView2 and freezes WebKitGTK
+                    // during redirect storms. Pin chrome only.
                     #[cfg(target_os = "linux")]
                     linux_pin_chrome(&self.chrome);
                     #[cfg(target_os = "macos")]
@@ -1488,7 +1533,7 @@ impl BrowserWindow {
                         if let Some(t) = self.tabs.iter().find(|t| t.id == id) {
                             pin_page_opaque(&t.webview, false);
                         }
-                        let _ = self.layout();
+                        macos_pin_chrome(&self.chrome, &self.tabs, self.active.as_deref());
                     }
                     #[cfg(target_os = "windows")]
                     if let Some(t) = self.tabs.iter().find(|t| t.id == id) {
@@ -1524,7 +1569,7 @@ impl BrowserWindow {
                         if let Some(t) = self.tabs.iter().find(|t| t.id == id) {
                             pin_page_opaque(&t.webview, false);
                         }
-                        let _ = self.layout();
+                        macos_pin_chrome(&self.chrome, &self.tabs, self.active.as_deref());
                     }
                     #[cfg(target_os = "windows")]
                     if let Some(t) = self.tabs.iter().find(|t| t.id == id) {
@@ -2612,5 +2657,19 @@ mod capture {
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod page_script_tests {
+    use super::page_init_script;
+
+    #[test]
+    fn page_init_script_does_not_clip_third_party_pages() {
+        let s = page_init_script();
+        assert!(!s.contains("clip-path"), "{s}");
+        assert!(!s.contains("koma-round"), "{s}");
+        assert!(!s.contains("background-color:Canvas"), "{s}");
+        assert!(s.contains("win_resize"), "{s}");
     }
 }
