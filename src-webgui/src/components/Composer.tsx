@@ -1139,8 +1139,8 @@ export function Composer() {
         }`}
       >
         {/* Mascot + thinking chip: one horizontal cluster on the card's top-right.
-            Bubble sits LEFT of the cat (not stacked above it). Cat rolls while
-            `working`, black cat when idle; the chip only appears while `working`. */}
+            Bubble sits LEFT of the cat (not stacked above it). Cat is black while
+            `working`, rolling loader when idle; the chip only appears while `working`. */}
         <div
           className="pointer-events-none absolute -top-3 right-3 z-10 flex items-center gap-2"
           aria-hidden="true"

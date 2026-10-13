@@ -1,8 +1,8 @@
 import { Component, Suspense, lazy, type ReactNode } from 'react'
 
 // Persistent mascot pinned at the composer's top-right corner: a small
-// (~48px) rounded box. Two states only — rolling while `session.working`
-// (streaming / thinking), black cat when idle. Degrades to a bare pulse if
+// (~48px) rounded box. Two states only — black cat while `session.working`
+// (streaming / thinking), rolling loader when idle. Degrades to a bare pulse if
 // no animations bundled or the player throws.
 
 const CatMascotLottie = lazy(() => import('./CatMascotLottie'))

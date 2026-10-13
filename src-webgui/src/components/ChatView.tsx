@@ -579,7 +579,7 @@ const AssistantMessage = memo(function AssistantMessage({
     <div className="flex gap-2">
       <div
         aria-hidden
-        className="w-[9px] flex-none self-stretch bg-[radial-gradient(circle,var(--color-koma-fg)_1.1px,transparent_1.25px)] bg-center bg-repeat-y [background-size:9px_5px]"
+        className="w-[9px] flex-none self-stretch bg-[radial-gradient(circle,var(--color-koma-fg)_1.1px,transparent_1.25px)] bg-center bg-repeat-y opacity-60 [background-size:9px_5px]"
       />
       <div className="relative min-w-0 flex-1">
         {hasReasoning && <ReasoningBlock text={reasoning as string} defaultOpen={streaming} />}
