@@ -594,7 +594,7 @@ function SessionSettings() {
   }
   const commitContextLimit = () => {
     const n = parseInt(contextLimit, 10)
-    const safe = isNaN(n) || n < 0 ? 0 : Math.min(n, 300_000)
+    const safe = isNaN(n) || n < 0 ? 0 : n
     setContextLimit(String(safe))
     if (safe !== (values.contextWindowLimit ?? 0)) req({ r: 'SetPrefs', contextWindowLimit: safe })
   }
@@ -665,7 +665,7 @@ function SessionSettings() {
       <SettingRow
         input
         label="Context window limit"
-        desc="Maximum context size in tokens. Use 0 for automatic detection (128k fallback), or set a lower limit up to 300k."
+        desc="Maximum context size in tokens. 0 detects the model and bumps anything above 300k down to 300k. A positive number is your limit and may exceed 300k, up to the detected model window. Above 300k is your risk."
       >
         <input
           type="text"

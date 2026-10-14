@@ -593,7 +593,10 @@ impl Tool for Bash {
     }
     fn description(&self) -> &'static str {
         "Run a shell command in the workspace for builds, tests, and other non-git work. \
-         A command that itself runs git is rejected."
+         A command that itself runs git is rejected. \
+         Output is capped at 90k chars / 2000 lines — narrow the command or pipe through head/grep; do not dump huge logs. \
+         Known noisy commands (cargo, npm, pip, docker, make) may be auto-compressed; a [filter: <name>, N -> M lines] marker shows when. \
+         If output was compressed, truncated, or the command failed, the complete output is saved and a 'full-output: <path>' line points at it — read that file with offset/limit; do not dump it whole or re-run the command."
     }
     fn parameters(&self) -> Value {
         json!({

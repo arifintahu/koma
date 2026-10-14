@@ -393,8 +393,9 @@ impl DaemonHub {
                 sess.settings.max_output_tokens = v.min(1_000_000);
             }
             if let Some(v) = context_window_limit {
-                sess.settings.context_window_limit =
-                    v.min(crate::service::context_limits::OPERATING_CEILING);
+                // Stored as given. resolve() bumps an unset window down to
+                // 300k and caps a positive value at the known model window.
+                sess.settings.context_window_limit = v;
             }
             if let Some(v) = context_model_alias {
                 sess.settings.context_model_alias = v.trim().chars().take(200).collect();

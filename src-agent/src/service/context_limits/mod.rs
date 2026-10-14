@@ -6,6 +6,9 @@ mod matching;
 use crate::dto::openrouter::ModelInfo;
 use serde::{Deserialize, Serialize};
 
+/// Automatic bump-down. A detected window above this is reduced to this
+/// unless the user set `context_window_limit`. An explicit setting may exceed
+/// it, up to the known model window. Above 300k is the user's risk.
 pub const OPERATING_CEILING: u64 = 300_000;
 pub const FALLBACK_WINDOW: u64 = 128_000;
 pub const FALLBACK_OUTPUT_TOKENS: u32 = 128_000;
@@ -166,8 +169,12 @@ pub fn resolve(
     if let Some(n) = route_window {
         window = window.min(n);
     }
+    // Zero keeps the automatic bump-down. A positive setting replaces that
+    // ceiling and may exceed 300k, but it still cannot exceed a known window.
     if configured_limit > 0 {
         window = window.min(configured_limit);
+    } else {
+        window = window.min(OPERATING_CEILING);
     }
     ContextLimits {
         requested_model: requested.into(),
@@ -187,7 +194,7 @@ pub fn resolve(
         .into(),
         catalog_window,
         route_window,
-        effective_window: window.min(OPERATING_CEILING),
+        effective_window: window,
         auto_output_tokens: u64::from(FALLBACK_OUTPUT_TOKENS),
         max_completion_tokens: found
             .model

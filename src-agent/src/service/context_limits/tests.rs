@@ -50,6 +50,15 @@ fn million_window_uses_300k_operating_limit_and_smaller_overrides() {
         resolve("unknown", "", "vendor/model-1", 96_000, &models, &[]).effective_window,
         96_000
     );
+    assert_eq!(
+        resolve("vendor/model-1", "", "", 500_000, &models, &[]).effective_window,
+        500_000
+    );
+    // A user value above the known window does not invent extra room.
+    assert_eq!(
+        resolve("vendor/model-1", "", "", 2_000_000, &models, &[]).effective_window,
+        1_000_000
+    );
 }
 #[test]
 fn fuzzy_and_ambiguous_matches_cannot_raise_context() {

@@ -84,7 +84,7 @@ fn parse_into(args: &[String], run: &mut RunCli) -> Result<(), String> {
             "--short-send" => run.short_send = Some(toggle()?),
             "--context-window-limit" => {
                 run.context_window_limit =
-                    Some(number()?.min(crate::service::context_limits::OPERATING_CEILING))
+                    Some(number()?)
             }
             "--context-model-alias" => {
                 run.context_model_alias = Some(value.trim().chars().take(200).collect())

@@ -222,8 +222,9 @@ fn plan_mode_prompt_has_plan_guidance() {
     );
 }
 
-/// Phase 0/1: always-on prompt files stay under volume budgets (chars).
-/// Baseline before the thin rewrite: system-tools ≈ 22_622, system-prompt ≈ 5_280.
+/// Always-on prompt files stay under the recovered-behaviour budgets (chars).
+/// The pre-cut tools encyclopedia was ~22k and included stale per-tool examples.
+/// Behaviour is restored without that catalogue.
 #[test]
 fn always_on_prompt_files_under_volume_budget() {
     let tools = crate::resources::system_tools();
@@ -234,21 +235,19 @@ fn always_on_prompt_files_under_volume_budget() {
         !tools.is_empty() && !prompt.is_empty() && !personality.is_empty(),
         "embedded prompt files must load"
     );
-    // Target: tools essay ~60–80% smaller than the pre-cut ~22k encyclopedia.
     assert!(
-        tools.len() <= 6_000,
-        "system-tools.txt is {} chars; budget is 6000 (routing + invariants only)",
+        tools.len() <= 12_000,
+        "system-tools.txt is {} chars; budget is 12000 (behaviour, not a schema dump)",
         tools.len()
     );
     assert!(
-        prompt.len() <= 4_500,
-        "system-prompt.txt is {} chars; budget is 4500 (operator contract)",
+        prompt.len() <= 7_500,
+        "system-prompt.txt is {} chars; budget is 7500 (operator contract)",
         prompt.len()
     );
-    // Personality stays tiny.
     assert!(
-        personality.len() <= 1_000,
-        "system-personality.txt is {} chars; budget is 1000",
+        personality.len() <= 3_000,
+        "system-personality.txt is {} chars; budget is 3000",
         personality.len()
     );
 
@@ -260,6 +259,10 @@ fn always_on_prompt_files_under_volume_budget() {
         "graph_query",
         "message_find",
         "message_load",
+        "MUST go to task(explore)",
+        "full-output:",
+        "Do not dump it whole",
+        "re-run the wide command",
     ] {
         assert!(
             tools.contains(needle),
@@ -267,11 +270,10 @@ fn always_on_prompt_files_under_volume_budget() {
         );
     }
     for needle in [
-        "Operator contract",
-        "Mode and approval",
         "Never fabricate",
         "message_load",
         "checklist",
+        "do not re-run the wide command",
     ] {
         assert!(
             prompt.contains(needle),
@@ -280,15 +282,13 @@ fn always_on_prompt_files_under_volume_budget() {
     }
 }
 
-/// Assembled Auto stable head should stay lean vs the pre-cut tools encyclopedia.
+/// Assembled Auto stable head stays under the recovered behaviour plus boilerplate.
 #[test]
 fn auto_stable_head_under_assembled_budget() {
     let prompt = prompt_for_mode(AgentMode::Auto);
-    // Pre-cut tools alone were ~22k; assembled Auto head should land well under ~30k
-    // of always-on prose even with scratch/workspaces boilerplate.
     assert!(
-        prompt.len() <= 28_000,
-        "Auto stable head is {} chars; budget is 28000 after tools thinning",
+        prompt.len() <= 32_000,
+        "Auto stable head is {} chars; budget is 32000",
         prompt.len()
     );
     assert!(

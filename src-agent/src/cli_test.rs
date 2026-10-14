@@ -36,7 +36,7 @@ fn run_current_drss_and_extension_flags() {
     assert!(run.status);
     assert_eq!(run.short_send, Some(false));
     assert_eq!(run.max_tokens, Some(0));
-    assert_eq!(run.context_window_limit, Some(300_000));
+    assert_eq!(run.context_window_limit, Some(1_000_000));
     assert_eq!(run.context_model_alias.as_deref(), Some("model-alias"));
     assert_eq!(run.extensions, vec!["run.koma.one", "run.koma.two"]);
     assert_eq!(run.unload_extensions, vec!["run.koma.old"]);

@@ -385,7 +385,7 @@ pub fn print_help() -> i32 {
          \x20   --security on|off    start/stop security daemon (yolo needs on)\n\
          \x20   --max-tokens N       reply limit (0=128k fallback; bounded by context)\n\
          \x20   --short-send on|off  enable/disable DRSS for this session\n\
-         \x20   --context-window-limit N  context override (0=detected; max 300000)\n\
+         \x20   --context-window-limit N  context override (0=detected, bumped down to 300000; a positive N may exceed 300000 up to the detected model window)\n\
          \x20   --context-model-alias ID  model name used for context detection\n\
          \x20   --system TEXT       append to the bottom of the system prompt\n\
          \x20   --system-file PATH  same, from a file (not with --system)\n\
