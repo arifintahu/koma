@@ -134,6 +134,7 @@ pub fn diff(
     // but the palette + attachment records need the snapshot.)
     if prev.global.pending_attachments != next.global.pending_attachments
         || prev.global.file_palette != next.global.file_palette
+        || prev.global.command_palette != next.global.command_palette
     {
         return DiffResult::full();
     }

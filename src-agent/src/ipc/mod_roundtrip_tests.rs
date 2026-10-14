@@ -171,6 +171,7 @@ fn sample_global_snapshot() -> GlobalSnapshot {
             label: None,
         }],
         file_palette: Some(vec!["src/main.rs".to_string(), "src/lib.rs".to_string()]),
+        command_palette: vec![("/help".to_string(), "Show help".to_string())],
         agent_mode: "auto".to_string(),
         sdlc_phase: None,
         sdlc_goal: None,
@@ -214,6 +215,10 @@ fn client_request_variants_roundtrip() {
         }),
         ClientRequest::Paste {
             text: "/home/u/shot.png".to_string(),
+        },
+        ClientRequest::ReplaceInput {
+            text: "draft line".to_string(),
+            cursor: 5,
         },
         ClientRequest::ApproveTool {
             approve: true,

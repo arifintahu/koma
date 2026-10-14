@@ -75,6 +75,10 @@ pub struct GlobalSnapshot {
     pub pending_steer_focus: bool,
     pub pending_attachments: Vec<crate::dto::chat::Attachment>,
     pub file_palette: Option<Vec<String>>,
+    /// Slash-command matches for the thin client. Empty unless the draft is a
+    /// `/` name with no arguments yet. Filled by `command::palette_matches`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub command_palette: Vec<(String, String)>,
     pub agent_mode: String,
     /// SDLC phase when mode is sdlc: assess|execute|integrate|done. Optional for back-compat.
     #[serde(default, skip_serializing_if = "Option::is_none")]

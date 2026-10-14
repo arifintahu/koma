@@ -2,10 +2,10 @@
 //!
 //! # User-facing surface (what `--help` should advertise)
 //!
-//! - `koma`                        — default: spawn-or-attach the daemon, then run the client.
-//! - `koma agents`                 — open the session hub (friendly alias for `--resume`).
-//! - `koma --resume`               — open the session hub.
-//! - `koma alone`                  — standalone no-daemon TUI (friendly alias for `--local`).
+//! - `koma`                        — new terminal: a fresh session.
+//! - `koma legacy`                 — current terminal: spawn-or-attach the daemon, then the ratatui client.
+//! - `koma legacy agents`          — current session hub (friendly alias for `--resume`).
+//! - `koma legacy alone`           — current standalone no-daemon TUI (friendly alias for `--local`).
 //! - `koma daemon <status|kill|restart|clean|delete>` — daemon management CLI.
 //! - `koma ext install --dev <zip|dir>` — sideload an unsigned local extension
 //!   (dev-only; `koma ext`/`koma ext install` with no `--dev` prints usage — the
@@ -39,6 +39,8 @@
 //!
 //! # Positional verbs / subcommands (distinct from the `--flags`)
 //!
+//! - `legacy` — prefix. The rest of the command is parsed as before and opens the
+//!   current ratatui terminal. Without it, interactive launches open the new preview.
 //! - `agents` — alias for `--resume` (open the session hub). Sets the same `resume` bit.
 //! - `alone`  — alias for `--local` (standalone TUI). Sets the same `local` bit, so `main`
 //!   reuses the identical `--local` branch, daemon-alive guard included.
@@ -241,6 +243,9 @@ pub struct Opts {
     /// already alive (running a second writer against the daemon's sessions would
     /// corrupt the session locks); with no daemon up it runs the fully-standalone TUI.
     pub local: bool,
+    /// When `true`, this invocation asked for the current ratatui terminal
+    /// (`koma legacy …`). Interactive launches without it open the new preview.
+    pub legacy_tui: bool,
     /// A `koma daemon …` management invocation, if one was given (#118).
     /// `Some(Run(sub))` short-circuits `main` into that management action; `Some(Usage)`
     /// short-circuits into a usage print + non-zero exit (bare/unknown verb); `None`
@@ -353,9 +358,10 @@ pub fn print_help() -> i32 {
          usage: koma [command] [flags]\n\
          \n\
          commands:\n\
-         \x20 (none)                        default: spawn-or-attach the daemon, then run the client\n\
-         \x20 agents                         open the session hub (alias for --resume)\n\
-         \x20 alone                          standalone no-daemon TUI (alias for --local)\n\
+         \x20 (none)                        new session\n\
+         \x20 legacy [command]               current terminal — same commands koma used to take\n\
+         \x20 agents                         resume hub\n\
+         \x20 alone                          no-daemon terminal is `koma legacy alone`\n\
          \x20 gui                            launch the desktop GUI client\n\
          \x20 update                         stop the daemon, install the latest release and app-list entry, then exit\n\
          \x20 daemon <status|kill|restart|clean|delete>  daemon management CLI\n\
@@ -367,7 +373,7 @@ pub fn print_help() -> i32 {
          \x20 run                            headless one-shot against the session daemon\n\
          \n\
          flags:\n\
-         \x20 --resume                       open the session hub\n\
+         \x20 --resume                       open the resume hub\n\
          \x20 --session <id>                 bind this invocation to a specific session id\n\
          \x20 --version, -V                  print the version and exit\n\
          \x20 --help, -h                     print this help and exit\n\
@@ -416,6 +422,7 @@ pub fn print_unknown_command(cmd: &str) -> i32 {
 /// significant. Unknown flags are silently ignored.
 ///
 /// The positional VERBS are read from the first non-`--` argument (after `argv[0]`):
+/// - `legacy` sets [`Opts::legacy_tui`] and the following positional is the real verb.
 /// - `agents` sets `resume` (alias for `--resume`).
 /// - `alone` sets `local` (alias for `--local`).
 /// - `run` sets [`Opts::run`] (headless one-shot).
@@ -529,6 +536,16 @@ pub fn parse(args: impl IntoIterator<Item = String>) -> Opts {
         }
     }
     let mut positional = positionals.into_iter();
+    // `koma legacy <command>` is the current terminal. Peel the prefix and parse
+    // the rest with the same verb table, so `koma legacy agents` is today's hub.
+    if positional
+        .as_slice()
+        .first()
+        .is_some_and(|token| token.as_str() == "legacy")
+    {
+        opts.legacy_tui = true;
+        positional.next();
+    }
     match positional.next().map(String::as_str) {
         Some("agents") => opts.resume = true,
         Some("alone") => opts.local = true,

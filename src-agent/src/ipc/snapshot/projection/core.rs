@@ -333,6 +333,10 @@ pub fn global_snapshot_with_mode(state: &AppState, mode: ModeSnapshot) -> Global
         pending_steer_focus: state.rest.pending_steer_focus,
         pending_attachments: state.rest.fg().pending_attachments.clone(),
         file_palette: file_palette_matches(state),
+        command_palette: crate::controller::command::palette_matches(&state.rest.fg().input)
+            .into_iter()
+            .map(|(name, desc)| (name.to_string(), desc.to_string()))
+            .collect(),
         agent_mode: match state.rest.agent_mode() {
             crate::app::state::AgentMode::Auto => "auto",
             crate::app::state::AgentMode::Normal => "normal",

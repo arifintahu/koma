@@ -134,6 +134,17 @@ pub enum ClientRequest {
     Paste {
         text: String,
     },
+    /// Replace the foreground composer draft in one shot.
+    ///
+    /// The OpenTUI textarea edits locally and flushes the whole buffer. `cursor`
+    /// is a CHAR index (`0..=text.chars().count()`), matching `AppState::cursor`.
+    /// The daemon clamps it, drops history-recall, and the existing diff emits
+    /// `InputChanged`. Slash commands, `@` completion, and submit still run
+    /// through `SendKey` after this flush. The ratatui client never sends it.
+    ReplaceInput {
+        text: String,
+        cursor: usize,
+    },
     /// Drop a single STAGED attachment (a GUI chip) by its `[Image #N]` marker number,
     /// unstaging it from the foreground session's `pending_attachments` before submit.
     /// The TUI has no equivalent request (it drops attachments by deleting the marker in

@@ -36,6 +36,7 @@ pub mod runtime;
 pub mod sec;
 pub mod state;
 pub mod subagent;
+pub mod term_preview;
 pub mod update;
 pub mod version;
 
@@ -62,6 +63,7 @@ pub use runtime::{
     any_daemon_alive, ensure_daemon_running, migrate_legacy_daemon, print_daemon_usage,
     run_daemon_subcommand, run_doctor,
 };
+pub use term_preview::{run_term_preview, TermStart};
 pub use update::run_update;
 
 pub(crate) use runtime::client::git_workbench::editor_helper as git_editor_helper;

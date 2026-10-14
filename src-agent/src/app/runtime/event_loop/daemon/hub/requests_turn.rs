@@ -82,6 +82,26 @@ impl DaemonHub {
         self.send_to(idx, DaemonEvent::Ack);
     }
 
+    /// Replace the foreground composer draft. `cursor` is a char index and is
+    /// clamped to the new text. History recall is dropped so the next Up starts
+    /// fresh; the stash is left as-is. Attachments stay — deleting an
+    /// `[Image #N]` marker by editing is the same desync the local composer has.
+    /// `@` and slash matching are not done here; they read `input` on the next key.
+    pub(super) fn replace_input(
+        &mut self,
+        idx: usize,
+        state: &mut AppState,
+        text: String,
+        cursor: usize,
+    ) {
+        let fg = state.rest.fg_mut();
+        let chars = text.chars().count();
+        fg.input = text;
+        fg.cursor = cursor.min(chars);
+        fg.hist_idx = None;
+        self.send_to(idx, DaemonEvent::Ack);
+    }
+
     // Answer the foreground session's pending tool-approval prompt via the
     // local approve/deny handlers.
     //

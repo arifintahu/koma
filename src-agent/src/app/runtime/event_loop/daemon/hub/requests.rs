@@ -479,6 +479,12 @@ impl DaemonHub {
                 self.paste(idx, state, text);
             }
 
+            // OpenTUI composer: replace the foreground draft wholesale. The diff
+            // emits `InputChanged` on the next `stream_deltas` pass, same as paste.
+            ClientRequest::ReplaceInput { text, cursor } => {
+                self.replace_input(idx, state, text, cursor);
+            }
+
             // Answer the foreground session's pending tool-approval prompt via the
             // local approve/deny handlers.
             ClientRequest::ApproveTool { approve, call_id } => {
