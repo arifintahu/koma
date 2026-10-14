@@ -276,6 +276,17 @@ fn reuses_existing_full_output_pointer() {
 }
 
 #[test]
+fn identical_bash_completion_is_stubbed_on_the_second_call() {
+    let t = ctx();
+    let args = json!({"command": "echo hello"});
+    let raw = "hello\nexit code: 0";
+    let first = finish_tool_output(&t, "bash", &args, raw.into());
+    let second = finish_tool_output(&t, "bash", &args, raw.into());
+    assert_eq!(first, raw);
+    assert!(second.contains("[repeat:"));
+}
+
+#[test]
 fn short_output_does_not_spill() {
     let dir = std::env::temp_dir().join(format!("koma-tool-short-{}", uuid::Uuid::new_v4()));
     std::fs::create_dir_all(&dir).unwrap();

@@ -17,6 +17,17 @@ const MAIN_STALL_NUDGE_BUDGET: u8 = 2;
 const MAIN_STALL_NUDGE_MSG: &str = "Continue now: call the tools you need to finish the task, \
      then write your complete answer. Do not stop with a 'let me...' line.";
 
+/// Synthetic user text that must not become the session charter. A greeting
+/// leaves the charter empty, so the next injected nudge would otherwise be
+/// stored as the kickoff objective.
+pub(super) fn is_goal_inert_user_text(text: &str) -> bool {
+    let text = text.trim();
+    text == MAIN_STALL_NUDGE_MSG
+        || text == COMPUTER_RECOVERY_NUDGE_MSG
+        || text == COMPUTER_RECOVERY_PAUSED_MSG
+        || text == COMPUTER_CONTINUATION_UNAVAILABLE_MSG
+}
+
 /// Whether the main chat should auto-continue after a no-tools stall.
 /// Pure helper so the budget gate is unit-testable without driving a full turn.
 fn should_stall_nudge(content: &str, nudges: u8) -> bool {

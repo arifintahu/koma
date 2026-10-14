@@ -192,6 +192,7 @@ pub(crate) fn shadow_bash_job(v: &BashJobSnapshot) -> BashJob {
             pid: Mutex::new(None),
             ended_at: Mutex::new(ended),
             tee_path: Mutex::new(None),
+            delivered: Mutex::new(String::new()),
             deadline: Mutex::new(None),
         }),
     }

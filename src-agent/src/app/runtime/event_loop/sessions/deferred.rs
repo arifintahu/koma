@@ -155,8 +155,16 @@ pub(super) fn drain_deferred_and_resume(
                     .session
                     .as_ref()
                     .map(|s| s.path.join("opt"));
+                let command = state.rest.sessions[idx].bash_jobs[job_idx].command.clone();
                 let result = state.rest.sessions[idx].bash_jobs[job_idx]
                     .format_tool_result(saving, log_dir.as_deref());
+                state.rest.sessions[idx].bash_jobs[job_idx].mark_output_delivered();
+                let result = crate::tool::output::finish_tool_output(
+                    &crate::app::runtime::stream::build_tool_ctx(state, idx),
+                    "bash",
+                    &serde_json::json!({ "command": command }),
+                    result,
+                );
 
                 // Only fold if still pending (Esc may have cleared the park set).
                 if let Some(pos) = state.rest.sessions[idx]

@@ -11,7 +11,7 @@ mod window;
 pub use frame::retain_latest_computer_frame;
 #[cfg(test)]
 use goal::GoalWire;
-pub use goal::{load_mission_snap, refresh_goal_state};
+pub use goal::{load_mission_snap, refresh_goal_state, wipe_chat_doctrine};
 pub use window::shape;
 pub(crate) use window::{shape_live, LiveSend};
 
