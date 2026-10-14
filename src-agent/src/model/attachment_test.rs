@@ -145,5 +145,8 @@ fn sanitize_paste_label_keeps_basename() {
     assert_eq!(sanitize_paste_label("   "), None);
     assert!(!accept_paste_body("hi", false));
     assert!(accept_paste_body("hi", true));
-    assert!(!accept_paste_body(&"x".repeat(PASTE_SOFT_MAX_BYTES + 1), true));
+    assert!(!accept_paste_body(
+        &"x".repeat(PASTE_SOFT_MAX_BYTES + 1),
+        true
+    ));
 }

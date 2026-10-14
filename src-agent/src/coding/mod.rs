@@ -13,6 +13,12 @@ pub(crate) fn cargo_tests_main() -> anyhow::Result<()> {
 pub(crate) mod environment;
 mod framework_tests;
 mod language;
+mod notebook;
+mod notebook_client;
+/// Opt-in BasedPyright notebookDocumentSync probe — test harness only until Analysis wires it.
+#[cfg(test)]
+mod notebook_probe;
+mod notebook_wire;
 mod packs;
 pub(crate) mod persistence;
 mod problems;
@@ -20,12 +26,6 @@ mod problems;
 mod process_group;
 pub(crate) mod provision;
 mod pty;
-mod notebook;
-mod notebook_client;
-/// Opt-in BasedPyright notebookDocumentSync probe — test harness only until Analysis wires it.
-#[cfg(test)]
-mod notebook_probe;
-mod notebook_wire;
 mod resources;
 mod sync;
 mod tasks;

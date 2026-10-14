@@ -79,6 +79,15 @@ pub fn run_term_preview(start: TermStart) -> Result<()> {
 
     #[cfg(unix)]
     let _foreground = ForegroundGuard::handoff(child.id());
+    // Ctrl+C is delivered to the foreground job. If this parent is still in
+    // that group, the default action kills it and the hub vanishes before the
+    // client can open the quit screen. Ignore it here; the client handles it.
+    #[cfg(unix)]
+    let _interrupt = InterruptGuard::ignore();
+    // A resize signal often hits this parent, not the client. Forward it so
+    // the client sees the real width and can replace the UI under 50 columns.
+    #[cfg(unix)]
+    let _winch = WinchGuard::forward(child.id());
 
     let status = child
         .wait()
@@ -138,6 +147,69 @@ fn find_bun(term_dir: &Path) -> Option<PathBuf> {
         let candidate = dir.join(BUN_NAME);
         candidate.is_file().then_some(candidate)
     })
+}
+
+#[cfg(unix)]
+static TERM_CHILD: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0);
+
+#[cfg(unix)]
+extern "C" fn forward_winch(_: libc::c_int) {
+    let pid = TERM_CHILD.load(std::sync::atomic::Ordering::Relaxed);
+    if pid > 0 {
+        unsafe {
+            libc::kill(pid, libc::SIGWINCH);
+        }
+    }
+}
+
+/// Forwards SIGWINCH to the terminal client.
+#[cfg(unix)]
+struct WinchGuard;
+
+#[cfg(unix)]
+impl WinchGuard {
+    fn forward(pid: u32) -> Self {
+        TERM_CHILD.store(pid as i32, std::sync::atomic::Ordering::Relaxed);
+        unsafe {
+            libc::signal(libc::SIGWINCH, forward_winch as *const () as libc::sighandler_t);
+        }
+        Self
+    }
+}
+
+#[cfg(unix)]
+impl Drop for WinchGuard {
+    fn drop(&mut self) {
+        TERM_CHILD.store(0, std::sync::atomic::Ordering::Relaxed);
+        unsafe {
+            libc::signal(libc::SIGWINCH, libc::SIG_DFL);
+        }
+    }
+}
+
+/// Ignores SIGINT and SIGQUIT in this process while the client is running.
+#[cfg(unix)]
+struct InterruptGuard;
+
+#[cfg(unix)]
+impl InterruptGuard {
+    fn ignore() -> Self {
+        unsafe {
+            libc::signal(libc::SIGINT, libc::SIG_IGN);
+            libc::signal(libc::SIGQUIT, libc::SIG_IGN);
+        }
+        Self
+    }
+}
+
+#[cfg(unix)]
+impl Drop for InterruptGuard {
+    fn drop(&mut self) {
+        unsafe {
+            libc::signal(libc::SIGINT, libc::SIG_DFL);
+            libc::signal(libc::SIGQUIT, libc::SIG_DFL);
+        }
+    }
 }
 
 /// Puts the preview in the foreground while it runs, then hands the terminal back.

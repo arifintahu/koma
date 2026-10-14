@@ -391,7 +391,10 @@ fn tool_registration_and_history_routing_stay_aligned() {
         let args: Value = serde_json::from_str(raw).unwrap();
         Options::parse(&args).unwrap();
     }
-    let load_cases = [r#"{"message_id":42}"#, r#"{"message_id":42,"offset":3000,"max_chars":1500}"#];
+    let load_cases = [
+        r#"{"message_id":42}"#,
+        r#"{"message_id":42,"offset":3000,"max_chars":1500}"#,
+    ];
     for raw in load_cases {
         let args: Value = serde_json::from_str(raw).unwrap();
         page::load(dir.path(), &args).unwrap();

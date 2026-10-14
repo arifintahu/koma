@@ -95,10 +95,18 @@ impl DaemonHub {
         cursor: usize,
     ) {
         let fg = state.rest.fg_mut();
+        let text_changed = fg.input != text;
         let chars = text.chars().count();
         fg.input = text;
         fg.cursor = cursor.min(chars);
         fg.hist_idx = None;
+        // Same as push_char / backspace: a real edit returns the / and @ highlight
+        // to the first match. Cursor-only flushes leave the highlight where it is.
+        if text_changed {
+            state.rest.palette_sel = 0;
+            // Typing disarms a pending double-Esc, same as any non-Esc key.
+            state.rest.last_esc = None;
+        }
         self.send_to(idx, DaemonEvent::Ack);
     }
 

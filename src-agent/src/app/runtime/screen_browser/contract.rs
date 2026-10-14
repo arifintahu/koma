@@ -86,7 +86,9 @@ pub fn nav_remember_key(url: &str) -> Option<String> {
     }
     let lower = u.to_ascii_lowercase();
     let scheme = lower.split(':').next().unwrap_or("");
-    if scheme.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '+' | '.' | '-'))
+    if scheme
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || matches!(c, '+' | '.' | '-'))
         && !scheme.is_empty()
     {
         Some(format!("scheme:{scheme}"))

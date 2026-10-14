@@ -42,6 +42,7 @@ export function Chat({
   theme,
   syntaxStyle,
   focused,
+  rewind = null,
   send,
   sendTracked,
   onFlushError,
@@ -50,6 +51,7 @@ export function Chat({
   theme: Theme
   syntaxStyle: SyntaxStyle
   focused: boolean
+  rewind?: { entries: string[]; selected: number } | null
   send: (request: unknown) => void
   sendTracked: (request: unknown) => Promise<string>
   onFlushError: (text: string) => void
@@ -65,12 +67,15 @@ export function Chat({
   }
   return (
     <box flexDirection="column" flexGrow={1} backgroundColor={theme.bg} paddingTop={1} paddingBottom={1}>
-      <Header snap={snap} session={session} theme={theme} />
+      <Toast snap={snap} theme={theme} />
       <HistoryPane session={session} theme={theme} syntaxStyle={syntaxStyle} />
       <Steers session={session} theme={theme} selected={snap.global.pending_steer_sel} />
-      <ModelRow model={session.resolved_model_id} theme={theme} />
       {session.awaiting_approval ? <Approval session={session} theme={theme} send={send} /> : null}
-      <Palette snap={snap} theme={theme} flushRef={flushRef} send={send} />
+      {rewind ? (
+        <RewindOverlay rewind={rewind} theme={theme} send={send} />
+      ) : (
+        <Palette snap={snap} theme={theme} flushRef={flushRef} send={send} />
+      )}
       <Composer
         snap={snap}
         session={session}
@@ -86,49 +91,48 @@ export function Chat({
   )
 }
 
-function Header({ snap, session, theme }: { snap: Snapshot; session: SessionSnap; theme: Theme }) {
-  const version = process.env.KOMA_VERSION ?? ""
-  const latest = snap.global.latest_version
-  const update = latest && latest !== version ? latest : null
-  const mode = modeMark(snap.global.agent_mode, session)
+const TOAST_MS = 3000
+
+function Toast({ snap, theme }: { snap: Snapshot; theme: Theme }) {
   const toast = snap.global.toast
   const toastId = snap.global.toast_event_id ?? (toast ? `${toast[0]}:${toast[1]}` : "")
   const [dismissedId, setDismissedId] = useState<string | null>(null)
-  // A cleared toast has no wire event. The daemon drops it on its own clock
-  // (error 6s, info 8s) and the legacy client does the same locally.
+  const [leftMs, setLeftMs] = useState(TOAST_MS)
   useEffect(() => {
     if (!toast || dismissedId === toastId) return
-    const ms = toast[0] === "error" ? 6000 : 8000
-    const timer = setTimeout(() => setDismissedId(toastId), ms)
-    return () => clearTimeout(timer)
+    const started = Date.now()
+    setLeftMs(TOAST_MS)
+    const timer = setInterval(() => {
+      const remain = TOAST_MS - (Date.now() - started)
+      if (remain <= 0) {
+        setDismissedId(toastId)
+        return
+      }
+      setLeftMs(remain)
+    }, 100)
+    return () => clearInterval(timer)
   }, [toast, toastId, dismissedId])
-  const shown = toast && dismissedId !== toastId ? toast : null
-  const toastLines = shown ? shown[1].replace(/^\n+/, "").split("\n").filter((line) => line.length > 0).slice(0, 4) : []
-  const toastColor = shown?.[0] === "error" ? theme.error : theme.accent
+  if (!toast || dismissedId === toastId) return null
+  const error = toast[0] === "error"
+  const color = error ? theme.error : theme.fg
+  const text = toast[1].replace(/^\n+/, "").split("\n").filter((line) => line.length > 0).slice(0, 3).join(" ")
+  const seconds = Math.max(1, Math.ceil(leftMs / 1000))
   return (
     <box
-      height={toastLines.length === 0 ? 2 : undefined}
-      border={["bottom"]}
-      borderColor={toastLines.length > 0 ? toastColor : theme.dim}
-      flexDirection="column"
-      paddingLeft={2}
-      paddingRight={2}
+      border
+      borderStyle="rounded"
+      borderColor={theme.dim}
+      flexShrink={0}
+      flexDirection="row"
+      justifyContent="space-between"
+      paddingLeft={1}
+      paddingRight={1}
+      marginBottom={1}
     >
-      <box flexDirection="row" justifyContent="space-between">
-        <text>
-          <span fg={theme.dim}>koma </span>
-          <span fg={update ? theme.error : theme.success}>{version}</span>
-          {update ? <span fg={theme.success}>{` [${update}]`}</span> : null}
-        </text>
-        <text fg={mode.color === "success" ? theme.success : mode.color === "warn" ? theme.warn : mode.color === "error" ? theme.error : theme.info}>
-          {`${mode.icon} ${mode.label}`}
-        </text>
-      </box>
-      {toastLines.map((line, index) => (
-        <text key={index} fg={toastColor} selectable>
-          {line}
-        </text>
-      ))}
+      <text fg={color} selectable>
+        {text}
+      </text>
+      <text fg={theme.dim}>{`${seconds}s`}</text>
     </box>
   )
 }
@@ -136,11 +140,11 @@ function Header({ snap, session, theme }: { snap: Snapshot; session: SessionSnap
 function modeMark(agentMode: string, session: SessionSnap | undefined): { icon: string; label: string; color: string } {
   switch (agentMode) {
     case "auto":
-      return { icon: "»", label: "auto", color: "warn" }
+      return { icon: "»", label: "Auto", color: "warn" }
     case "plan":
-      return { icon: "●", label: "planning", color: "info" }
+      return { icon: "●", label: "Planning", color: "info" }
     case "yolo":
-      return { icon: "!", label: "yooloo", color: "error" }
+      return { icon: "!", label: "Yooloo", color: "error" }
     case "sdlc": {
       const phase = session?.sdlc_phase
       const branch = session?.sdlc_branch
@@ -148,7 +152,7 @@ function modeMark(agentMode: string, session: SessionSnap | undefined): { icon: 
       return { icon: "◆", label, color: "info" }
     }
     default:
-      return { icon: "●", label: "normal", color: "success" }
+      return { icon: "●", label: "Normal", color: "success" }
   }
 }
 
@@ -165,11 +169,13 @@ function HistoryPane({
   const stickRef = useRef(true)
   const expandingRef = useRef(false)
   const restoreRef = useRef<number | null>(null)
+  const stickyMessages = useRef<Array<ChatMessage | null>>([])
   const rows = useMemo(() => historyRows(session.messages), [session.messages])
   const prevRows = useRef(rows)
   const prevSession = useRef(session.id)
   const [from, setFrom] = useState(() => visibleFromTurn(historyRows(session.messages), CHAT_TURNS_DEFAULT))
   const [following, setFollowing] = useState(true)
+  const [sticky, setSticky] = useState<ChatMessage | null>(null)
 
   useEffect(() => {
     const sessionChanged = prevSession.current !== session.id
@@ -222,9 +228,33 @@ function HistoryPane({
     if (tail !== from) setFrom(tail)
   }
 
+  function updateSticky() {
+    const box = scrollRef.current
+    const root = box?.content.getChildren()[0]
+    if (!box || !root) return
+    const top = box.scrollTop
+    let next: ChatMessage | null = null
+    for (const turn of root.getChildren()) {
+      const id = String(turn.id ?? "")
+      if (!id.startsWith("turn-")) continue
+      const user = turn.getChildren().find((child) => String(child.id ?? "").startsWith("user-"))
+      if (!user) continue
+      const y = turn.y - root.y
+      const pos = y >= 0 && y < box.scrollHeight ? y : turn.y
+      if (pos + user.height <= top) {
+        const index = Number(id.slice("turn-".length))
+        next = stickyMessages.current[index] ?? null
+      } else {
+        break
+      }
+    }
+    setSticky((current) => (current?.content === next?.content && current?.role === next?.role ? current : next))
+  }
+
   function syncScroll() {
     const box = scrollRef.current
     if (!box || expandingRef.current) return
+    updateSticky()
     const view = box.viewport?.height ?? box.height
     const distance = box.scrollHeight - box.scrollTop - view
     if (distance < 2) {
@@ -240,19 +270,38 @@ function HistoryPane({
 
   const start = rows[from]?.sourceIndex ?? 0
   const mounted = { ...session, messages: session.messages.slice(start) }
+  useEffect(() => {
+    const timer = setInterval(() => updateSticky(), 150)
+    return () => clearInterval(timer)
+  }, [])
+
   return (
-    <scrollbox
-      ref={scrollRef}
-      flexGrow={1}
-      stickyScroll={following}
-      stickyStart="bottom"
-      scrollY
-      focusable={false}
-      onMouseScroll={() => queueMicrotask(syncScroll)}
-      onMouseUp={() => queueMicrotask(syncScroll)}
-    >
-      <Transcript session={mounted} theme={theme} syntaxStyle={syntaxStyle} />
-    </scrollbox>
+    <box flexGrow={1} flexDirection="column">
+      {sticky ? (
+        <box flexShrink={0} backgroundColor={theme.bg}>
+          <UserBand message={sticky} session={session} theme={theme} syntaxStyle={syntaxStyle} muted />
+        </box>
+      ) : null}
+      <scrollbox
+        ref={scrollRef}
+        flexGrow={1}
+        stickyScroll={following}
+        stickyStart="bottom"
+        scrollY
+        focusable={false}
+        onMouseScroll={() => queueMicrotask(syncScroll)}
+        onMouseUp={() => queueMicrotask(syncScroll)}
+      >
+        <Transcript
+          session={mounted}
+          theme={theme}
+          syntaxStyle={syntaxStyle}
+          onTurns={(messages) => {
+            stickyMessages.current = messages
+          }}
+        />
+      </scrollbox>
+    </box>
   )
 }
 
@@ -261,14 +310,29 @@ const SHELL_MARK = "\u2064"
 const BASH_NUDGE_MARK = "\u2061"
 const EXT_PROMPT_MARK = "\u2060\u2060"
 
+function groupTurns(messages: ChatMessage[]): { user: ChatMessage | null; rest: ChatMessage[] }[] {
+  const turns: { user: ChatMessage | null; rest: ChatMessage[] }[] = []
+  for (const message of messages) {
+    if (message.role === "user") {
+      turns.push({ user: message, rest: [] })
+      continue
+    }
+    if (turns.length === 0) turns.push({ user: null, rest: [] })
+    turns[turns.length - 1].rest.push(message)
+  }
+  return turns
+}
+
 function Transcript({
   session,
   theme,
   syntaxStyle,
+  onTurns,
 }: {
   session: SessionSnap
   theme: Theme
   syntaxStyle: SyntaxStyle
+  onTurns: (users: Array<ChatMessage | null>) => void
 }) {
   const results = new Map<string, ChatMessage>()
   for (const message of session.messages) {
@@ -281,17 +345,34 @@ function Transcript({
   }
   const live = Boolean(session.streaming || session.stream_reasoning)
   const pending = session.pending_tool_calls.filter((call) => !used.has(call.id))
+  const turns = groupTurns(visible)
+  onTurns(turns.map((turn) => turn.user))
   return (
     <box flexDirection="column" gap={1} paddingLeft={1} paddingRight={1}>
-      {visible.map((message, index) => (
-        <HistoryTurn
-          key={`${index}-${message.role}-${message.tool_call_id ?? ""}`}
-          message={message}
-          session={session}
-          theme={theme}
-          syntaxStyle={syntaxStyle}
-          results={results}
-        />
+      {turns.map((turn, index) => (
+        <box key={`turn-${index}`} id={`turn-${index}`} flexDirection="column" gap={1}>
+          {turn.user ? (
+            <box id={`user-${index}`}>
+              <HistoryTurn
+                message={turn.user}
+                session={session}
+                theme={theme}
+                syntaxStyle={syntaxStyle}
+                results={results}
+              />
+            </box>
+          ) : null}
+          {turn.rest.map((message, restIndex) => (
+            <HistoryTurn
+              key={`${index}-${restIndex}-${message.role}`}
+              message={message}
+              session={session}
+              theme={theme}
+              syntaxStyle={syntaxStyle}
+              results={results}
+            />
+          ))}
+        </box>
       ))}
       {live || pending.length > 0 ? (
         <AssistantCard theme={theme}>
@@ -301,9 +382,13 @@ function Transcript({
           {session.streaming ? (
             <MarkdownBody content={session.streaming} syntaxStyle={syntaxStyle} fg={theme.fg} streaming />
           ) : null}
-          {pending.map((call) => (
-            <ToolCard key={call.id} call={call} result={results.get(call.id)} theme={theme} syntaxStyle={syntaxStyle} />
-          ))}
+          {pending.length > 0 ? (
+            <box flexDirection="column" gap={0}>
+              {pending.map((call) => (
+                <ToolCard key={call.id} call={call} result={results.get(call.id)} theme={theme} syntaxStyle={syntaxStyle} />
+              ))}
+            </box>
+          ) : null}
         </AssistantCard>
       ) : null}
     </box>
@@ -359,15 +444,19 @@ function HistoryTurn({
         <Reasoning text={message.reasoning} theme={theme} syntaxStyle={syntaxStyle} defaultOpen={false} />
       ) : null}
       {message.content ? <MarkdownBody content={message.content} syntaxStyle={syntaxStyle} fg={theme.fg} /> : null}
-      {message.tool_calls?.map((call) => (
-        <ToolCard
-          key={call.id}
-          call={call}
-          result={results.get(call.id)}
-          theme={theme}
-          syntaxStyle={syntaxStyle}
-        />
-      ))}
+      {message.tool_calls && message.tool_calls.length > 0 ? (
+        <box flexDirection="column" gap={0}>
+          {message.tool_calls.map((call) => (
+            <ToolCard
+              key={call.id}
+              call={call}
+              result={results.get(call.id)}
+              theme={theme}
+              syntaxStyle={syntaxStyle}
+            />
+          ))}
+        </box>
+      ) : null}
     </AssistantCard>
   )
 }
@@ -377,19 +466,22 @@ function UserBand({
   session,
   theme,
   syntaxStyle,
+  muted = false,
 }: {
   message: ChatMessage
   session: SessionSnap
   theme: Theme
   syntaxStyle: SyntaxStyle
+  muted?: boolean
 }) {
+  const ink = muted ? theme.dim : theme.accent
   return (
     <box flexDirection="column" gap={1}>
       <box flexDirection="row" backgroundColor={theme.panel}>
-        <box width={1} backgroundColor={theme.accent} />
+        <box width={1} backgroundColor={ink} />
         <box flexGrow={1} paddingLeft={1} paddingRight={1} paddingTop={1} paddingBottom={1} backgroundColor={theme.panel}>
           {message.content ? (
-            <MarkdownBody content={message.content} syntaxStyle={syntaxStyle} fg={theme.accent} />
+            <MarkdownBody content={message.content} syntaxStyle={syntaxStyle} fg={ink} />
           ) : null}
         </box>
       </box>
@@ -405,10 +497,24 @@ function UserBand({
   )
 }
 
+const DOTTED_RAIL = {
+  topLeft: " ",
+  topRight: " ",
+  bottomLeft: " ",
+  bottomRight: " ",
+  horizontal: " ",
+  vertical: "┊",
+  topT: " ",
+  bottomT: " ",
+  leftT: " ",
+  rightT: " ",
+  cross: " ",
+}
+
 function AssistantCard({ theme, children }: { theme: Theme; children: ReactNode }) {
   return (
     <box flexDirection="row">
-      <box width={1} border={["left"]} borderColor={theme.dim} />
+      <box width={1} border={["left"]} borderColor={theme.fg} customBorderChars={DOTTED_RAIL} />
       <box flexGrow={1} flexDirection="column" paddingLeft={1} gap={1}>
         {children}
       </box>
@@ -499,7 +605,11 @@ function Reasoning({
       <box onMouseDown={() => setOpen((value) => !value)}>
         <text fg={theme.dim}>{`${open ? "▾" : "▸"} reasoning`}</text>
       </box>
-      {open ? <MarkdownBody content={text} syntaxStyle={syntaxStyle} fg={theme.dim} streaming={streaming} /> : null}
+      {open ? (
+        <box border={["left"]} borderColor={theme.dim} paddingLeft={1}>
+          <MarkdownBody content={text} syntaxStyle={syntaxStyle} fg={theme.dim} streaming={streaming} />
+        </box>
+      ) : null}
     </box>
   )
 }
@@ -610,14 +720,6 @@ function Steers({ session, theme, selected }: { session: SessionSnap; theme: The
   )
 }
 
-function ModelRow({ model, theme }: { model: string; theme: Theme }) {
-  return (
-    <box height={1} flexDirection="row" justifyContent="flex-end" paddingRight={2}>
-      <text fg={theme.dim}>{model}</text>
-    </box>
-  )
-}
-
 function Approval({
   session,
   theme,
@@ -643,6 +745,72 @@ function Approval({
   )
 }
 
+function RewindOverlay({
+  rewind,
+  theme,
+  send,
+}: {
+  rewind: { entries: string[]; selected: number }
+  theme: Theme
+  send: (request: unknown) => void
+}) {
+  const { width } = useTerminalDimensions()
+  const selected = rewind.entries.length === 0 ? 0 : Math.min(rewind.selected, rewind.entries.length - 1)
+  const visible = 10
+  const [start, setStart] = useState(0)
+  useEffect(() => {
+    setStart((current) => paletteWindow(current, selected, rewind.entries.length, visible))
+  }, [selected, rewind.entries.length])
+  const slots = Array.from({ length: visible }, (_, index) => {
+    const absolute = start + index
+    return absolute < rewind.entries.length ? rewind.entries[absolute] : null
+  })
+  return (
+    <box
+      height={12}
+      flexShrink={0}
+      border
+      borderColor={theme.dim}
+      title=" edit a previous message "
+      titleColor={theme.dim}
+      flexDirection="column"
+      paddingLeft={1}
+      paddingRight={1}
+    >
+      <box flexGrow={1} flexDirection="column">
+        {slots.map((entry, index) => {
+          if (entry == null) return <box key={`empty-${index}`} height={1} />
+          const absolute = start + index
+          const on = absolute === selected
+          return (
+            <box
+              key={`${absolute}-${entry.slice(0, 12)}`}
+              height={1}
+              backgroundColor={on ? theme.selBg : theme.bg}
+              onMouseDown={() => {
+                const steps = absolute - selected
+                if (steps === 0) return
+                const code = steps > 0 ? "Down" : "Up"
+                for (let i = 0; i < Math.abs(steps); i++) send({ SendKey: { code, mods: 0 } })
+              }}
+            >
+              <text fg={on ? theme.selFg : theme.fg}>{previewLine(entry, Math.max(8, width - 6))}</text>
+            </box>
+          )
+        })}
+      </box>
+      <text fg={theme.dim}>↑↓ select · Enter rewind · Esc cancel</text>
+    </box>
+  )
+}
+
+function previewLine(text: string, max: number): string {
+  const flat = text.replace(/[\n\t\r]/g, " ")
+  const chars = [...flat]
+  if (chars.length <= max) return flat
+  return `${chars.slice(0, Math.max(0, max - 1)).join("")}…`
+}
+
 function Palette({
   snap,
   theme,
@@ -661,14 +829,27 @@ function Palette({
     ? commands.map((row) => ({ label: row.name, detail: row.desc }))
     : files.map((row) => ({ label: row, detail: "" }))
   const selected = rows.length === 0 ? 0 : Math.min(snap.global.palette_sel, rows.length - 1)
+  const signature = rows.map((row) => row.label).join("\n")
+  const signatureRef = useRef(signature)
   const [start, setStart] = useState(0)
   useEffect(() => {
-    setStart((current) => paletteWindow(current, selected, rows.length))
-  }, [selected, rows.length])
+    const listChanged = signatureRef.current !== signature
+    signatureRef.current = signature
+    setStart((current) => paletteWindow(listChanged ? 0 : current, selected, rows.length))
+  }, [selected, rows.length, signature])
   if (rows.length === 0) return null
   const slots = Array.from({ length: PALETTE_VISIBLE }, (_, index) => rows[start + index] ?? null)
   return (
-    <box border borderStyle="rounded" borderColor={theme.dim} flexDirection="column" title={command ? " commands " : " files "} titleColor={theme.dim}>
+    <box
+      height={PALETTE_VISIBLE + 2}
+      flexShrink={0}
+      border
+      borderStyle="rounded"
+      borderColor={theme.dim}
+      flexDirection="column"
+      title={command ? " commands " : " files "}
+      titleColor={theme.dim}
+    >
       {slots.map((row, index) => {
         const absolute = start + index
         if (!row) return <box key={`empty-${index}`} height={1} />
@@ -680,13 +861,10 @@ function Palette({
             theme={theme}
             selected={absolute === selected}
             onPress={() => {
-              void (async () => {
-                await flushRef.current()
-                const steps = absolute - selected
-                const code = steps > 0 ? "Down" : "Up"
-                for (let i = 0; i < Math.abs(steps); i++) send({ SendKey: { code, mods: 0 } })
-                send({ SendKey: { code: "Enter", mods: 0 } })
-              })()
+              const steps = absolute - selected
+              if (steps === 0) return
+              const code = steps > 0 ? "Down" : "Up"
+              for (let i = 0; i < Math.abs(steps); i++) send({ SendKey: { code, mods: 0 } })
             }}
           />
         )
@@ -724,11 +902,34 @@ function Composer({
   const innerCap = Math.max(1, Math.floor(height / 2) - 2)
   const boxHeight = Math.min(innerCap, Math.max(1, lines)) + 2
   const paletteOpen = snap.global.command_palette.length > 0 || (snap.global.file_palette?.length ?? 0) > 0
+  const keyQueue = useRef(Promise.resolve())
+  const lastPaletteKey = useRef({ code: "", at: 0 })
   useKeyboard((key) => {
-    if (!paletteOpen || key.eventType === "release") return
-    if (key.name === "up") send({ SendKey: { code: "Up", mods: 0 } })
-    else if (key.name === "down") send({ SendKey: { code: "Down", mods: 0 } })
-    else if (key.name === "tab") send({ SendKey: { code: key.shift ? "BackTab" : "Tab", mods: 0 } })
+    if (key.eventType === "release") return
+    if (key.name === "escape" && focused) {
+      if (typeof key.preventDefault === "function") key.preventDefault()
+      keyQueue.current = keyQueue.current.then(async () => {
+        const ok = await flush()
+        if (!ok) return
+        send({ SendKey: { code: "Esc", mods: 0 } })
+      })
+      return
+    }
+    if (!paletteOpen) return
+    const name = key.name
+    if (name !== "up" && name !== "down" && name !== "tab") return
+    if (typeof key.preventDefault === "function") key.preventDefault()
+    const code = name === "up" ? "Up" : name === "down" ? "Down" : key.shift ? "BackTab" : "Tab"
+    // One physical key can arrive twice. Drop the duplicate so the highlight
+    // moves a single row. Flush first so the daemon already has the / or @ draft.
+    const now = Date.now()
+    if (code === lastPaletteKey.current.code && now - lastPaletteKey.current.at < 40) return
+    lastPaletteKey.current = { code, at: now }
+    keyQueue.current = keyQueue.current.then(async () => {
+      const ok = await flush()
+      if (!ok) return
+      send({ SendKey: { code, mods: 0 } })
+    })
   })
 
   useEffect(() => {
@@ -787,19 +988,34 @@ function Composer({
     }, 30)
   }
 
+  const version = process.env.KOMA_VERSION ?? ""
+  const mode = modeMark(snap.global.agent_mode, session)
+  const modeColor = mode.color === "success" ? theme.success : mode.color === "warn" ? theme.warn : mode.color === "error" ? theme.error : theme.info
   return (
-    <box
-      border
-      borderStyle="rounded"
-      borderColor={focused ? theme.accent : theme.dim}
-      title={session.name ? ` ${session.name} ` : undefined}
-      titleAlignment="right"
-      titleColor={theme.accent}
-      height={boxHeight}
-      flexDirection="row"
-      paddingLeft={2}
-      paddingRight={2}
-    >
+    <box flexDirection="column" flexShrink={0}>
+      <box height={1} />
+      <box flexDirection="row" justifyContent="space-between" paddingLeft={1} paddingRight={1}>
+        <text>
+          <span fg={theme.fg}>Koma </span>
+          <span fg={theme.dim}>{version}</span>
+          <span fg={theme.dim}> | </span>
+          <span fg={modeColor}>{mode.label}</span>
+        </text>
+        <text fg={theme.dim}>{session.resolved_model_id}</text>
+      </box>
+      <box height={1} />
+      <box
+        border
+        borderStyle="rounded"
+        borderColor={focused ? theme.accent : theme.dim}
+        title={session.name ? ` ${session.name} ` : undefined}
+        titleAlignment="right"
+        titleColor={theme.accent}
+        height={boxHeight}
+        flexDirection="row"
+        paddingLeft={2}
+        paddingRight={2}
+      >
       <text fg={theme.accent}>[$] </text>
       <textarea
         ref={area}
@@ -821,12 +1037,15 @@ function Composer({
           })()
         }}
       />
+      </box>
+      <box height={1} />
     </box>
   )
 }
 
 function Status({ snap, session, theme }: { snap: Snapshot; session: SessionSnap; theme: Theme }) {
-  const elapsed = useWorkElapsed(snap.global.work_elapsed_ms, session.working || session.waiting)
+  const live = isThinking(snap.global.status, session)
+  const elapsed = useWorkElapsed(snap.global.work_elapsed_ms, live)
   const readout = usageReadout(session)
   return (
     <box height={1} flexDirection="row" justifyContent="space-between" paddingLeft={2} paddingRight={2}>
@@ -846,20 +1065,34 @@ function Status({ snap, session, theme }: { snap: Snapshot; session: SessionSnap
   )
 }
 
+function isThinking(status: string, session: SessionSnap): boolean {
+  if (session.awaiting_approval) return false
+  if (session.working || session.waiting || session.streaming || session.stream_reasoning) return true
+  const word = status.trim().toLowerCase()
+  if (!word || word === "ready" || word.includes("approve")) return false
+  // A live phase is one word, like "thinking". Slash usage and other notices
+  // are sentences, and they stay a still gray line.
+  if (/[\s:<]/.test(word)) return false
+  return true
+}
+
 function useWorkElapsed(anchor: number | null, running: boolean): number | null {
   const [tick, setTick] = useState(0)
   const started = useRef(Date.now())
+  const base = useRef(0)
   useEffect(() => {
+    if (!running) return
     started.current = Date.now()
-  }, [anchor])
+    base.current = anchor ?? 0
+  }, [running, anchor])
   useEffect(() => {
-    if (!running || anchor == null) return
+    if (!running) return
     const timer = setInterval(() => setTick((value) => value + 1), 80)
     return () => clearInterval(timer)
-  }, [running, anchor])
-  if (anchor == null || !running) return null
+  }, [running])
+  if (!running) return null
   void tick
-  return anchor + (Date.now() - started.current)
+  return base.current + (Date.now() - started.current)
 }
 
 function usageReadout(session: SessionSnap): string | null {
@@ -889,19 +1122,21 @@ function Choice({
   onPress: () => void
 }) {
   const [hot, setHot] = useState(false)
-  const on = hot || selected
+  const bg = selected ? theme.selBg : hot ? theme.panel : theme.bg
+  const labelFg = selected ? theme.selFg : theme.accent
+  const detailFg = selected ? theme.selFg : theme.dim
   return (
     <box
       paddingLeft={1}
       paddingRight={1}
-      backgroundColor={on ? theme.selBg : theme.bg}
+      backgroundColor={bg}
       onMouseOver={() => setHot(true)}
       onMouseOut={() => setHot(false)}
       onMouseDown={onPress}
     >
       <text>
-        <span fg={on ? theme.selFg : theme.accent}>{label}</span>
-        {detail ? <span fg={on ? theme.selFg : theme.dim}>{`  ${detail}`}</span> : null}
+        <span fg={labelFg}>{label}</span>
+        {detail ? <span fg={detailFg}>{`  ${detail}`}</span> : null}
       </text>
     </box>
   )

@@ -56,11 +56,12 @@ pub fn retain_latest_browser_observation(history: &mut [ChatMessage]) {
 
 fn browser_observation_id(content: &str) -> Option<String> {
     let rest = content.split("observation_id=").nth(1)?;
-    let id: String = rest
-        .chars()
-        .take_while(|c| !c.is_whitespace())
-        .collect();
-    if id.is_empty() { None } else { Some(id) }
+    let id: String = rest.chars().take_while(|c| !c.is_whitespace()).collect();
+    if id.is_empty() {
+        None
+    } else {
+        Some(id)
+    }
 }
 
 fn is_observation(message: &ChatMessage) -> bool {

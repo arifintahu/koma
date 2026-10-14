@@ -4,8 +4,8 @@ use crate::app::runtime::{
     client::HostCtl,
     screen_browser::{
         act::{action_js, wait_is_delay},
-        allow_content_url, duckduckgo_search_url, navigation_allowed, nav_grant_label,
-        nav_never_allow, nav_remember_key, resolve_omnibox_input, validate_content_url,
+        allow_content_url, duckduckgo_search_url, nav_grant_label, nav_never_allow,
+        nav_remember_key, navigation_allowed, resolve_omnibox_input, validate_content_url,
         webview_can_load_url, Action, BlockedNav, Observation, Operation, Reply, Request, Status,
         TabInfo, Transform, Viewport, MAX_TABS,
     },
@@ -608,7 +608,15 @@ fn windows_sync_webview(webview: &WebView) {
 /// Force position on Linux. Size-request stays 1×1 so GTK will let the window
 /// shrink; `linux_follow_allocate` stretches children to the real allocation.
 #[cfg(target_os = "linux")]
-fn linux_place(fixed: &gtk::Fixed, webview: &WebView, x: f64, y: f64, w: f64, h: f64, visible: bool) {
+fn linux_place(
+    fixed: &gtk::Fixed,
+    webview: &WebView,
+    x: f64,
+    y: f64,
+    w: f64,
+    h: f64,
+    visible: bool,
+) {
     use gtk::prelude::*;
     use wry::WebViewExtUnix;
     let widget = webview.webview();
@@ -1023,19 +1031,9 @@ impl BrowserWindow {
         #[cfg(target_os = "linux")]
         self.linux_chrome_h.set(chrome_h);
         #[cfg(target_os = "linux")]
-        linux_apply_window_shape(
-            &self.window,
-            size.width as i32,
-            size.height as i32,
-            scale,
-        );
+        linux_apply_window_shape(&self.window, size.width as i32, size.height as i32, scale);
         #[cfg(target_os = "windows")]
-        windows_apply_window_shape(
-            &self.window,
-            size.width as i32,
-            size.height as i32,
-            scale,
-        );
+        windows_apply_window_shape(&self.window, size.width as i32, size.height as i32, scale);
         let content_h = (logical_h - chrome_h).max(40.0);
         let active = self.active.clone();
 
@@ -1210,17 +1208,15 @@ impl BrowserWindow {
             .with_ipc_handler({
                 let ctl = self.ctl.clone();
                 move |request| {
-                    let Ok(value) = serde_json::from_str::<serde_json::Value>(request.body()) else {
+                    let Ok(value) = serde_json::from_str::<serde_json::Value>(request.body())
+                    else {
                         return;
                     };
                     let action = value.get("a").and_then(|v| v.as_str()).unwrap_or("");
                     if action != "win_resize" {
                         return;
                     }
-                    let dir = value
-                        .get("dir")
-                        .and_then(|v| v.as_str())
-                        .map(str::to_owned);
+                    let dir = value.get("dir").and_then(|v| v.as_str()).map(str::to_owned);
                     let _ = ctl.send(HostCtl::ScreenBrowserChrome {
                         action: "win_resize".into(),
                         url: dir,

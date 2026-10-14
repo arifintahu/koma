@@ -4,7 +4,8 @@ import { useCallback, useEffect, useRef, useState } from "react"
 import { Chat } from "./chat.tsx"
 import { foregroundSession, modeName, type Snapshot } from "./protocol.ts"
 import { QuitScreen, quitState } from "./quit.tsx"
-import { ModeView, modeScreen } from "./screens.tsx"
+import { OpeningSplash, WarmingSplash, warmSplash } from "./loading.tsx"
+import { ModeView, modeScreen, rewindOf } from "./screens.tsx"
 import { DaemonLink } from "./socket.ts"
 import { themeFor, type Theme } from "./theme.ts"
 
@@ -13,17 +14,22 @@ export function SessionScreen({
   syntaxStyle,
   onHome,
   onOpen,
+  onExit,
+  ctrlC,
 }: {
   id: string
   syntaxStyle: SyntaxStyle
   onHome: () => void
   onOpen: (id: string) => void
+  onExit: () => void
+  ctrlC?: { current: () => void }
 }) {
   const [snap, setSnap] = useState<Snapshot | null>(null)
   const [phase, setPhase] = useState<"connecting" | "live" | "error">("connecting")
   const [error, setError] = useState("")
   const linkRef = useRef<DaemonLink | null>(null)
   const snapRef = useRef<Snapshot | null>(null)
+  const phaseRef = useRef(phase)
   const send = useCallback((request: unknown) => {
     linkRef.current?.send(request)
   }, [])
@@ -74,12 +80,28 @@ export function SessionScreen({
     }
   }, [id, onHome, onOpen])
 
+  phaseRef.current = phase
+
+  useEffect(() => {
+    if (!ctrlC) return
+    ctrlC.current = () => {
+      if (phaseRef.current !== "live") return
+      if (quitState(snapRef.current?.global.mode)) return
+      send({ SendKey: { code: { Char: "c" }, mods: 2 } })
+    }
+    return () => {
+      ctrlC.current = () => {}
+    }
+  }, [ctrlC, send])
+
   const theme = themeFor(snap?.global.palette)
   const session = snap ? foregroundSession(snap) : null
   const mode = snap ? modeName(snap.global.mode) : ""
   const quit = snap ? quitState(snap.global.mode) : null
+  const rewind = snap ? rewindOf(snap.global.mode) : null
+  const warming = snap ? warmSplash(snap.global.mode) : null
   const screen = snap ? modeScreen(snap.global.mode) : null
-  const chat = mode === "Chat"
+  const chat = mode === "Chat" || rewind != null
   const approval = Boolean(session?.awaiting_approval)
   const busy = Boolean(session && (session.working || session.waiting || session.streaming))
   const [exiting, setExiting] = useState<number | null>(null)
@@ -94,12 +116,12 @@ export function SessionScreen({
     if (index === 0) {
       send("QuitDaemon")
       send("Detach")
-      onHome()
+      onExit()
       return
     }
     send({ SendKey: { code: "Esc", mods: 0 } })
     send("Detach")
-    onHome()
+    onExit()
   }
 
   function nudge(from: number, delta: number, length: number) {
@@ -112,8 +134,38 @@ export function SessionScreen({
 
   useKeyboard((key) => {
     if (key.eventType === "release") return
-    if (key.ctrl && key.name === "c") {
+    if ((key.ctrl && key.name === "c") || key.sequence === "\u0003") {
       if (phase === "live" && !quit) send({ SendKey: { code: { Char: "c" }, mods: 2 } })
+      return
+    }
+    if (warming && phase === "live" && !quit && key.name === "escape") {
+      if (typeof key.preventDefault === "function") key.preventDefault()
+      send({ SendKey: { code: "Esc", mods: 0 } })
+      return
+    }
+    if (rewind && phase === "live" && !quit) {
+      const prevent = () => {
+        if (typeof key.preventDefault === "function") key.preventDefault()
+      }
+      if (key.name === "up") {
+        prevent()
+        send({ SendKey: { code: "Up", mods: 0 } })
+      } else if (key.name === "down") {
+        prevent()
+        send({ SendKey: { code: "Down", mods: 0 } })
+      } else if (key.name === "pageup") {
+        prevent()
+        for (let i = 0; i < 10; i++) send({ SendKey: { code: "Up", mods: 0 } })
+      } else if (key.name === "pagedown") {
+        prevent()
+        for (let i = 0; i < 10; i++) send({ SendKey: { code: "Down", mods: 0 } })
+      } else if (key.name === "escape") {
+        prevent()
+        send({ SendKey: { code: "Esc", mods: 0 } })
+      } else if (key.name === "return" || key.name === "enter") {
+        prevent()
+        send({ SendKey: { code: "Enter", mods: 0 } })
+      }
       return
     }
     if (screen && phase === "live" && !quit) {
@@ -152,14 +204,10 @@ export function SessionScreen({
       else if (plan && key.name === "a") send({ SendKey: { code: { Char: "a" }, mods: 0 } })
       return
     }
-    if (key.name === "escape") {
-      if (busy) send({ SendKey: { code: "Esc", mods: 0 } })
-      else onHome()
-    }
   })
 
   if (phase === "connecting") {
-    return <Opening theme={theme} />
+    return <OpeningSplash theme={theme} />
   }
   if (phase === "error" && !snap) {
     return (
@@ -170,6 +218,9 @@ export function SessionScreen({
     )
   }
   if (!snap) return null
+  if (warming) {
+    return <WarmingSplash theme={theme} warm={warming} />
+  }
   if (quit) {
     return <QuitScreen state={quit} theme={theme} exiting={exiting} onPick={chooseQuit} />
   }
@@ -192,27 +243,12 @@ export function SessionScreen({
         snap={snap}
         theme={theme}
         syntaxStyle={syntaxStyle}
-        focused={!approval}
+        focused={!approval && !rewind}
+        rewind={rewind}
         send={send}
         sendTracked={sendTracked}
         onFlushError={(text) => setError(text)}
       />
-    </box>
-  )
-}
-
-const OPENING_FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
-
-function Opening({ theme }: { theme: Theme }) {
-  const [tick, setTick] = useState(0)
-  useEffect(() => {
-    const timer = setInterval(() => setTick((value) => value + 1), 80)
-    return () => clearInterval(timer)
-  }, [])
-  return (
-    <box flexGrow={1} flexDirection="column" justifyContent="center" alignItems="center" backgroundColor={theme.bg} gap={1}>
-      <text fg={theme.accent}>{OPENING_FRAMES[tick % OPENING_FRAMES.length]}</text>
-      <text fg={theme.dim}>opening session…</text>
     </box>
   )
 }

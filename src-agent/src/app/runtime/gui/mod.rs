@@ -135,11 +135,11 @@ fn apply_dock_icon() {
 // compiling unchanged. `dispatch_git`/`dispatch_forward` are `dispatch`'s own
 // split-out git/key routing + generic forwarding helpers (file size).
 mod computer_viewer;
-mod screen_browser_window;
 mod dispatch;
 mod dispatch_forward;
 mod dispatch_git;
 mod proto;
+mod screen_browser_window;
 mod usage_bar;
 use proto::{ClientMsg, UserEvent, WinCmd};
 
@@ -740,8 +740,8 @@ pub fn run_gui(opts: crate::cli::Opts) -> Result<()> {
     let mut screen_browser_palette = serde_json::Value::Null;
     // Primary session workdir — keys the per-PWD browser profile (cookies/storage).
     // Updated from SettingsValues; falls back to process cwd until the first push.
-    let mut screen_browser_workdir = std::env::current_dir()
-        .unwrap_or_else(|_| std::path::PathBuf::from("."));
+    let mut screen_browser_workdir =
+        std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
     // Taken on the first loop turn. The install must not run before `run`,
     // and it must not stay on this thread: a folder dialog here is the only
     // thing the user sees.
@@ -1367,7 +1367,9 @@ mod navigation_tests {
             "koma://localhost/index.html#computer-preview"
         ));
         assert!(allow_webview_navigation("http://koma.localhost/index.html"));
-        assert!(allow_webview_navigation("http://koma.extension/panel/index.html"));
+        assert!(allow_webview_navigation(
+            "http://koma.extension/panel/index.html"
+        ));
         assert!(allow_webview_navigation("about:blank"));
     }
 }

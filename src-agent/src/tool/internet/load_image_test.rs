@@ -141,11 +141,8 @@ fn image_marker_label_in_path_resolves_and_a_real_path_still_loads() {
 
     let (from_label, _) = read_validated_image(&ctx, "Image #1").unwrap();
     assert_eq!(from_label, img.canonicalize().unwrap());
-    let (from_brackets, _) = read_validated_image_from_args(
-        &ctx,
-        &json!({"path": "[Image #1]"}),
-    )
-    .unwrap();
+    let (from_brackets, _) =
+        read_validated_image_from_args(&ctx, &json!({"path": "[Image #1]"})).unwrap();
     assert_eq!(from_brackets, img.canonicalize().unwrap());
     let (from_path, _) = read_validated_image(&ctx, "real.png").unwrap();
     assert_eq!(from_path, ws.join("real.png").canonicalize().unwrap());

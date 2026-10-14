@@ -82,10 +82,7 @@ fn parse_into(args: &[String], run: &mut RunCli) -> Result<(), String> {
             "--security" => run.security = Some(toggle()?),
             "--max-tokens" => run.max_tokens = Some(number()?.min(1_000_000) as u32),
             "--short-send" => run.short_send = Some(toggle()?),
-            "--context-window-limit" => {
-                run.context_window_limit =
-                    Some(number()?)
-            }
+            "--context-window-limit" => run.context_window_limit = Some(number()?),
             "--context-model-alias" => {
                 run.context_model_alias = Some(value.trim().chars().take(200).collect())
             }

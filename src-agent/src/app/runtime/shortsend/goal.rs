@@ -320,11 +320,12 @@ fn strip_goal_prefix<'a>(lower: &str, raw: &'a str) -> Option<&'a str> {
 }
 
 fn looks_like_greeting(s: &str) -> bool {
-    let t = s.trim().trim_matches(|c: char| c.is_ascii_punctuation() || c.is_whitespace());
+    let t = s
+        .trim()
+        .trim_matches(|c: char| c.is_ascii_punctuation() || c.is_whitespace());
     matches!(
         t.to_ascii_lowercase().as_str(),
-        "hi"
-            | "hello"
+        "hi" | "hello"
             | "hey"
             | "yo"
             | "sup"

@@ -11,9 +11,9 @@
 
 use super::WorkspaceRef;
 use anyhow::{Context, Result};
-use process_wrap::std::{ChildWrapper, CommandWrap};
 #[cfg(unix)]
 use process_wrap::std::CommandWrapper;
+use process_wrap::std::{ChildWrapper, CommandWrap};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use std::{
@@ -387,8 +387,7 @@ fn create_interrupt_event() -> Result<(usize, String)> {
         bInheritHandle: 1, // TRUE — child must inherit for ParentPollerWindows
     };
     // Manual-reset false (auto-reset), initial nonsignaled, unnamed.
-    let handle: HANDLE =
-        unsafe { CreateEventW(&mut sa, 0, 0, std::ptr::null()) };
+    let handle: HANDLE = unsafe { CreateEventW(&mut sa, 0, 0, std::ptr::null()) };
     anyhow::ensure!(
         !handle.is_null() && handle != windows_sys::Win32::Foundation::INVALID_HANDLE_VALUE,
         "CreateEventW failed for JPY_INTERRUPT_EVENT"
@@ -444,8 +443,7 @@ pub(super) fn consent(
     anyhow::ensure!(!interpreter.is_empty(), "Interpreter is required");
     anyhow::ensure!(!document_path.is_empty(), "Document path is required");
     anyhow::ensure!(
-        document_path.ends_with(".ipynb")
-            || document_path.to_ascii_lowercase().ends_with(".ipynb"),
+        document_path.ends_with(".ipynb") || document_path.to_ascii_lowercase().ends_with(".ipynb"),
         "Consent is only valid for notebook documents"
     );
     let mut list = consents()
@@ -486,7 +484,10 @@ pub(super) fn start(
         Some(p) if !p.is_empty() => PathBuf::from(p),
         _ => super::environment::test_python(root)?,
     };
-    anyhow::ensure!(interp.is_file() || interp.components().count() == 1, "Interpreter not found");
+    anyhow::ensure!(
+        interp.is_file() || interp.components().count() == 1,
+        "Interpreter not found"
+    );
     let interp_str = interp.to_string_lossy().into_owned();
     require_consent(workspace, &interp_str, document_path, document_epoch)?;
 
@@ -496,9 +497,10 @@ pub(super) fn start(
             .map_err(|_| anyhow::anyhow!("Kernel registry lock poisoned"))?;
         anyhow::ensure!(map.len() < MAX_KERNELS, "Too many live notebook kernels");
         // One kernel per document path per workspace.
-        if let Some((id, session)) = map.iter().find(|(_, s)| {
-            s.workspace == *workspace && s.document_path == document_path
-        }) {
+        if let Some((id, session)) = map
+            .iter()
+            .find(|(_, s)| s.workspace == *workspace && s.document_path == document_path)
+        {
             // Reuse keeps the original document-epoch binding. Callers must execute
             // with that epoch (not a later controller edit/output epoch).
             return Ok(json!({
@@ -652,9 +654,10 @@ pub(super) fn start(
             .lock()
             .map_err(|_| anyhow::anyhow!("Kernel registry lock poisoned"))?;
         // Lost the race — another start registered the same document.
-        if let Some((existing_id, existing)) = map.iter().find(|(_, s)| {
-            s.workspace == *workspace && s.document_path == document_path
-        }) {
+        if let Some((existing_id, existing)) = map
+            .iter()
+            .find(|(_, s)| s.workspace == *workspace && s.document_path == document_path)
+        {
             let payload = json!({
                 "kernelId": existing_id,
                 "generation": existing.generation,
@@ -691,9 +694,7 @@ pub(super) fn stop(workspace: &WorkspaceRef, kernel_id: &str) -> Result<Value> {
     let mut map = registry()
         .lock()
         .map_err(|_| anyhow::anyhow!("Kernel registry lock poisoned"))?;
-    let mut session = map
-        .remove(kernel_id)
-        .context("Kernel session not found")?;
+    let mut session = map.remove(kernel_id).context("Kernel session not found")?;
     anyhow::ensure!(
         session.workspace == *workspace,
         "Kernel belongs to another workspace"
@@ -808,11 +809,7 @@ pub(super) fn execute(
     )
 }
 
-pub(super) fn restart(
-    workspace: &WorkspaceRef,
-    root: &Path,
-    kernel_id: &str,
-) -> Result<Value> {
+pub(super) fn restart(workspace: &WorkspaceRef, root: &Path, kernel_id: &str) -> Result<Value> {
     let (document_path, document_epoch, interpreter) = {
         let map = registry()
             .lock()
@@ -982,15 +979,7 @@ mod tests {
             host_id: "local".into(),
             root: "/tmp/no-consent".into(),
         };
-        let err = start(
-            &ws,
-            Path::new("."),
-            "x.ipynb",
-            1,
-            Some("python3"),
-            &[],
-        )
-        .unwrap_err();
+        let err = start(&ws, Path::new("."), "x.ipynb", 1, Some("python3"), &[]).unwrap_err();
         assert!(err.to_string().contains("consent"));
         let st = status(&ws, None).unwrap();
         assert_eq!(st["kernels"].as_array().unwrap().len(), 0);
@@ -1012,7 +1001,10 @@ mod tests {
         #[cfg(unix)]
         {
             let mut wrap = CommandWrap::with_new("sleep", |cmd| {
-                cmd.arg("30").stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null());
+                cmd.arg("30")
+                    .stdin(Stdio::null())
+                    .stdout(Stdio::null())
+                    .stderr(Stdio::null());
             });
             wrap.wrap(ProcessTree);
             let mut child = wrap.spawn().expect("spawn sleep");
@@ -1027,7 +1019,10 @@ mod tests {
                 }
                 std::thread::sleep(std::time::Duration::from_millis(20));
             }
-            assert!(done, "sleep stand-in should be reaped after process group kill");
+            assert!(
+                done,
+                "sleep stand-in should be reaped after process group kill"
+            );
         }
         #[cfg(windows)]
         {
@@ -1058,7 +1053,10 @@ mod tests {
         let (handle, env) = create_interrupt_event().expect("CreateEventW");
         assert!(handle != 0);
         assert!(!env.is_empty());
-        assert!(env.chars().all(|c| c.is_ascii_digit()), "JPY_INTERRUPT_EVENT must be decimal: {env}");
+        assert!(
+            env.chars().all(|c| c.is_ascii_digit()),
+            "JPY_INTERRUPT_EVENT must be decimal: {env}"
+        );
         signal_interrupt_event(handle).expect("SetEvent");
         unsafe {
             windows_sys::Win32::Foundation::CloseHandle(
@@ -1092,11 +1090,17 @@ mod tests {
         let snap = started.to_string();
         assert!(!snap.contains("shell_port"));
         assert!(!snap.contains("\"key\""));
-        let reply = execute(&ws, &kid, path, Some("c0"), "print('hi-koma')", gen, 1)
-            .expect("execute");
+        let reply =
+            execute(&ws, &kid, path, Some("c0"), "print('hi-koma')", gen, 1).expect("execute");
         assert_eq!(reply["status"], "ok");
         stop(&ws, &kid).unwrap();
-        assert!(!has_active() || status(&ws, None).unwrap()["kernels"].as_array().unwrap().is_empty());
+        assert!(
+            !has_active()
+                || status(&ws, None).unwrap()["kernels"]
+                    .as_array()
+                    .unwrap()
+                    .is_empty()
+        );
         let _ = fs::remove_dir_all(&root);
     }
 }

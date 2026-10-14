@@ -259,7 +259,11 @@ async fn run_async() -> Result<()> {
             _ = tokio::time::sleep(Duration::from_millis(100)) => {}
         }
         let connected = super::SERVICE_CLIENTS.load(Ordering::Acquire) > 0;
-        if connected || super::tasks::has_active() || super::debug::has_active() || super::notebook::has_active() {
+        if connected
+            || super::tasks::has_active()
+            || super::debug::has_active()
+            || super::notebook::has_active()
+        {
             idle = Instant::now();
         } else if idle.elapsed() > Duration::from_secs(1800)
             || super::SERVICE_DRAIN.load(Ordering::Acquire)

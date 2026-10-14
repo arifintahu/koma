@@ -17,7 +17,7 @@ export function modeScreen(mode: unknown): ModeScreen | null {
   if (!mode || typeof mode !== "object") return null
   const record = mode as Rec
   const name = Object.keys(record)[0]
-  if (!name || name === "Chat" || name === "QuitConfirm") return null
+  if (!name || name === "Chat" || name === "QuitConfirm" || name === "MessageRewind" || name === "Loading") return null
   const body = (record[name] ?? {}) as Rec
   const built = build(name, body)
   if (built) return built
@@ -30,6 +30,14 @@ export function modeScreen(mode: unknown): ModeScreen | null {
       .map(([key, value]) => ({ label: key, detail: String(value) })),
     selected: 0,
   }
+}
+
+export function rewindOf(mode: unknown): { entries: string[]; selected: number } | null {
+  if (!mode || typeof mode !== "object" || !("MessageRewind" in mode)) return null
+  const body = (mode as { MessageRewind?: { entries?: { content?: string }[]; selected?: number } }).MessageRewind
+  const entries = Array.isArray(body?.entries) ? body.entries.map((row) => String(row?.content ?? "")) : []
+  const selected = typeof body?.selected === "number" ? body.selected : Math.max(0, entries.length - 1)
+  return { entries, selected }
 }
 
 export function ModeView({
@@ -126,11 +134,6 @@ function build(name: string, body: Rec): ModeScreen | null {
         label: str(row.kind),
         detail: str(row.rel_path),
       })), num(body.selected))
-    case "MessageRewind":
-      return list("rewind", "enter restore · esc back", asRows(body.entries).map((row) => ({
-        label: str(row.content).slice(0, 80),
-        detail: "",
-      })), num(body.selected))
     case "Settings":
       return list("settings", `${str(body.page)} · esc back`, [
         { label: "model", detail: str(body.model) },
@@ -195,11 +198,6 @@ function build(name: string, body: Rec): ModeScreen | null {
         label: str(row.name ?? row.host),
         detail: str(row.user ?? ""),
       })), num(body.selected))
-    case "Loading":
-      return list("loading", "warming the workspace", [
-        { label: "workspace", detail: warm(body.workspace) },
-        { label: "awareness", detail: warm(body.awareness) },
-      ], 0)
     case "KeyInput":
       return list("setup", "enter next · esc back", [
         { label: "endpoint", detail: str(body.endpoint) },
@@ -259,11 +257,3 @@ function num(value: unknown): number {
   return typeof value === "number" && Number.isFinite(value) ? value : 0
 }
 
-function warm(value: unknown): string {
-  if (typeof value === "string") return value
-  if (value && typeof value === "object") {
-    const key = Object.keys(value)[0]
-    return key ?? ""
-  }
-  return ""
-}
