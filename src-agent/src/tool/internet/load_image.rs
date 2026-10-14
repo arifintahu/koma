@@ -30,7 +30,7 @@ impl super::Tool for LoadImage {
             "properties": {
                 "path": {
                     "type": "string",
-                    "description": "Image path. Relative paths resolve in configured workspaces; `images/NN-…` resolves against this session directory; absolute paths must be inside a workspace, this session's scratch directory, or this session's images/ directory."
+                    "description": "Image path, or the marker `Image #N` / `[Image #N]` from the conversation. A marker resolves to that session image. A real relative or absolute path is loaded as given: relative paths resolve in configured workspaces; `images/NN-…` resolves against this session directory; absolute paths must be inside a workspace, this session's scratch directory, or this session's images/ directory."
                 },
                 "image_n": {
                     "type": "integer",
@@ -146,7 +146,26 @@ pub(crate) fn read_validated_image(ctx: &ToolCtx, requested: &str) -> Result<(Pa
     Ok((canonical, bytes))
 }
 
+/// `Image #N` and `[Image #N]` are the conversation marker, not a filename.
+fn marker_n_from_path_label(requested: &str) -> Option<usize> {
+    let mut text = requested.trim();
+    if let Some(inner) = text.strip_prefix('[').and_then(|s| s.strip_suffix(']')) {
+        text = inner.trim();
+    }
+    let rest = text
+        .strip_prefix("Image #")
+        .or_else(|| text.strip_prefix("image #"))?;
+    if rest.is_empty() || !rest.chars().all(|c| c.is_ascii_digit()) {
+        return None;
+    }
+    rest.parse().ok().filter(|n| *n > 0)
+}
+
 fn resolve_candidate(ctx: &ToolCtx, requested: &str) -> Result<PathBuf> {
+    if let Some(n) = marker_n_from_path_label(requested) {
+        return resolve_session_image_n(ctx, n);
+    }
+
     let path = Path::new(requested);
     if path.is_absolute() {
         return Ok(path.to_path_buf());
