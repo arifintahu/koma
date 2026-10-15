@@ -131,17 +131,23 @@ export function attachmentsView(body: Rec, theme: Theme, onMove: (index: number)
   }
 }
 
+function notificationTime(value: unknown): string {
+  const date = new Date(typeof value === "number" ? value : str(value))
+  return Number.isNaN(date.getTime()) ? str(value) : date.toLocaleString()
+}
+
 export function notificationsView(body: MenuData["Notifications"] & Rec, theme: Theme, onMove: (index: number) => void, send: (request: unknown) => void) {
   const query = str(body.query).toLowerCase()
   const all = rows(body.entries)
   const filtered = all.filter((row) => {
+    if (body.severity && row.severity !== body.severity) return false
     if (!query) return true
     return `${str(row.message)} ${str(row.source)} ${str(row.severity)}`.toLowerCase().includes(query)
   })
   const lines: Line[] = filtered.map((row) => ({
     label: clip(str(row.message), 64),
-    detail: str(row.source),
-    badge: { text: `${flag(row.read) ? "read" : "unread"} · ${str(row.severity)}`, role: str(row.severity) === "error" ? "error" : str(row.severity) === "warn" ? "warn" : "info" },
+    detail: `${notificationTime(row.timestamp)} · ${str(row.source)}`,
+    badge: { text: `${flag(row.read) ? "read" : "unread"} · ${str(row.severity)}`, role: str(row.severity) === "error" ? "error" : str(row.severity) === "warn" ? "warn" : str(row.severity) === "success" ? "success" : "info" },
     dim: flag(row.read),
   }))
   const selected = num(body.cursor)
@@ -153,10 +159,14 @@ export function notificationsView(body: MenuData["Notifications"] & Rec, theme: 
       <box flexDirection="column" flexGrow={1} flexBasis={0} minHeight={0}>
         {body.confirm_clear ? <Note text="Clear notifications in this scope permanently?" theme={theme} color={theme.warn} /> : <InputField field="query" label="Search notifications" value={str(body.query)} placeholder="Search messages, sources, or severity" active theme={theme} />}
         {str(body.error) ? <Note text={str(body.error)} theme={theme} color={theme.error} /> : null}
-        <Action label={body.app ? "App scope (tab)" : "Session scope (tab)"} theme={theme} onPress={()=>send({SendKey:{code:"Tab",mods:0}})} />
+        <box flexDirection="row" flexShrink={0} flexWrap="wrap">
+          <Action label={body.app ? "App (tab)" : "Session (tab)"} theme={theme} onPress={()=>send({SendKey:{code:"Tab",mods:0}})} />
+          <Action label={`Severity: ${str(body.severity) || "all"} (ctrl+f)`} theme={theme} onPress={()=>send({SendKey:{code:{Char:"f"},mods:2}})} />
+        </box>
         {body.loading ? <Note text="Refreshing notifications…" color={theme.info} theme={theme} /> : null}
-        <Panel title={`Notifications · ${lines.length}`} hot={false} theme={theme}><Lines rows={lines} selected={selected} theme={theme} onPress={onMove} /></Panel>
-        {current && str(body.expanded) === str(current.id) ? <Panel title={str(current.source) || "Details"} hot={false} theme={theme}><Paragraphs lines={[str(current.timestamp), ...str(current.message).split("\n")]} theme={theme} /></Panel> : null}
+        {!body.loading && !lines.length ? <Note text="No notifications match." theme={theme} /> : null}
+        <Panel title={`Notifications · ${lines.length} · ${all.filter((row) => !flag(row.read)).length} unread`} hot={false} theme={theme}><Lines rows={lines} selected={selected} theme={theme} onPress={onMove} /></Panel>
+        {current && str(body.expanded) === str(current.id) ? <Panel title={str(current.source) || "Details"} hot={false} theme={theme}><Document><text fg={theme.dim}>{notificationTime(current.timestamp)}</text><text fg={theme.fg} selectable>{str(current.message)}</text></Document></Panel> : null}
       </box>
     ),
   }

@@ -1,6 +1,6 @@
 import type { Renderable, ScrollBoxRenderable, SyntaxStyle, TextareaRenderable, TextareaAction } from "@opentui/core"
-import { useKeyboard, useTerminalDimensions } from "@opentui/react"
-import { charIndexAt, composerIsAhead, utf16Offset } from "./caret.ts"
+import { useKeyboard, useRenderer } from "@opentui/react"
+import { charIndexAt, composerIsAhead, mergeComposerChange, utf16Offset } from "./caret.ts"
 import { existsSync } from "node:fs"
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react"
 import {
@@ -11,6 +11,7 @@ import {
   visibleFromTurn,
 } from "./history.ts"
 import { PALETTE_VISIBLE, commandSuggestions, commandSuggestionOffset, paletteWindow } from "./palette.ts"
+import { forwardKey } from "./keys.ts"
 import { attachmentFile } from "./paths.ts"
 import {
   showImagePath,
@@ -23,6 +24,17 @@ import {
 } from "./protocol.ts"
 import type { Theme } from "./theme.ts"
 import { Toast, type LocalNotice } from "./toast.tsx"
+
+function useTerminalSize() {
+  const renderer = useRenderer()
+  const [size, setSize] = useState({ width: renderer.width, height: renderer.height })
+  useEffect(() => {
+    const read = () => setSize((current) => current.width === renderer.width && current.height === renderer.height ? current : { width: renderer.width, height: renderer.height })
+    renderer.on("frame", read)
+    return () => { renderer.off("frame", read) }
+  }, [renderer])
+  return size
+}
 
 const COMPOSER_KEYS = [
   { name: "return", action: "submit" as const },
@@ -79,8 +91,7 @@ export function Chat({
       {notice ? <Toast key={`local:${notice.id}`} id={notice.id} kind="info" text={notice.text} theme={theme} onDismiss={onNoticeDismiss} /> : null}
       <HistoryPane session={session} theme={theme} syntaxStyle={syntaxStyle} />
       <Steers session={session} theme={theme} selected={snap.global.pending_steer_sel} />
-      {session.awaiting_approval ? <Approval session={session} theme={theme} send={send} /> : null}
-      {rewind ? (
+      {session.awaiting_approval ? <Approval session={session} theme={theme} send={send} /> : rewind ? (
         <RewindOverlay rewind={rewind} theme={theme} send={send} />
       ) : overlay ? (
         overlay
@@ -241,7 +252,7 @@ function HistoryPane({
   }, [])
 
   return (
-    <box flexGrow={1} flexDirection="column">
+    <box flexGrow={1} flexBasis={0} minHeight={0} flexDirection="column">
       {sticky ? (
         <box flexShrink={0} backgroundColor={theme.bg}>
           <UserBand message={sticky} session={session} theme={theme} syntaxStyle={syntaxStyle} muted />
@@ -426,6 +437,10 @@ function HistoryTurn({
   )
 }
 
+export function collapsePastedText(content: string): string {
+  return content.replace(/<<<pasted_text n=(\d+) path="[^"]*">>>[\s\S]*?<<<end_pasted_text n=\d+>>>/g, (_, n) => `[Pasted Text #${n}]`)
+}
+
 function UserBand({
   message,
   session,
@@ -446,7 +461,7 @@ function UserBand({
         <box width={1} backgroundColor={ink} />
         <box flexGrow={1} paddingLeft={1} paddingRight={1} paddingTop={1} paddingBottom={1} backgroundColor={theme.panel}>
           {message.content ? (
-            <MarkdownBody content={message.content} syntaxStyle={syntaxStyle} fg={ink} />
+            <MarkdownBody content={collapsePastedText(message.content)} syntaxStyle={syntaxStyle} fg={ink} />
           ) : null}
         </box>
       </box>
@@ -678,14 +693,14 @@ function Steers({ session, theme, selected }: { session: SessionSnap; theme: The
     <box border={["top"]} borderColor={theme.dim} paddingLeft={2} paddingRight={2} flexDirection="column">
       {session.pending_steer.map((text, index) => (
         <text key={`${index}-${text.slice(0, 12)}`} fg={index === selected ? theme.accent : theme.dim}>
-          {`${index === selected ? "●" : "○"} ${text}`}
+          {`${index === selected ? "●" : "○"} ${text}${session.pending_steer_attachments[index]?.length ? ` · ${session.pending_steer_attachments[index]!.length} attachments` : ""}`}
         </text>
       ))}
     </box>
   )
 }
 
-function Approval({
+export function Approval({
   session,
   theme,
   send,
@@ -697,17 +712,30 @@ function Approval({
   const call = session.pending_tool_calls[session.tool_idx]
   const name = call?.function.name ?? "tool"
   const plan = name === "plan_ready" || name === "mission_ready"
+  const { height, width } = useTerminalSize()
+  const detail = plan ? planDigest(call?.function.arguments ?? "") ?? call?.function.arguments ?? "" : payloadPreview(call?.function.arguments ?? "")
   return (
-    <box border={["top", "bottom"]} borderColor={theme.warn} paddingLeft={2} paddingRight={2} flexDirection="column">
-      <text fg={theme.warn}>{name}</text>
-      {session.approval_reason ? <text fg={theme.dim}>{session.approval_reason}</text> : null}
-      <box flexDirection="row" gap={2}>
-        <Choice label="y approve" theme={theme} onPress={() => send(charKey("y"))} />
-        {plan ? <Choice label="a compact" theme={theme} onPress={() => send(charKey("a"))} /> : null}
-        <Choice label="n deny" theme={theme} onPress={() => send(charKey("n"))} />
+    <box border borderStyle="rounded" borderColor={theme.warn} paddingLeft={1} paddingRight={1} flexDirection="column" flexShrink={0} height={Math.min(12, Math.max(6, height - 11))}>
+      <scrollbox flexGrow={1} flexBasis={0} minHeight={0} scrollY focusable={false}>
+        <text fg={theme.warn}>{name}</text>
+        {!plan && call ? <text fg={theme.fg}>{toolHint(call.function.arguments)}</text> : null}
+        {session.approval_reason ? <text fg={theme.dim}>{session.approval_reason}</text> : null}
+        {detail ? <text fg={theme.fg} selectable>{detail}</text> : null}
+      </scrollbox>
+      <box flexDirection={width < 65 && plan ? "column" : "row"} flexShrink={0}>
+        <Choice label="Approve (y)" theme={theme} onPress={() => send(approvalRequest(session, "y"))} />
+        {plan ? <Choice label="Approve & compact (a)" theme={theme} onPress={() => send(approvalRequest(session, "a"))} /> : null}
+        <Choice label={plan ? "Chat more (n/esc)" : "Deny (n/esc)"} theme={theme} onPress={() => send(approvalRequest(session, "n"))} />
       </box>
     </box>
   )
+}
+
+export function approvalRequest(session: SessionSnap, key: string): unknown {
+  const call = session.pending_tool_calls[session.tool_idx]
+  return call?.function.name === "plan_ready" || call?.function.name === "mission_ready"
+    ? { PlanDecision: { decision: key === "y" ? "approve" : key === "a" ? "compact" : "deny" } }
+    : { ApproveTool: { approve: key === "y", call_id: call?.id ?? null } }
 }
 
 function RewindOverlay({
@@ -719,7 +747,7 @@ function RewindOverlay({
   theme: Theme
   send: (request: unknown) => void
 }) {
-  const { width } = useTerminalDimensions()
+  const { width } = useTerminalSize()
   const selected = rewind.entries.length === 0 ? 0 : Math.min(rewind.selected, rewind.entries.length - 1)
   const visible = 7
   const [start, setStart] = useState(0)
@@ -735,6 +763,7 @@ function RewindOverlay({
       height={10}
       flexShrink={0}
       border
+      borderStyle="rounded"
       borderColor={theme.dim}
       title=" edit a previous message "
       titleColor={theme.dim}
@@ -826,7 +855,8 @@ function Palette({
             detail={row.detail}
             theme={theme}
             selected={absolute === selected}
-            onPress={() => {
+            onPress={async () => {
+              if (!await flushRef.current()) return
               const steps = command ? commands[absolute]!.sourceIndex - snap.global.palette_sel : absolute - selected
               if (steps === 0) return
               const code = steps > 0 ? "Down" : "Up"
@@ -858,21 +888,40 @@ function Composer({
   flushRef: { current: () => Promise<boolean> }
   onFlushError: (text: string) => void
 }) {
-  const { height } = useTerminalDimensions()
+  const { height, width } = useTerminalSize()
+  const renderer = useRenderer()
   const area = useRef<TextareaRenderable | null>(null)
   const lastSent = useRef(snap.global.input)
   const lastCursor = useRef(snap.global.cursor)
+  const focusRef = useRef(focused)
+  focusRef.current = focused
   const applying = useRef(false)
+  const pendingPaste = useRef<{ base: string; done: () => void } | null>(null)
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const flushToken = useRef(0)
   const [lines, setLines] = useState(Math.max(1, snap.global.input.split("\n").length))
-  const innerCap = Math.max(1, Math.floor(height / 2) - 2)
+  const innerCap = session.awaiting_approval ? 1 : Math.max(1, Math.floor(height / 2) - 2)
   const boxHeight = Math.min(innerCap, Math.max(1, lines)) + 2
   const paletteOpen = commandSuggestions(snap.global.command_palette, snap.global.palette_sel).rows.length > 0 || (snap.global.file_palette?.length ?? 0) > 0
   const keyQueue = useRef(Promise.resolve())
   const lastPaletteKey = useRef({ code: "", at: 0 })
   useKeyboard((key) => {
-    if (key.eventType === "release") return
+    if (key.eventType === "release" || key.defaultPrevented || !focused) return
+    if (snap.global.pending_steer_focus || !paletteOpen && session.pending_steer.length > 0 && key.name === "up" && area.current?.logicalCursor.row === 0) {
+      key.preventDefault()
+      const wire = forwardKey(key)
+      keyQueue.current = keyQueue.current.then(async () => { if (wire && await flush()) send({ SendKey: wire }) })
+      return
+    }
+    if (key.ctrl && ["p", "r", "v", "x"].includes(key.name) || key.meta && key.name === "e") {
+      key.preventDefault()
+      keyQueue.current = keyQueue.current.then(async () => {
+        const request = { SendKey: { code: { Char: key.name }, mods: key.ctrl ? 2 : 4 } }
+        if (key.ctrl && key.name === "v") await daemonEdit(request)
+        else if (await flush() && focusRef.current) send(request)
+      })
+      return
+    }
     if (key.name === "escape" && focused) {
       if (typeof key.preventDefault === "function") key.preventDefault()
       keyQueue.current = keyQueue.current.then(async () => {
@@ -905,10 +954,28 @@ function Composer({
   })
 
   useEffect(() => {
+    const read = () => {
+      const count = Math.max(1, area.current?.editorView.getTotalVirtualLineCount() ?? 1)
+      setLines((previous) => previous === count ? previous : count)
+    }
+    renderer.on("frame", read)
+    return () => { renderer.off("frame", read) }
+  }, [renderer])
+
+  useEffect(() => {
     const current = area.current
     if (!current) return
-    const text = snap.global.input
-    const cursor = snap.global.cursor
+    let text = snap.global.input
+    let cursor = snap.global.cursor
+    const pasted = pendingPaste.current
+    if (pasted) {
+      if (text === pasted.base) return
+      const merged = mergeComposerChange(pasted.base, current.plainText, text)
+      cursor = charIndexAt(merged, utf16Offset(text, cursor) + merged.length - text.length)
+      text = merged
+      pendingPaste.current = null
+      pasted.done()
+    }
     const local = current.plainText
     // The echo is an older prefix. Putting it back deletes the letters typed since.
     if (composerIsAhead(local, text)) {
@@ -916,7 +983,12 @@ function Composer({
       return
     }
     const localCursor = charIndexAt(local, current.cursorOffset ?? local.length)
-    if (text === local && cursor === localCursor && text === lastSent.current && cursor === lastCursor.current) return
+    if (text === local && (cursor === localCursor || current.hasSelection())) {
+      lastSent.current = snap.global.input
+      lastCursor.current = snap.global.cursor
+      if (cursor !== localCursor) schedule()
+      return
+    }
     // Same text, but the caret has already moved past this echo.
     if (text === local && localCursor > cursor) return
     applying.current = true
@@ -925,16 +997,20 @@ function Composer({
       setLines(Math.max(1, text.split("\n").length))
     }
     current.cursorOffset = utf16Offset(text, cursor)
-    lastSent.current = text
-    lastCursor.current = cursor
+    lastSent.current = snap.global.input
+    lastCursor.current = snap.global.cursor
     queueMicrotask(() => {
       applying.current = false
+      if (text !== snap.global.input) schedule()
     })
   }, [snap.global.input, snap.global.cursor])
 
   useEffect(() => {
     return () => {
       if (timer.current) clearTimeout(timer.current)
+      focusRef.current = false
+      pendingPaste.current?.done()
+      pendingPaste.current = null
     }
   }, [])
 
@@ -945,6 +1021,7 @@ function Composer({
     }
     const token = ++flushToken.current
     const current = area.current
+    if (!current) return false
     const text = current?.plainText ?? ""
     const cursor = charIndexAt(text, current?.cursorOffset ?? text.length)
     if (text === lastSent.current && cursor === lastCursor.current) return true
@@ -963,8 +1040,25 @@ function Composer({
   }
   flushRef.current = flush
 
+  async function daemonEdit(request: unknown): Promise<void> {
+    if (!focusRef.current || !await flush()) return
+    while (focusRef.current && area.current && (area.current.plainText !== lastSent.current || charIndexAt(area.current.plainText, area.current.cursorOffset) !== lastCursor.current)) {
+      if (!await flush()) return
+    }
+    if (!focusRef.current) return
+    await new Promise<void>((resolve) => {
+      const timeout = setTimeout(() => {
+        pendingPaste.current = null
+        resolve()
+        schedule()
+      }, 5000)
+      pendingPaste.current = { base: area.current?.plainText ?? "", done: () => { clearTimeout(timeout); resolve() } }
+      send(request)
+    })
+  }
+
   function schedule() {
-    if (applying.current) return
+    if (applying.current || pendingPaste.current) return
     const text = area.current?.plainText ?? ""
     setLines(Math.max(1, text.split("\n").length))
     if (timer.current) clearTimeout(timer.current)
@@ -974,16 +1068,37 @@ function Composer({
     }, 30)
   }
 
-  const version = process.env.KOMA_VERSION ?? ""
+  const version = snap.global.current_version
   const mode = modeMark(snap.global.agent_mode, session)
   const modeColor = mode.color === "success" ? theme.success : mode.color === "warn" ? theme.warn : mode.color === "error" ? theme.error : theme.info
   return (
     <box flexDirection="column" flexShrink={0}>
+      {!session.awaiting_approval && snap.global.pending_attachments.length ? <scrollbox height={3} flexShrink={0} scrollY focusable={false} contentOptions={{ flexDirection: "row", flexWrap: "wrap" }}>
+        {snap.global.pending_attachments.map((attachment) => <box key={`${attachment.kind}-${attachment.marker_n}`} flexDirection="row" border borderStyle="rounded" borderColor={theme.dim}>
+          <Choice label={previewLine(attachment.label || `${attachment.kind === "pasted_text" ? "Pasted text" : "Image"} #${attachment.marker_n}`, Math.max(8, Math.floor((width - 12) / 2)))} theme={theme} onPress={() => {
+            if (!focused) return
+            keyQueue.current = keyQueue.current.then(async () => {
+              if (!await flush()) return
+              const marker = `[${attachment.kind === "pasted_text" ? "Pasted Text" : "Image"} #${attachment.marker_n}]`
+              const text = area.current?.plainText ?? ""
+              const at = text.indexOf(marker)
+              if (at < 0) return
+              if (area.current) area.current.cursorOffset = at
+              if (await flush()) send({ SendKey: { code: { Char: "e" }, mods: 4 } })
+            })
+          }} />
+          <Choice label="×" theme={theme} onPress={() => {
+            if (!focused) return
+            keyQueue.current = keyQueue.current.then(() => daemonEdit({ RemoveAttachment: { marker_n: attachment.marker_n, kind: attachment.kind ?? "image" } }))
+          }} />
+        </box>)}
+      </scrollbox> : null}
       <box height={1} />
       <box flexDirection="row" justifyContent="space-between" paddingLeft={1} paddingRight={1}>
         <text>
           <span fg={theme.fg}>Koma </span>
           <span fg={theme.dim}>{version}</span>
+          {snap.global.latest_version ? <span fg={theme.warn}>{` · update ${snap.global.latest_version}`}</span> : null}
           <span fg={theme.dim}> | </span>
           <span fg={modeColor}>{mode.label}</span>
         </text>
@@ -1006,7 +1121,10 @@ function Composer({
       <textarea
         ref={area}
         flexGrow={1}
-        focused={focused}
+        flexBasis={0}
+        minWidth={0}
+        focused={focused && !snap.global.pending_steer_focus}
+        wrapMode="word"
         {...{ focusable: true }}
         initialValue={snap.global.input}
         textColor={theme.fg}
@@ -1014,17 +1132,25 @@ function Composer({
         backgroundColor={theme.bg}
         focusedBackgroundColor={theme.bg}
         keyBindings={(paletteOpen ? [...COMPOSER_KEYS, ...PALETTE_KEYS] : COMPOSER_KEYS) as { name: string; action: TextareaAction; ctrl?: boolean; shift?: boolean }[]}
+        onPaste={(event) => {
+          event.preventDefault()
+          if (!focused) return
+          const text = new TextDecoder().decode(event.bytes)
+          area.current?.deleteSelection()
+          keyQueue.current = keyQueue.current.then(() => daemonEdit({ Paste: { text } }))
+        }}
         onContentChange={schedule}
         onCursorChange={schedule}
         onSubmit={() => {
-          void (async () => {
+          if (!focused) return
+          keyQueue.current = keyQueue.current.then(async () => {
             const ok = await flush()
-            if (ok) {
+            if (ok && focusRef.current) {
               const offset = commandSuggestionOffset(snap.global.command_palette, snap.global.palette_sel, 0)
               for (let i = 0; i < Math.abs(offset); i++) send({ SendKey: { code: offset < 0 ? "Up" : "Down", mods: 0 } })
               send({ SendKey: { code: "Enter", mods: 0 } })
             }
-          })()
+          })
         }}
       />
       </box>
@@ -1134,6 +1260,10 @@ function Choice({
 
 function charKey(char: string): unknown {
   return { SendKey: { code: { Char: char }, mods: 0 } }
+}
+
+function payloadPreview(args: string): string {
+  try { return JSON.stringify(JSON.parse(args), null, 2) } catch { return args }
 }
 
 function planDigest(args: string): string | null {

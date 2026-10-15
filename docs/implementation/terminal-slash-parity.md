@@ -51,7 +51,7 @@ Notification and session refreshes preserve selected entity identity.
 | `/remote`, `/new remote`, `/resume remote` | remote host actions and headless SSH helper | host snapshot + helper events, `remote-screen.tsx` | Host CRUD/import, auth retry, bootstrap stages, directories, live/history discovery, session open/new/kill/delete, reconnect, connection loss, detach/return to hub; same OpenTUI session UI |
 | `/resume`, `/sessions` | local discovery/lifecycle commands | `hub.tsx`, session hub snapshot | Real IDs, current/working states, native search, live refresh, visible controls, named kill/delete confirmation, return to session |
 | `/usage` | usage navigation/ledger collection | `UsageSnapshot`, analytics composition | Global and runtime session totals, range/metric, theme heat intensities, token bars/model breakdown, role split, scrolling |
-| `/notification` | notification actor/input | notification mode snapshot | Native search, scope controls, pending/error, read state/details, mark-all-read and clear confirmation |
+| `/notification` | notification actor/input | notification mode snapshot | Native search, Session/App scope, severity filter, unread count, timestamps/source, bounded full details, pending/error, read state and confirmed scope clearing |
 | `/help` | help input and command registry | `HelpSnapshot` | Full-width native search/reference; activation uses actual command dispatch |
 | `/effort` | model capability-derived effort picker | `EffortSnapshot` | Content-sized choices/current cursor and capability explanation |
 | `/quit`, `/q`, `/exit` | quit state/lifecycle | quit snapshot and `quit.tsx` | Content-sized quit/detach/cancel, working counts, actual lifecycle operations |
@@ -96,3 +96,36 @@ corresponding account/host/service. Fixture render coverage and a local transpor
 harness are not evidence that these external operations passed. Keep these checks
 open until exercised with those services; do not mark this inventory as complete
 release acceptance solely from the automated suite.
+
+## Approval, composer and history follow-up (2026-10-15)
+
+- Every runtime `awaiting_approval` park uses the paused call at `tool_idx`.
+  Producers audited: generic Normal/TAC gates and classifier outage fallback in
+  `stream/tools/approval.rs`, destructive/security intercepts in `intercepts/guard.rs`,
+  plan gates in `intercepts/plan.rs`, and mission/human gates in `intercepts/sdlc.rs`.
+  Their automatic allow/block policies are unchanged. The terminal uses the existing
+  ApproveTool and PlanDecision operations, preserving the separate compact and
+  discussion outcomes. Quit/loading precedence stays with the daemon mode.
+- Approval owns keys and paste across chat, palettes, full-screen menus and viewers.
+  Decisions are guarded by session/call identity until a resolving snapshot. Menus
+  retain their mounted native drafts while their inputs and actions are suspended.
+- Composer word wrapping uses OpenTUI's total visual line count after frames and
+  resize. Paste/clipboard requests and chip removal flush the native draft, prevent
+  duplicate insertion, and rebase newer typing onto returned markers. Staged media
+  reconcile when native edits remove markers; pasted bodies collapse in transcripts.
+- Runtime follow-ups own text and attachments. Both delivery boundaries expand pasted
+  bodies and persist ordinary user messages with media. Text-only snapshot consumers
+  retain their string array; the defaulted attachment sidecar participates in diffs
+  and shadow reconstruction.
+- Running version comes from daemon build metadata; the shared comparator filters
+  the update indicator. New and reopened sessions start the existing async checker.
+- `chat.test.tsx` exercises native input and captured renders at 50×24, 80×18,
+  100×40 and 160×45, including resize, uppercase decisions, Esc, successive gates,
+  duplicate input, menu/palette arrival, focus, paste reconciliation and wrapping.
+  `KOMA_PREVIEW_PATH` also exports approval HTML and text frames for review.
+  The daemon harness additionally verifies small/large paste, path images, editor
+  reopening, kind-aware removal, marker deletion, and persisted notification scopes,
+  severity, individual/all read and clear confirmation/cancellation.
+- Real OS clipboard backends and every live provider/security/human gate remain
+  external acceptance checks. Native input fixtures, runtime unit tests and an
+  isolated socket harness do not establish those environment-specific integrations.

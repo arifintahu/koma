@@ -79,6 +79,7 @@ fn sample_session_snapshot() -> SessionSnapshot {
         resolved_model_id: "anthropic/claude-sonnet-4-5".to_string(),
         loaded_skill_names: vec!["review".to_string()],
         pending_steer: Vec::new(),
+        pending_steer_attachments: Vec::new(),
         bash_jobs: vec![],
         file_changes: vec![],
         plan_todos: vec![
@@ -180,6 +181,7 @@ fn sample_global_snapshot() -> GlobalSnapshot {
         sdlc_open: None,
         sdlc_sealed: None,
         latest_version: None,
+        current_version: env!("CARGO_PKG_VERSION").to_string(),
     }
 }
 

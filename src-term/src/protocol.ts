@@ -46,6 +46,7 @@ export interface SessionSnap {
   tool_idx: number
   resolved_model_id: string
   pending_steer: string[]
+  pending_steer_attachments: Attachment[][]
   subagents: Record<string, unknown>[]
   pending_subagents: Record<string, unknown>[]
   plan_todos: PlanTodo[]
@@ -83,6 +84,7 @@ export interface GlobalSnap {
   work_elapsed_ms: number | null
   follow: boolean
   latest_version: string | null
+  current_version: string
   pending_steer_sel: number
   pending_steer_focus: boolean
   subagents_open: boolean
@@ -350,6 +352,7 @@ function normalizeSnapshot(raw: unknown): Snapshot {
         : [],
       work_elapsed_ms: global.work_elapsed_ms == null ? null : numberOr(global.work_elapsed_ms, 0),
       follow: global.follow !== false,
+      current_version: typeof global.current_version === "string" ? global.current_version : process.env.KOMA_VERSION ?? "",
       latest_version: global.latest_version == null ? null : String(global.latest_version),
       pending_steer_sel: numberOr(global.pending_steer_sel, 0),
       pending_steer_focus: Boolean(global.pending_steer_focus),
@@ -376,6 +379,7 @@ function normalizeSession(raw: unknown): SessionSnap {
     pending_tool_calls: Array.isArray(body.pending_tool_calls) ? (body.pending_tool_calls as ToolCall[]) : [],
     tool_idx: numberOr(body.tool_idx, 0),
     resolved_model_id: String(body.resolved_model_id ?? ""),
+    pending_steer_attachments: Array.isArray(body.pending_steer_attachments) ? body.pending_steer_attachments.map((items) => Array.isArray(items) ? items as Attachment[] : []) : [],
     pending_steer: Array.isArray(body.pending_steer) ? body.pending_steer.map((row) => String(row)) : [],
     subagents: Array.isArray(body.subagents) ? body.subagents.filter((row) => row && typeof row === "object") as Record<string, unknown>[] : [],
     pending_subagents: Array.isArray(body.pending_subagents)

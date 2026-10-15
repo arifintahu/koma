@@ -664,7 +664,7 @@ fn push_snapshot_if_changed(
     // Queued mid-turn follow-ups (koma's `pending_steer`, decoded into the shadow):
     // the composer renders these as the follow-ups list while a turn is in flight.
     // Full text so clients can edit/remove per item.
-    let pending_steer: Vec<String> = fg.pending_steer.clone();
+    let pending_steer: Vec<String> = fg.pending_steer.iter().map(|s| s.text.clone()).collect();
     let loaded_skill_names: Vec<String> = if fg.active_skills.is_empty() {
         fg.projected_loaded_skill_names.iter().cloned().collect()
     } else {

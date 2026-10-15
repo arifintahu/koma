@@ -144,7 +144,79 @@ with tempfile.TemporaryDirectory(prefix='koma-menu-',dir='/private/tmp') as dire
         # Help activation goes through the authoritative command registry.
         help=open_command('/help','Help');idx=next(i for i,source in enumerate(help['filtered_idx']) if help['all'][source]['key']=='/settings')
         menu({'Select':{'group':'active','index':idx}},'Help');snap,_=menu(key('Enter'),'Help');assert 'Settings' in snap['global']['mode'];menu(key('Esc'))
-        print('PASS: real daemon immediate settings persistence, reopen, cancelled text, theme activation/highlight, provider identity/secrets, existing MCP/agent forms and help')
+        # Attachment ingestion uses the same daemon operations as the native composer.
+        send({'ReplaceInput':{'text':'draft 🐈 ', 'cursor':8}})
+        send({'Paste':{'text':'small'}})
+        assert snapshot()['global']['input']=='draft 🐈 small'
+        send({'Paste':{'text':'Full pasted body\n'+'large text '*20}})
+        snap=snapshot();pastes=snap['global']['pending_attachments']
+        assert len(pastes)==1 and pastes[0]['kind']=='pasted_text'
+        paste=pastes[0];marker=f"[Pasted Text #{paste['marker_n']}]"
+        assert marker in snap['global']['input']
+        # Reopen the existing full editor and preserve its on-disk reference.
+        send({'SendKey':{'code':{'Char':'p'},'mods':2}})
+        snap=snapshot();assert 'Attachments' in snap['global']['mode']
+        send({'SendKey':{'code':'Enter','mods':0}})
+        snap=snapshot();assert snap['global']['mode']['Attachments']['editor']
+        menu({'Replace':{'field':'editor','value':'Edited complete body 🐈\nsecond line'}},'Attachments')
+        menu(key('Esc'),'Attachments');send({'SendKey':{'code':'Esc','mods':0}})
+        snap=snapshot();assert snap['global']['mode']=='Chat'
+        assert snap['global']['pending_attachments'][0]['rel_path']==paste['rel_path']
+        import base64
+        image_path=data/'clipboard.png'
+        image_path.write_bytes(base64.b64decode('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aO6kAAAAASUVORK5CYII='))
+        send({'Paste':{'text':str(image_path)}})
+        snap=snapshot();assert len(snap['global']['pending_attachments'])==2,snap['global']
+        image=next(a for a in snap['global']['pending_attachments'] if a['kind']=='image')
+        assert f"[Image #{image['marker_n']}]" in snap['global']['input']
+        send({'RemoveAttachment':{'marker_n':image['marker_n'],'kind':'image'}})
+        snap=snapshot();assert snap['global']['pending_attachments']==[paste]
+        assert marker in snap['global']['input'] and '[Image #' not in snap['global']['input']
+        send({'ReplaceInput':{'text':'removed markers','cursor':15}})
+        assert not snapshot()['global']['pending_attachments']
+        assert snapshot()['global']['current_version']
+        # The full-screen page and the GUI request share one persisted history worker.
+        def notification(operation, scope=session):
+            request=str(uuid.uuid4());send({'Notifications':{'request':{'id':request,'session':scope,'operation':operation}}})
+            while True:
+                reply=until('Notifications')['reply']
+                if reply['id']==request:
+                    assert not reply['error'],reply
+                    return reply['entries']
+        notification({'op':'clear'})
+        entry={'id':'terminal-notice','timestamp':1,'severity':'error','source':'terminal-fixture','message':'Complete notification\n'+'details '*100,'read':False}
+        notification({'op':'record','entry':entry})
+        entries=notification({'op':'list'});assert any(e['id']==entry['id'] for e in entries)
+        open_command('/notification','Notifications')
+        deadline=time.monotonic()+5
+        while True:
+            notices=snapshot()['global']['mode']['Notifications']
+            if any(e['id']==entry['id'] for e in notices['entries']):break
+            assert time.monotonic()<deadline,notices
+            time.sleep(.05)
+        for _ in range(4):menu({'Key':{'code':{'Char':'f'},'mods':2}},'Notifications')
+        notices=snapshot()['global']['mode']['Notifications'];assert notices['severity']=='error'
+        menu({'Replace':{'field':'query','value':'Complete notification'}},'Notifications')
+        menu(key('Enter'),'Notifications')
+        assert next(e for e in notification({'op':'list'}) if e['id']==entry['id'])['read']
+        menu({'Key':{'code':{'Char':'x'},'mods':2}},'Notifications');menu(key('Esc'),'Notifications')
+        assert any(e['id']==entry['id'] for e in notification({'op':'list'}))
+        menu({'Key':{'code':{'Char':'x'},'mods':2}},'Notifications');menu(key({'Char':'y'}),'Notifications')
+        assert not notification({'op':'list'})
+        notification({'op':'record','entry':dict(entry,id='app-notice',message='App notification')},None)
+        menu(key('Tab'),'Notifications');menu({'Replace':{'field':'query','value':''}},'Notifications')
+        deadline=time.monotonic()+5
+        while True:
+            notices=snapshot()['global']['mode']['Notifications']
+            if any(e['id']=='app-notice' for e in notices['entries']):break
+            assert time.monotonic()<deadline,notices
+            time.sleep(.05)
+        assert notices['app']
+        menu({'Key':{'code':{'Char':'r'},'mods':2}},'Notifications')
+        assert all(e['read'] for e in notification({'op':'list'},None))
+        assert not notification({'op':'list'})
+        menu(key('Esc'),'Notifications')
+        print('PASS: real daemon immediate settings persistence, reopen, cancelled text, theme activation/highlight, provider identity/secrets, existing MCP/agent forms, help, paste/image/editor/removal and notification history')
     finally:
         try:send('QuitDaemon')
         except Exception:pass

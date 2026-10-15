@@ -143,6 +143,34 @@ impl SessionRuntime {
     }
 }
 
+impl SessionRuntime {
+    /// Both delivery boundaries construct ordinary user messages with full media.
+    pub fn deliver_followups(&mut self) {
+        let steers = std::mem::take(&mut self.pending_steer);
+        if steers.is_empty() {
+            return;
+        }
+        let Some(sess) = self.session.as_mut() else {
+            self.pending_steer = steers;
+            return;
+        };
+        let text = steers
+            .iter()
+            .map(|s| s.text.as_str())
+            .collect::<Vec<_>>()
+            .join("\n\n");
+        let attachments = steers
+            .into_iter()
+            .flat_map(|s| s.attachments)
+            .collect::<Vec<_>>();
+        let text = crate::model::attachment::expand_paste_markers(&text, &attachments, &sess.path);
+        let _ = crate::model::msglog::append(&sess.path, crate::dto::chat::Role::User, &text, None, None);
+        sess.conversation.push_user_with_attachments(text, attachments);
+        let _ = sess.save();
+    }
+}
+
+
 /// One user-turn entry for bash-style Up/Down composer recall.
 ///
 /// `content` is already fence-collapsed to `[Pasted Text #N]` markers so the

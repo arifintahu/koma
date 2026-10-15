@@ -98,6 +98,8 @@ pub struct GlobalSnapshot {
     /// Latest published koma version when newer than the running one (for the
     /// header update badge), else None. Projected from the daemon's version check.
     pub latest_version: Option<String>,
+    #[serde(default)]
+    pub current_version: String,
 }
 
 // -- mode payload projections (stage 2: core interactive modes) ----------------

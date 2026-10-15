@@ -168,3 +168,17 @@ settings persistence.
   SSH-helper integration scripts are in `src-term/scripts`. Read the verification
   limits in `docs/implementation/terminal-slash-parity.md` before claiming parity
   against external accounts, live hosts or installed services.
+
+## Terminal parity preferences (2026-10-15)
+
+- Enclosed surfaces use thin rounded borders; preserve transcript rails and separators.
+- Every editable field accepts paste exactly once through its active input.
+- Attachments follow their messages and keep their markers and metadata through edits and follow-ups.
+- Pending approval controls remain visible and usable immediately above the composer,
+  with bounded scrollable details. Approval owns decision keys and paste until resolved;
+  preserve the composer draft and restore focus afterwards.
+- Composer content wraps by words and grows from the native visual line count after layout.
+
+- OpenTUI textarea `virtualLineCount` is viewport-limited in 0.6.5. Composer height
+  must use `editorView.getTotalVirtualLineCount()` after a renderer frame, with
+  `minWidth={0}` and `flexBasis={0}` so long content receives a bounded wrap width.

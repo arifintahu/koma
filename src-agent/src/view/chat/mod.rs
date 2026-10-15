@@ -149,7 +149,7 @@ fn draw_pending_steers(frame: &mut Frame, area: Rect, rest: &AppStateRest, palet
     let mut lines: Vec<Line> = Vec::new();
     let text_budget = inner.width.saturating_sub(2) as usize;
     for (i, full) in rest.fg().pending_steer.iter().enumerate() {
-        let one_line = full.replace('\n', " ");
+        let one_line = full.text.replace('\n', " ");
         let text = helpers::truncate_chars(one_line.trim(), text_budget);
         let is_sel = focused && i == sel;
         let marker = if is_sel { "●" } else { "○" };

@@ -84,8 +84,8 @@ impl DaemonHub {
 
     /// Replace the foreground composer draft. `cursor` is a char index and is
     /// clamped to the new text. History recall is dropped so the next Up starts
-    /// fresh; the stash is left as-is. Attachments stay — deleting an
-    /// `[Image #N]` marker by editing is the same desync the local composer has.
+    /// fresh; the stash is left as-is. Reconcile staged media against the new
+    /// text, just as native backspace/delete do when a marker is removed.
     /// `@` and slash matching are not done here; they read `input` on the next key.
     pub(super) fn replace_input(
         &mut self,
@@ -100,6 +100,7 @@ impl DaemonHub {
         fg.input = text;
         fg.cursor = cursor.min(chars);
         fg.hist_idx = None;
+        fg.reconcile_attachments();
         // Same as push_char / backspace: a real edit returns the / and @ highlight
         // to the first match. Cursor-only flushes leave the highlight where it is.
         if text_changed {

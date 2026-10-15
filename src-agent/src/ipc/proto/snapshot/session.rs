@@ -54,6 +54,8 @@ pub struct SessionSnapshot {
     /// Empty = no panel. Cap is enforced daemon-side (5).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub pending_steer: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub pending_steer_attachments: Vec<Vec<crate::dto::chat::Attachment>>,
     /// The session's background-bash jobs (list + RAW status only — no output/elapsed).
     /// Carried so the native-React GUI's Explore sidepanel `bash[]` shows jobs — INCLUDING
     /// finished / failed ones — which it never did before (the shadow's `bash_jobs` had no

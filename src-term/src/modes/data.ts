@@ -244,6 +244,7 @@ export interface NotificationsState {
   session: string | null
   app: boolean
   query: string
+  severity: string | null
   cursor: number
   expanded: string | null
   confirm_clear: boolean

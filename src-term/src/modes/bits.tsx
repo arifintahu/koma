@@ -6,6 +6,7 @@ import type { Theme } from "../theme.ts"
 
 import { select, type ActionDescriptor } from "./actions.ts"
 
+export const InputSuspendedContext = createContext(false)
 export const DraftContext = createContext<((field: string, value: string) => void) | null>(null)
 export const nativeMenuInput: { current: TextareaRenderable | null; multiline: boolean; listNavigation: boolean } = { current: null, multiline: false, listNavigation: false }
 
@@ -339,6 +340,7 @@ export function Controls({ actions, theme, send }: { actions: ActionDescriptor[]
 }
 
 function EditableField({ label, value, placeholder, secret, theme, onChange, listNavigation }: { label: string; value: string; placeholder: string; secret: boolean; theme: Theme; onChange: (value: string) => void; listNavigation: boolean }) {
+  const suspended = useContext(InputSuspendedContext)
   const ref = useRef<InputRenderable | null>(null)
   const [length, setLength] = useState(0)
   const initial = useRef(secret ? "" : value)
@@ -353,7 +355,7 @@ function EditableField({ label, value, placeholder, secret, theme, onChange, lis
   }, [])
   return <box height={3} flexShrink={0} border borderStyle="rounded" borderColor={theme.accent} title={` ${label} `} titleColor={theme.accent} flexDirection="column">
     <box height={1} paddingLeft={1} paddingRight={1}>
-      <input ref={ref} flexGrow={1} focused keyBindings={[{ name: "a", ctrl: true, action: "select-all" }]} value={initial.current} placeholder={placeholder} textColor={secret ? theme.bg : theme.fg} focusedTextColor={secret ? theme.bg : theme.fg} backgroundColor={theme.bg} focusedBackgroundColor={theme.bg} cursorColor={theme.accent} onInput={(next: string) => { setLength([...next].length); onChange(next) }} />
+      <input ref={ref} flexGrow={1} focused={!suspended} keyBindings={[{ name: "a", ctrl: true, action: "select-all" }]} value={initial.current} placeholder={placeholder} textColor={secret ? theme.bg : theme.fg} focusedTextColor={secret ? theme.bg : theme.fg} backgroundColor={theme.bg} focusedBackgroundColor={theme.bg} cursorColor={theme.accent} onInput={(next: string) => { setLength([...next].length); onChange(next) }} />
       {secret ? <box position="absolute" left={0} top={0}><text fg={theme.fg}>{"•".repeat(Math.min(60, length))}</text></box> : null}
     </box>
   </box>

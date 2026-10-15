@@ -690,6 +690,25 @@ mod outage_tests {
     use crate::dto::chat::FunctionCall;
 
     #[test]
+    fn normal_risky_call_parks_but_plan_block_does_not_prompt() {
+        let runtime = tokio::runtime::Runtime::new().unwrap();
+        for mode in [AgentMode::Normal, AgentMode::Plan] {
+            let mut state = AppState::new(crate::app::mode::Mode::Chat);
+            state.rest.fg_mut().agent_mode = mode;
+            state.rest.fg_mut().pending_tool_calls.push(ToolCall {
+                id: "risky-call".into(), kind: "function".into(),
+                function: FunctionCall { name: "delete".into(), arguments: "{}".into() },
+            });
+            process_tools(&mut state, 0, &None, runtime.handle());
+            assert_eq!(state.rest.fg().awaiting_approval, mode == AgentMode::Normal);
+            if mode == AgentMode::Normal {
+                assert_eq!(state.rest.fg().tool_idx, 0);
+                assert!(state.rest.fg().tool_results.is_empty());
+            }
+        }
+    }
+
+    #[test]
     fn outage_parks_only_current_interactive_call_without_advancing_or_execution() {
         let mut state = AppState::new(crate::app::mode::Mode::Chat);
         let call = ToolCall {

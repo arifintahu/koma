@@ -30,3 +30,10 @@ test("an astral character counts as one daemon cursor step", () => {
   expect(charIndexAt(text, text.length)).toBe(5)
   expect(charIndexAt(text, utf16Offset(text, 3))).toBe(3)
 })
+
+test("daemon paste rebases newer insertion and deletion with Unicode", async () => {
+  const { mergeComposerChange } = await import("./caret.ts")
+  expect(mergeComposerChange("hi 🐈", "hi 🐈 newer", "hi 🐈[Image #1]")).toBe("hi 🐈[Image #1] newer")
+  expect(mergeComposerChange("hello world", "hello world!", "hello [Pasted Text #1]world")).toBe("hello [Pasted Text #1]world!")
+  expect(mergeComposerChange("abc tail", "bc tail", "abc [Image #1]tail")).toBe("bc [Image #1]tail")
+})

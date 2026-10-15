@@ -4,7 +4,7 @@ use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 pub fn handle(s: &mut NotificationsState, key: KeyEvent) -> Action {
     if s.confirm_clear {
         match key.code {
-            KeyCode::Char('y') => {
+            KeyCode::Char('y') | KeyCode::Char('Y') => {
                 s.confirm_clear = false;
                 s.request(Operation::Clear);
             }
@@ -23,10 +23,19 @@ pub fn handle(s: &mut NotificationsState, key: KeyEvent) -> Action {
         }
         KeyCode::Up => s.cursor = s.cursor.saturating_sub(1),
         KeyCode::Down => s.cursor = (s.cursor + 1).min(s.filtered().len().saturating_sub(1)),
+        KeyCode::Char('f') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+            s.severity = match s.severity.as_deref() {
+                None => Some("info".into()), Some("info") => Some("success".into()),
+                Some("success") => Some("warn".into()),
+                Some("warn") => Some("error".into()), _ => None,
+            };
+            s.cursor = 0;
+            s.expanded = None;
+        }
         KeyCode::Enter => {
             if let Some(e) = s.filtered().get(s.cursor) {
                 let id = e.id.clone();
-                s.expanded = Some(id.clone());
+                s.expanded = if s.expanded.as_ref() == Some(&id) { None } else { Some(id.clone()) };
                 s.request(Operation::Read { id: Some(id) });
             }
         }

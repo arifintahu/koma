@@ -534,7 +534,8 @@ pub(in crate::app::runtime) fn apply_action(
                 }
                 {
                     let fg = state.rest.fg_mut();
-                    fg.input = text;
+                    fg.input = text.text;
+                    fg.pending_attachments.extend(text.attachments);
                     fg.hist_idx = None;
                     fg.input_stash.clear();
                 }

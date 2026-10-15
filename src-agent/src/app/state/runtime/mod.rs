@@ -40,6 +40,16 @@ use crate::tool::DirCache;
 
 use super::types::ToastKind;
 
+/// A queued user turn retains its staged media until delivery or editing.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct FollowUp {
+    pub text: String,
+    pub attachments: Vec<crate::dto::chat::Attachment>,
+}
+impl From<String> for FollowUp {
+    fn from(text: String) -> Self { Self { text, attachments: Vec::new() } }
+}
+
 /// Typed one-shot arm for the mission-approval compact seed. Carries enough
 /// identity + integrity guards so that a stale seed from a prior session,
 /// mission, contract, or generation can never inject a capsule into the wrong
@@ -534,7 +544,7 @@ pub struct SessionRuntime {
     /// coalesced into one user message at the next tool-hop boundary (or auto-sent as
     /// a fresh turn if the turn ends first). Full text kept here; the projection sends
     /// truncated previews to the client. Hard cap 5 (a 6th submit toasts a warning).
-    pub pending_steer: Vec<String>,
+    pub pending_steer: Vec<FollowUp>,
     /// Tool-call ids of in-flight `task`-tool delegations whose result the main
     /// agent is still waiting for. The model-callable `task` tool DEFERS its tool
     /// result (mirroring the `awaiting_approval` park): `process_tools` pushes the

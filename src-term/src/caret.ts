@@ -44,3 +44,18 @@ export function charIndexAt(text: string, utf16: number): number {
   }
   return chars
 }
+
+/** Rebase newer native typing onto a daemon paste/marker insertion. */
+export function mergeComposerChange(base: string, local: string, remote: string): string {
+  if (local === base) return remote
+  let prefix = 0
+  while (prefix < base.length && prefix < local.length && base[prefix] === local[prefix]) prefix++
+  let suffix = 0
+  while (suffix < base.length - prefix && suffix < local.length - prefix && base[base.length - 1 - suffix] === local[local.length - 1 - suffix]) suffix++
+  let remotePrefix = 0
+  while (remotePrefix < base.length && remotePrefix < remote.length && base[remotePrefix] === remote[remotePrefix]) remotePrefix++
+  const delta = remote.length - base.length
+  const start = prefix >= remotePrefix ? prefix + delta : prefix
+  const end = base.length - suffix >= remotePrefix ? base.length - suffix + delta : base.length - suffix
+  return remote.slice(0, Math.max(0, start)) + local.slice(prefix, local.length - suffix) + remote.slice(Math.max(0, end))
+}

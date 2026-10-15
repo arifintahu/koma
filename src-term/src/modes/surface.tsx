@@ -3,7 +3,7 @@ import { identifiedSelection, menuControls, replaceField, select } from "./actio
 import type { ReactNode } from "react"
 import { usePaste } from "@opentui/react"
 import type { Theme } from "../theme.ts"
-import { Controls, DraftContext, Fullscreen, Overlay, nativeMenuInput } from "./bits.tsx"
+import { Controls, DraftContext, InputSuspendedContext, Fullscreen, Overlay, nativeMenuInput } from "./bits.tsx"
 import { agentsView, extScreenView, extensionsView, mcpView, remoteView, securityView, storeView } from "./manage.tsx"
 import {
   attachmentsView,
@@ -25,19 +25,21 @@ type Built = { title: ReactNode; hint: ReactNode; children: ReactNode }
 
 export function ModeSurface({
   mode,
+  disabled = false,
   theme,
   columns,
   onMove,
   send,
 }: {
   mode: unknown
+  disabled?: boolean
   theme: Theme
   columns: number
   onMove: (index: number) => void
   send: (request: unknown) => void
 }) {
   usePaste((event) => {
-    if (nativeMenuInput.current) return
+    if (event.defaultPrevented || nativeMenuInput.current) return
     event.preventDefault()
     send({ Paste: { text: new TextDecoder().decode(event.bytes) } })
   })
@@ -62,7 +64,7 @@ export function ModeSurface({
   }
   return (
     <Fullscreen title={built.title} hint={typeof built.hint === "string" ? <Controls actions={menuControls(parts!.name, parts!.body)} theme={theme} send={send} /> : built.hint} theme={theme}>
-      <DraftContext.Provider value={(field, value) => replaceField(send, field, value)}>{built.children}</DraftContext.Provider>
+      <InputSuspendedContext.Provider value={disabled}><DraftContext.Provider value={(field, value) => replaceField(send, field, value)}>{built.children}</DraftContext.Provider></InputSuspendedContext.Provider>
     </Fullscreen>
   )
 }

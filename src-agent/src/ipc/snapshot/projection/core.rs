@@ -130,7 +130,8 @@ pub fn session_snapshot(
             .unwrap_or_default(),
         // Full text (not truncated): clients need it for select/edit. TUI/GUI still
         // ellipsize at render time for the row width.
-        pending_steer: rt.pending_steer.clone(),
+        pending_steer: rt.pending_steer.iter().map(|s| s.text.clone()).collect(),
+        pending_steer_attachments: rt.pending_steer.iter().map(|s| s.attachments.clone()).collect(),
         // Background-bash jobs (identity + raw status; no output) so the GUI sidepanel's
         // `bash[]` shows them. Reads the LIVE registry the jobs actually land in — the
         // same `bash_jobs` vec `bash_output`/`bash_kill` mutate — so finished/failed jobs
@@ -396,10 +397,12 @@ pub fn global_snapshot_with_mode(state: &AppState, mode: ModeSnapshot) -> Global
         } else {
             None
         },
+        current_version: env!("CARGO_PKG_VERSION").to_string(),
         latest_version: state
             .rest
             .latest_version
             .as_ref()
+            .filter(|v| crate::app::version::is_newer(&v.version, env!("CARGO_PKG_VERSION")))
             .map(|v| v.version.clone()),
     }
 }

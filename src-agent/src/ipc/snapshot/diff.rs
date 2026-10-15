@@ -96,6 +96,7 @@ pub fn diff(
         || prev.global.palette != next.global.palette
         || prev.global.agent_mode != next.global.agent_mode
         || prev.global.latest_version != next.global.latest_version
+        || prev.global.current_version != next.global.current_version
     {
         return DiffResult::full();
     }
@@ -246,7 +247,8 @@ pub fn diff(
             // Loaded names are session-scoped structural context.
             || p.loaded_skill_names != n.loaded_skill_names
             || p.model_routes != n.model_routes
-            || p.pending_steer != n.pending_steer;
+            || p.pending_steer != n.pending_steer
+            || p.pending_steer_attachments != n.pending_steer_attachments;
         if structural {
             return DiffResult::full();
         }

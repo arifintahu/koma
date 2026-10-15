@@ -1,9 +1,9 @@
 import { FormGuard } from "./modes/drafts.ts"
 import { Action, Fullscreen, Note } from "./modes/bits.tsx"
 import type { SyntaxStyle } from "@opentui/core"
-import { useKeyboard } from "@opentui/react"
+import { useKeyboard, usePaste } from "@opentui/react"
 import { useCallback, useEffect, useRef, useState } from "react"
-import { Chat } from "./chat.tsx"
+import { Approval, approvalRequest, Chat } from "./chat.tsx"
 import { copyText } from "./copy.ts"
 import { useColumns } from "./columns.ts"
 import { forwardKey } from "./keys.ts"
@@ -53,9 +53,17 @@ export function SessionScreen({
   const [pending, setPending] = useState(0)
   const snapRef = useRef<Snapshot | null>(null)
   const phaseRef = useRef(phase)
+  const decision = useRef<string | null>(null)
   const send = useCallback((request: unknown) => {
     const link = linkRef.current
     const current = snapRef.current
+    if (current && request && typeof request === "object" && ("ApproveTool" in request || "PlanDecision" in request)) {
+      const fg = foregroundSession(current)
+      if (!fg?.awaiting_approval) return
+      const identity = `${fg.id}:${fg.pending_tool_calls[fg.tool_idx]?.id ?? fg.tool_idx}`
+      if (decision.current === identity) return
+      decision.current = identity
+    }
     if (link && current && placeOf(current.global.mode) === "full" && request && typeof request === "object") {
       const r = request as Record<string, unknown>
       let action: MenuAction | null = null
@@ -87,6 +95,9 @@ export function SessionScreen({
       (next) => {
         if (dead) return
         if (next) formGuard.current.observe(next.global.mode)
+        const fg = next ? foregroundSession(next) : null
+        const identity = fg?.awaiting_approval ? `${fg.id}:${fg.pending_tool_calls[fg.tool_idx]?.id ?? fg.tool_idx}` : null
+        if (decision.current !== identity) decision.current = null
         snapRef.current = next
         setSnap(next)
         setPhase(next ? "live" : "connecting")
@@ -210,10 +221,25 @@ export function SessionScreen({
     if (snapRef.current) void linkRef.current?.sendMenu(modeName(snapRef.current.global.mode), action).then((error) => { if (error) setError(error) })
   }
 
+  usePaste((event) => {
+    if (approval && !quit && !warming) { event.preventDefault(); event.stopPropagation() }
+  })
+
   useKeyboard((key) => {
     if (key.eventType === "release") return
     if ((key.ctrl && key.name === "c") || key.sequence === "\u0003") {
       if (phase === "live" && !quit) send({ SendKey: { code: { Char: "c" }, mods: 2 } })
+      return
+    }
+    if (approval && !quit && !warming && phase === "live") {
+      key.preventDefault()
+      key.stopPropagation()
+      const name = key.name.toLowerCase()
+      const call = session?.pending_tool_calls[session.tool_idx]
+      const plan = call?.function.name === "plan_ready" || call?.function.name === "mission_ready"
+      if (session && (name === "y" || name === "n" || name === "escape" || plan && name === "a")) {
+        send(approvalRequest(session, name === "escape" ? "n" : name))
+      }
       return
     }
     if (leavePrompt) {
@@ -262,7 +288,7 @@ export function SessionScreen({
     }
     if (menuKeys && phase === "live" && !quit) {
       if (nativeMenuInput.current) {
-        const navigation = ["escape", "tab", "return", "enter"].includes(key.name) || nativeMenuInput.multiline && key.ctrl && key.name === "x" || nativeMenuInput.listNavigation && (["up", "down"].includes(key.name) || key.ctrl && ["r", "x"].includes(key.name))
+        const navigation = ["escape", "tab", "return", "enter"].includes(key.name) || nativeMenuInput.multiline && key.ctrl && key.name === "x" || nativeMenuInput.listNavigation && (["up", "down"].includes(key.name) || key.ctrl && ["r", "x", "f"].includes(key.name))
         if (!navigation || nativeMenuInput.multiline && ["return", "enter", "tab"].includes(key.name)) return
       }
       if (typeof key.preventDefault === "function") key.preventDefault()
@@ -286,14 +312,6 @@ export function SessionScreen({
       if (key.name === "escape") onHome()
       return
     }
-    if (approval) {
-      const call = session?.pending_tool_calls[session.tool_idx]
-      const plan = call?.function.name === "plan_ready" || call?.function.name === "mission_ready"
-      if (key.name === "y") send({ SendKey: { code: { Char: "y" }, mods: 0 } })
-      else if (key.name === "n" || key.name === "escape") send({ SendKey: { code: key.name === "escape" ? "Esc" : { Char: "n" }, mods: 0 } })
-      else if (plan && key.name === "a") send({ SendKey: { code: { Char: "a" }, mods: 0 } })
-      return
-    }
   })
 
   if (phase === "connecting") {
@@ -314,17 +332,17 @@ export function SessionScreen({
   if (quit) {
     return <QuitScreen state={quit} theme={theme} exiting={exiting} onPick={chooseQuit} />
   }
-  if (leavePrompt) {
+  if (leavePrompt && !approval) {
     return <Fullscreen title="Unsaved changes" theme={theme} hint={<box flexDirection="row"><Action label="Save (s)" primary={leaveSelected === 0} theme={theme} onPress={() => decideLeave("Save")} /><Action label="Discard (d)" primary={leaveSelected === 1} theme={theme} onPress={() => decideLeave({ Key: { code: "Esc", mods: 0 } })} /><Action label="Keep editing (esc)" primary={leaveSelected === 2} theme={theme} onPress={() => setLeavePrompt(false)} /></box>}><Note text="Save these changes before leaving?" color={theme.warn} theme={theme} /></Fullscreen>
   }
   if (place === "full") {
-    return <box flexDirection="column" flexGrow={1} minHeight={0}>{error ? <text fg={theme.error}>{error}</text> : null}{pending ? <text fg={theme.info}>Waiting for daemon…</text> : null}<ModeSurface mode={snap.global.mode} theme={theme} columns={columns} onMove={moveTo} send={send} /></box>
+    return <box flexDirection="column" flexGrow={1} minHeight={0}>{error ? <text fg={theme.error}>{error}</text> : null}{pending ? <text fg={theme.info}>Waiting for daemon…</text> : null}<ModeSurface mode={snap.global.mode} theme={theme} columns={columns} onMove={moveTo} disabled={approval} send={approval ? () => {} : send} />{approval && session ? <Approval session={session} theme={theme} send={send} /> : null}</box>
   }
   if (viewer) {
-    return <AgentViewer agent={agentAt(session?.subagents, snap.global.agent_viewer)} theme={theme} />
+    return <box flexDirection="column" flexGrow={1} minHeight={0}><AgentViewer agent={agentAt(session?.subagents, snap.global.agent_viewer)} theme={theme} />{approval && session ? <Approval session={session} theme={theme} send={send} /> : null}</box>
   }
   if (!chat) {
-    return <OtherMode name={mode} theme={theme} note={error} />
+    return <box flexDirection="column" flexGrow={1} minHeight={0}><OtherMode name={mode} theme={theme} note={error} />{approval && session ? <Approval session={session} theme={theme} send={send} /> : null}</box>
   }
   const overlay = place === "overlay"
     ? <ModeSurface mode={snap.global.mode} theme={theme} columns={columns} onMove={moveTo} send={send} />

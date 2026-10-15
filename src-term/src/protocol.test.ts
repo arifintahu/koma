@@ -79,3 +79,15 @@ describe("theme", () => {
   })
 })
 
+
+test("queued media and build information survive snapshots, deltas, and old peers", () => {
+  const attachment = { kind: "image", marker_n: 1, rel_path: "images/1.png" }
+  const initial = { foreground_id: "s", sessions: [{ id: "s", pending_steer: ["queued [Image #1]"], pending_steer_attachments: [[attachment]] }], global: { current_version: "0.4.5", latest_version: "0.4.6" } }
+  const snap = fold(null, { Snapshot: initial })!
+  const delta = fold(snap, { Delta: { InputChanged: { text: "next", cursor: 4 } } })!
+  expect(delta.sessions[0]!.pending_steer).toEqual(["queued [Image #1]"])
+  expect(delta.sessions[0]!.pending_steer_attachments).toEqual([[attachment]])
+  expect(delta.global.current_version).toBe("0.4.5")
+  expect(delta.global.latest_version).toBe("0.4.6")
+  expect(fold(null, { Snapshot: { sessions: [{ id: "old" }], global: {} } })!.sessions[0]!.pending_steer_attachments).toEqual([])
+})
