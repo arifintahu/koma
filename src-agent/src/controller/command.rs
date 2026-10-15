@@ -53,7 +53,6 @@ pub const COMMANDS: &[(&str, &str)] = &[
     ("/bash", "Manage bash jobs (FG + background)"),
     ("/todo", "View the session task list"),
     ("/skill", "Load or unload agent skills"),
-    ("/attach", "Attach a .screenshoot/*.png to the next message"),
     ("/cd", "Change the session working directory"),
     ("/adddir", "Add a directory to the workspace roots"),
     ("/compact", "Summarize and compact the conversation"),
@@ -213,7 +212,8 @@ pub enum Command {
     /// Open the `/skill` hub overlay. Inner string is the raw remainder after
     /// `/skill` — pre-seeds the hub's search query if non-empty.
     Skill(String),
-    /// Attach a `.screenshoot/*.png` to the next message.
+    /// Hidden. Pulls a `.screenshoot/*.png` the agent already captured.
+    /// Not listed in `/help` or the slash palette. People paste images instead.
     /// Inner string is the raw path argument after `/attach`.
     Attach(String),
     /// An unrecognised command verb; holds the raw verb for display.

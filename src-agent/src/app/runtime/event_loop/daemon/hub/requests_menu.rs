@@ -857,11 +857,31 @@ mod tests {
         let m = s.prov_modal.as_mut().unwrap();
         m.name = "Renamed".into();
         m.api_key.clear();
-        s.save_provider_modal();
+        assert!(s.save_provider_modal().is_none());
+        assert!(s.model_modal.is_none());
         let p = &s.providers[s.prov_sel];
         assert_eq!(p.uuid, "provider");
         assert_eq!(p.api_key, "secret");
         assert_eq!(p.name, "Renamed");
+    }
+    #[test]
+    fn adding_a_provider_opens_a_model_for_that_provider() {
+        let mut state = state();
+        let Mode::Settings(s) = state.mode_mut() else {
+            panic!()
+        };
+        s.page = settings::SettingsPage::ProviderForm;
+        s.open_provider_modal();
+        let modal = s.prov_modal.as_mut().unwrap();
+        modal.name = "Local".into();
+        modal.endpoint = "http://127.0.0.1:9/v1".into();
+        let idx = s.save_provider_modal().unwrap();
+        s.jump_to_new_model(idx);
+        assert_eq!(s.page, settings::SettingsPage::ModelForm);
+        let model = s.model_modal.as_ref().unwrap();
+        assert_eq!(model.provider_idx, idx);
+        assert_eq!(model.field, 2);
+        assert_eq!(s.providers[idx].name, "Local");
     }
     #[test]
     fn provider_chooser_uses_canonical_indices_and_cancels_without_mutation() {

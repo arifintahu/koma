@@ -22,7 +22,6 @@ const commands = [
   { name: '/bash', desc: 'Bash jobs (FG + background)' },
   { name: '/todo', desc: 'Session task list' },
   { name: '/skill', desc: 'Load/unload agent skills' },
-  { name: '/attach', desc: 'Attach screenshot' },
   { name: '/cd', desc: 'Change working directory' },
   { name: '/adddir', desc: 'Add workspace root' },
   { name: '/compact', desc: 'Summarize & compact conversation' },

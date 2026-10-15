@@ -109,16 +109,18 @@ impl SettingsState {
         self.prov_replace = None;
     }
 
-    /// Save the modal draft as a new provider and close the modal. Mints a fresh
-    /// uuid for the new entry (the add-provider modal only ever creates).
-    pub fn save_provider_modal(&mut self) {
+    /// Save the modal draft and close it.
+    ///
+    /// Returns the new provider's index when this was an add. An edit returns
+    /// `None` so the caller stays on the provider list.
+    pub fn save_provider_modal(&mut self) -> Option<usize> {
         let Some(m) = self.prov_modal.take() else {
-            return;
+            return None;
         };
         if let Some(index) = self.prov_replace.take() {
             if let Some(existing) = self.providers.get_mut(index) {
                 if existing.ext_id.is_some() {
-                    return;
+                    return None;
                 }
                 existing.name = m.name.trim().into();
                 existing.endpoint = m.endpoint.trim().into();
@@ -127,7 +129,7 @@ impl SettingsState {
                     existing.api_key = m.api_key.trim().into();
                 }
                 self.prov_sel = index;
-                return;
+                return None;
             }
         }
         self.providers.push(ProviderDraft {
@@ -138,7 +140,9 @@ impl SettingsState {
             api_key: m.api_key.trim().into(),
             ext_id: None,
         });
-        self.prov_sel = self.providers.len() - 1;
+        let idx = self.providers.len() - 1;
+        self.prov_sel = idx;
+        Some(idx)
     }
 
     /// Move focus up in the modal (clamp 0..=4).

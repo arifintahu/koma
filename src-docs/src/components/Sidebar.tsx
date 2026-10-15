@@ -101,7 +101,6 @@ const PRODUCTS: ProductDef[] = [
               { label: '/todo', to: '/tui/commands-todo', desc: 'task list' },
               { label: '/cd', to: '/tui/commands-cd', desc: 'working directory' },
               { label: '/adddir', to: '/tui/commands-adddir', desc: 'add workspace root' },
-              { label: '/attach', to: '/tui/commands-attach', desc: 'attach screenshot' },
             ],
           },
           {

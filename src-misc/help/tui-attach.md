@@ -1,7 +1,7 @@
 # TUI /attach
 
 ## TUI /attach
-Attach a .screenshoot/*.png to the next message.
+Not a user command. It is hidden from /help and the slash palette. It only pulls a PNG the agent already saved in .screenshoot/ after a browser screenshot. Paste an image with Ctrl+V. Open staged images with Ctrl+P.
 
 
 

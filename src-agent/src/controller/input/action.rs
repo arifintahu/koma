@@ -198,6 +198,9 @@ pub enum Action {
     ModelOpenAgentPick {
         agent_name: String,
     },
+    /// `p`, `o`, or `m` on `/model` when the list is not a search box.
+    /// Opens settings on Providers, OAuth, or Models.
+    ModelOpenSettings(crate::app::mode::settings::SettingsPage),
     // --- Agents dashboard actions ---
     /// Confirm CREATE: write a new agent from the drafts, reload, back to Browse.
     CreateAgent,

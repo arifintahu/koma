@@ -31,9 +31,9 @@ export function SubagentPanel({
     : ["no sub-agents"]
   return (
     <box border borderStyle="rounded" borderColor={theme.dim} flexDirection="column" height={OVERLAY_HEIGHT} flexShrink={0} title=" sub-agents " titleColor={theme.dim}>
-      <box flexDirection="row" flexGrow={1}>
-        <box width={wide ? 28 : 18} flexDirection="column">
-          <Lines rows={lines} selected={selected} theme={theme} visible={OVERLAY_BODY} onPress={onMove} />
+      <box flexDirection="row" flexGrow={1} minHeight={0}>
+        <box width={wide ? 28 : 18} flexGrow={1} minHeight={0} flexDirection="column">
+          <Lines rows={lines} selected={selected} theme={theme} visible={OVERLAY_BODY} rail onPress={onMove} />
         </box>
         <box flexGrow={1} paddingLeft={1}>
           <Paragraphs lines={detail.slice(0, OVERLAY_BODY)} theme={theme} />

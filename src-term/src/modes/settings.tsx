@@ -1,7 +1,7 @@
 import type { MenuData } from "./data.ts"
 import { button, select } from "./actions.ts"
 import type { ReactNode } from "react"
-import { PALETTE_NAMES, scrollbars, type Theme } from "../theme.ts"
+import { PALETTE_NAMES, type Theme } from "../theme.ts"
 import { Action, Controls, FieldList, InputField, Lines, Note, Panel, Paragraphs, nudge, sendKey, useBodyHeight, type Line } from "./bits.tsx"
 import { flag, join, num, onOff, rec, rows, str, strings, type Rec } from "./read.ts"
 
@@ -35,11 +35,11 @@ export function settingsView(
   const page = str(body.page) || "quick"
   if (body.search_editor) return pageOf(tabs(0, theme), "↑↓ browse · Enter choose / save · Esc back", searchEditor(body, theme, send))
   if (body.picker) return pageOf(tabs(tabIndex(page), theme), "tab enter dir · ./ ~/ /abs · enter pick · esc cancel", pathPicker(rec(body.picker), theme, _onMove, send))
-  if (page === "provider_form") return pageOf(tabs(1, theme), "type  ·  enter next  ·  esc back", providerForm(body, theme, _onMove, send))
-  if (page === "model_form") return pageOf(tabs(3, theme), "tab next field · enter select · esc cancel", modelForm(body, theme, send))
+  if (page === "provider_form") return pageOf(tabs(1, theme), providerFormHint(theme, send), providerForm(body, theme, _onMove))
+  if (page === "model_form") return pageOf(tabs(3, theme), modelFormHint(body, theme, send), modelForm(body, theme, send))
   if (page === "oauth" && str(rec(body.oauth_flow).kind) && str(rec(body.oauth_flow).kind) !== "idle") {
     const flow = rec(body.oauth_flow)
-    return pageOf(tabs(2, theme), oauthHint(flow), oauthFlow(flow, theme, (index) => nudge(send, num(flow.cursor), index), send))
+    return pageOf(tabs(2, theme), oauthFormHint(flow, theme, send), oauthFlow(flow, theme, (index) => nudge(send, num(flow.cursor), index), send))
   }
   if (page === "appearance") return pageOf("Appearance", "↑↓ select · enter apply · esc back", <Panel title="Theme" hot theme={theme}><Lines rows={PALETTE_NAMES.map((label) => ({ label, toggle: label === body.palette }))} selected={num(body.palette_sel)} theme={theme} onPress={_onMove} /></Panel>)
   if (page === "general") return pageOf("General", quickFooter(body, theme, send), <Panel title="General" hot theme={theme}><GeneralFields body={body} theme={theme} focused send={send} /></Panel>)
@@ -151,14 +151,15 @@ function modelDash(body: Rec, theme: Theme, wide: boolean, send: (request: unkno
   const filter = str(body.model_filter) || "all"
   const list = rows(body.models).filter((row) => filter === "all" || (filter === "local" ? flag(row.session_only) : !flag(row.session_only)))
   const selected = num(body.model_sel)
-  const lines: Line[] = [
-    ...["all", "local", "global"].map((name) => ({ label: `Filter: ${name}`, detail: name === filter ? "current" : "" })),
-    ...list.map((row) => ({ label: str(row.name) || str(row.model_id), detail: strings(row.roles).join(" ") || (flag(row.session_only) ? "session" : "global") })),
-  ]
+  const lines: Line[] = list.map((row) => ({ label: str(row.name) || str(row.model_id), detail: strings(row.roles).join(" ") || (flag(row.session_only) ? "session" : "global") }))
+  const onFilter = selected >= 2 && selected <= 4
   const add = (index: number) => { select(send, index); sendKey(send, "Enter") }
-  return <box flexGrow={1} flexBasis={0} minHeight={0} flexDirection="column">
-    <Panel title="Models" hot theme={theme} actions={<><Action label="+ Global (a)" primary={selected === 0} theme={theme} onPress={() => add(0)} /><Action label="+ Session" primary={selected === 1} theme={theme} onPress={() => add(1)} /></>}>
-      <Lines rows={lines} selected={selected >= 2 ? selected - 2 : -1} theme={theme} onPress={(index) => select(send, index + 2)} />
+  return <box flexGrow={1} flexBasis={0} minHeight={0} flexDirection="column" gap={1}>
+    <box flexDirection="row" flexShrink={0}>
+      {[["all", "All", 2], ["local", "Local", 3], ["global", "Global", 4]].map(([name, label, index]) => <Action key={name} label={String(label)} primary={onFilter ? selected === index : filter === name} theme={theme} onPress={() => { select(send, Number(index)); sendKey(send, "Enter") }} />)}
+    </box>
+    <Panel title={`Models · ${list.length}`} hot theme={theme} actions={<><Action label="+ Global (a)" primary={selected === 0} theme={theme} onPress={() => add(0)} /><Action label="+ Session" primary={selected === 1} theme={theme} onPress={() => add(1)} /></>}>
+      <Lines rows={lines} selected={selected >= 5 ? selected - 5 : -1} theme={theme} onPress={(index) => select(send, index + 5)} />
     </Panel>
     {body.model_delete_armed ? <Note text="Ctrl+X again deletes this model" theme={theme} color={theme.warn} /> : null}
   </box>
@@ -242,31 +243,44 @@ function pageOf(title: ReactNode, hint: ReactNode, children: ReactNode) {
   return { title, hint, children }
 }
 
-function providerForm(body: Rec, theme: Theme, onMove: (index: number) => void, send: (request: unknown) => void) {
+function providerFormHint(theme: Theme, send: (request: unknown) => void) {
+  return <box flexDirection="row" flexWrap="wrap" columnGap={1} flexShrink={0}>
+    <Action label="Save (enter)" primary theme={theme} onPress={() => { select(send, 3); sendKey(send, "Enter") }} />
+    <Action label="Field (tab)" theme={theme} onPress={() => sendKey(send, "Tab")} />
+    <Action label="Back (esc)" theme={theme} onPress={() => sendKey(send, "Esc")} />
+  </box>
+}
+
+function providerForm(body: Rec, theme: Theme, onMove: (index: number) => void) {
   const modal = rec(body.prov_modal)
   if (!modal.name && !modal.endpoint && Object.keys(modal).length === 0) {
     return <text fg={theme.dim}> opening the form…</text>
   }
   const field = num(modal.field)
   const inputs = [
-    { label: "Name", hint: "The name in the list", value: str(modal.name), empty: "type a name" },
-    { label: "Endpoint", hint: "Base URL, like https://api.openai.com/v1", value: str(modal.endpoint), empty: "https://…" },
-    { label: "API key", hint: "Secret sent with each request. Shown masked.", value: "", empty: modal.api_key ? "Saved credential · leave blank to retain" : "not set" },
+    { label: "Name", value: str(modal.name), empty: "type a name" },
+    { label: "Endpoint", value: str(modal.endpoint), empty: "https://…" },
+    { label: "API key", value: "", empty: modal.api_key ? "Saved credential · leave blank to retain" : "not set" },
   ]
   return (
-    <box flexDirection="column" flexGrow={1} flexBasis={0} minHeight={0}>
+    <box flexDirection="column" flexGrow={1} flexBasis={0} minHeight={0} gap={1}>
       <text fg={theme.fg}>{body.prov_replace != null ? "Edit this provider" : "Add a provider"}</text>
-      <text fg={theme.dim}>Tab changes fields. Enter continues. Blank keys retain existing credentials.</text>
       {str(modal.api_type) ? <text fg={theme.dim}>{`Kind  ${str(modal.api_type)}`}</text> : null}
-      <scrollbox flexGrow={1} flexBasis={0} maxHeight={9} minHeight={0} scrollY focusable={false} scrollbarOptions={scrollbars(theme)}>
-        {inputs.map((row, index) => <InputField key={row.label} field={row.label} secret={row.label === "API key"} label={row.label} value={row.value === "—" ? "" : row.value} placeholder={row.empty} active={field === index} editing={field === index && flag(body.provider_editing)} theme={theme} onPress={() => onMove(index)} />)}
-      </scrollbox>
-      <box flexDirection="row" flexShrink={0} gap={1}>
-        <Action label="Save provider" primary={field === 3} theme={theme} onPress={() => { onMove(3); sendKey(send, "Enter") }} />
-        <Action label="Cancel" theme={theme} onPress={() => send({MenuAction: "Discard"})} />
-      </box>
+      {inputs.map((row, index) => <InputField key={row.label} field={row.label} secret={row.label === "API key"} label={row.label} value={row.value === "—" ? "" : row.value} placeholder={row.empty} active={field === index} editing={field === index && flag(body.provider_editing)} theme={theme} onPress={() => onMove(index)} />)}
     </box>
   )
+}
+
+function oauthFormHint(flow: Rec, theme: Theme, send: (request: unknown) => void) {
+  const kind = str(flow.kind)
+  const actions = kind === "codex_wait" || kind === "kilo_wait"
+    ? [button("Open browser (o)", { Char: "o" }), button("Copy URL (c)", { Char: "c" }), button("Back (esc)", "Esc")]
+    : kind === "failed"
+      ? [button("Try again (enter)", "Enter"), button("Back (esc)", "Esc")]
+      : kind === "starting"
+        ? [button("Back (esc)", "Esc")]
+        : [button("Connect (enter)", "Enter"), button("Back (esc)", "Esc")]
+  return <Controls actions={actions} theme={theme} send={send} />
 }
 
 export function oauthHint(flow: Rec): string {
@@ -299,34 +313,44 @@ export function oauthFlow(flow: Rec, theme: Theme, onMove: (index: number) => vo
   return <Panel title={kind === "failed" ? "Connection failed" : "Sign in"} hot theme={theme}><Paragraphs lines={lines} theme={theme} /></Panel>
 }
 
+function modelFields(body: Rec): string[] {
+  const modal = rec(body.model_modal)
+  return strings(body.model_fields).length ? strings(body.model_fields) : ["name", "provider", "model", ...(modal.route != null ? ["route"] : []), "role", "save", "cancel"]
+}
+
+function modelFormHint(body: Rec, theme: Theme, send: (request: unknown) => void) {
+  const modal = rec(body.model_modal)
+  if (modal.role_picker) return <Controls actions={[button("Toggle (space)", { Char: " " }), button("Done (enter)", "Enter"), button("Back (esc)", "Esc")]} theme={theme} send={send} />
+  if (body.model_provider_cursor != null) return <Controls actions={[button("Choose (enter)", "Enter"), button("Back (esc)", "Esc")]} theme={theme} send={send} />
+  const saveAt = modelFields(body).indexOf("save")
+  return <box flexDirection="row" flexWrap="wrap" columnGap={1} flexShrink={0}>
+    <Action label="Save (enter)" primary theme={theme} onPress={() => { if (saveAt >= 0) select(send, saveAt); sendKey(send, "Enter") }} />
+    <Action label="Field (tab)" theme={theme} onPress={() => sendKey(send, "Tab")} />
+    <Action label="Back (esc)" theme={theme} onPress={() => sendKey(send, "Esc")} />
+  </box>
+}
+
 function modelForm(body: Rec, theme: Theme, send: (request: unknown) => void) {
   const modal = rec(body.model_modal)
   const picker = modal.role_picker ? rec(modal.role_picker) : null
-  if (picker) {
-    const checked = Array.isArray(picker.checked) ? picker.checked : []
-    return <box flexDirection="column" flexGrow={1} flexBasis={0} minHeight={0} gap={1}>
-      <Panel title="Model roles" hot theme={theme}><Lines rows={ROLES.map((role, index) => ({ label: role, toggle: flag(checked[index]), toggleLayout: "before" as const }))} selected={num(picker.cursor)} theme={theme} onPress={(index) => nudge(send, num(picker.cursor), index)} /></Panel>
-      <box flexDirection="row"><Action label="Toggle role" theme={theme} onPress={() => sendKey(send, { Char: " " })} /><Action label="Done" primary theme={theme} onPress={() => sendKey(send, "Enter")} /></box>
-    </box>
-  }
-  const fields = strings(body.model_fields).length ? strings(body.model_fields) : ["name", "provider", "model", ...(modal.route != null ? ["route"] : []), "role", "save", "cancel"]
+  const fields = modelFields(body)
+  const visible = fields.filter((field) => field !== "save" && field !== "cancel")
   const selected = num(modal.field)
   const active = fields[selected]
   const values: Record<string, string> = { name: str(modal.name), provider: str(body.model_provider_label) || str(modal.provider_idx), model: str(modal.query) || str(modal.model_id), route: str(modal.route) || "Auto", role: strings(modal.roles).join(", ") || "Choose roles" }
-  // Tab always leaves model search and route selection; Up is field navigation
-  // only outside those submodes. Move forward to the last field before going back.
   const move = (index: number) => select(send, index)
   const results = strings(body.model_results)
+  const providers = rows(body.model_provider_choices)
   const providerOpen = active === "provider" && body.model_provider_cursor != null
+  const routes = [{ label: "Auto" }, ...rows(modal.endpoints).map((row) => ({ label: str(row.provider_name) || str(row.name) }))]
   return <box flexDirection="column" flexGrow={1} flexBasis={0} minHeight={0} gap={1}>
     {body.model_error ? <Note text={str(body.model_error)} color={theme.error} theme={theme} /> : null}
     <Note text={flag(modal.session_only) ? "Available in this session" : "Available in all sessions"} theme={theme} />
-    <FieldList rows={providerOpen ? [{label: "Provider", detail: values.provider}] : fields.filter((field) => field !== "save" && field !== "cancel").map((field) => ({ label: field === "role" ? "Roles" : field[0]!.toUpperCase() + field.slice(1), detail: values[field] }))} selected={providerOpen ? 0 : selected} theme={theme} editing={Boolean(body.model_editing) && (active === "name" || active === "model")} onPress={providerOpen ? () => move(fields.indexOf("provider")) : move} />
-    {providerOpen ? <Panel title="Choose provider" maxLines={Math.max(1, Math.min(4, rows(body.model_provider_choices).length))} hot theme={theme}><Lines rows={rows(body.model_provider_choices).map((p) => ({label: str(p.label), detail: num(p.index) === num(modal.provider_idx) ? "current" : ""}))} selected={num(body.model_provider_cursor)} theme={theme} onPress={(i) => { const p=rows(body.model_provider_choices)[i]; if(p) select(send, num(p.index), "model_providers", str(p.id)) }} /></Panel> : null}
-    {active === "role" ? <Action label="Choose roles" theme={theme} onPress={() => sendKey(send, "Enter")} /> : null}
-    {active === "model" && str(modal.query) ? <Panel title={`Models · ${results.length}`} hot theme={theme}><Lines rows={results.map((label) => ({ label }))} selected={num(modal.result_sel)} theme={theme} onPress={(index) => { select(send, index, "model_results"); sendKey(send, "Enter") }} /></Panel> : null}
-    {active === "route" ? <Panel title="Route" hot theme={theme}><Lines rows={[{ label: "Auto" }, ...rows(modal.endpoints).map((row) => ({ label: str(row.provider_name) || str(row.name) }))]} selected={num(modal.route_sel)} theme={theme} onPress={(index) => { select(send, index, "routes"); sendKey(send, "Enter") }} /></Panel> : null}
-    <box flexDirection="row" flexShrink={0} gap={1}><Action label="Save model" primary={active === "save"} theme={theme} onPress={() => { move(fields.indexOf("save")); sendKey(send, "Enter") }} /><Action label="Cancel" theme={theme} onPress={() => send({MenuAction: "Discard"})} /></box>
+    <FieldList rows={visible.map((field) => ({ label: field === "role" ? "Roles" : field[0]!.toUpperCase() + field.slice(1), detail: values[field] }))} selected={visible.indexOf(active ?? "")} theme={theme} editing={Boolean(body.model_editing) && (active === "name" || active === "model")} onPress={move} />
+    {providerOpen ? <Panel title={`Providers · ${providers.length}`} hot theme={theme}><Lines rows={providers.map((p) => ({ label: str(p.label) }))} selected={num(body.model_provider_cursor)} theme={theme} onPress={(i) => { const p = providers[i]; if (p) select(send, num(p.index), "model_providers", str(p.id)) }} /></Panel> : null}
+    {picker ? <Panel title="Roles" hot theme={theme}><Lines rows={ROLES.map((role, index) => ({ label: role, toggle: flag((Array.isArray(picker.checked) ? picker.checked : [])[index]), toggleLayout: "before" as const }))} selected={num(picker.cursor)} theme={theme} onPress={(index) => nudge(send, num(picker.cursor), index)} /></Panel> : null}
+    {!picker && active === "model" && str(modal.query) ? <Panel title={`Models · ${results.length}`} hot theme={theme}><Lines rows={results.map((label) => ({ label }))} selected={num(modal.result_sel)} theme={theme} onPress={(index) => { select(send, index, "model_results"); sendKey(send, "Enter") }} /></Panel> : null}
+    {!picker && !providerOpen && active === "route" ? <Panel title={`Routes · ${routes.length}`} hot theme={theme}><Lines rows={routes} selected={num(modal.route_sel)} theme={theme} onPress={(index) => { select(send, index, "routes"); sendKey(send, "Enter") }} /></Panel> : null}
   </box>
 }
 

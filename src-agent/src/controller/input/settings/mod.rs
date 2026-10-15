@@ -51,7 +51,7 @@ pub fn handle_settings(s: &mut SettingsState, rest: &mut AppStateRest, key: KeyE
 
     // --- ProviderForm page (provider modal open) ---
     if s.page == SettingsPage::ProviderForm && s.prov_modal.is_some() {
-        return handle_provider_form(s, key);
+        return handle_provider_form(s, rest, key);
     }
 
     // --- OAuth connect-flow overlay (active while on OAuth page) ---

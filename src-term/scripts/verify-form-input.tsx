@@ -113,13 +113,13 @@ try {
   await settle(()=>requests.some(url=>url.includes("/second/v1/models")))
   for(const [width,height] of [[50,24],[80,18],[100,40],[160,45]]){
     await key("enter");await act(async()=>{view.resize(width!,height!);await view.waitForVisualIdle()});await settle()
-    const frame=view.captureCharFrame();assert(frame.includes("Choose provider"));assert(frame.includes("Second provider"));frames.push(`chooser ${width}×${height}\n${frame}`);await key("escape")
+    const frame=view.captureCharFrame();assert(frame.includes("Providers"));assert(frame.includes("Second provider"));assert(frame.includes("Name"));frames.push(`chooser ${width}×${height}\n${frame}`);await key("escape")
   }
   await key("up");await key("enter");assert(nativeMenuInput.current)
   nativeMenuInput.current!.setSelection(0,nativeMenuInput.current!.plainText.length)
   await act(async()=>{await view.mockInput.pasteBracketedText("Renamed 猫")});await settle()
   await key("escape");await key("enter");assert.equal(nativeMenuInput.current?.plainText,"Renamed 猫")
-  await click("Save model");await settle(()=>settings().page==="models")
+  await click("Save (enter)");await settle(()=>settings().page==="models")
   writeFileSync("/tmp/koma-form-frames.txt",frames.join("\n\n"))
   console.log("Live keyboard/pointer, masked drafts, selection paste, saved keys, provider cancellation/confirmation, catalogue refresh and four-size renders passed.")
 } finally {

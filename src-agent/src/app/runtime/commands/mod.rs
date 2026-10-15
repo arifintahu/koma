@@ -38,6 +38,7 @@ pub(crate) mod model_cmd;
 // close drain, which all derive the installed-extension rows the SAME way.
 pub(crate) mod extensions;
 mod misc;
+pub(crate) use misc::open_settings;
 pub(crate) mod new_session;
 pub(crate) mod skill_cmd;
 // `pub(crate)` so the shared `kick_off_health_probe` helper is reachable from BOTH the

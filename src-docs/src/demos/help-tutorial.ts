@@ -55,7 +55,6 @@ const ALL_ENTRIES: HelpEntry[] = [
   { key: '/bash',          desc: 'Manage bash jobs (FG + background)',                         isCommand: true },
   { key: '/todo',          desc: 'View the session task list',                                 isCommand: true },
   { key: '/skill',         desc: 'Load or unload agent skills',                                isCommand: true },
-  { key: '/attach',        desc: 'Attach a .screenshoot/*.png to the next message',           isCommand: true },
   { key: '/cd',            desc: 'Change the session working directory',                       isCommand: true },
   { key: '/adddir',        desc: 'Add a directory to the workspace roots',                    isCommand: true },
   { key: '/compact',       desc: 'Summarize and compact the conversation',                     isCommand: true },

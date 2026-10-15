@@ -292,6 +292,10 @@ pub(in crate::app::runtime) fn apply_action(
             model_cmd::handle_model_open_agent_pick(agent_name, state);
         }
 
+        Action::ModelOpenSettings(page) => {
+            super::commands::open_settings(state, page)?;
+        }
+
         Action::CreateAgent => {
             agents::handle_create_agent(state)?;
         }

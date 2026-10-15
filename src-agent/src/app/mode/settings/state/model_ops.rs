@@ -2,7 +2,8 @@
 //! picker operations.
 
 use super::super::{
-    ModelDraft, ModelFilterMode, ModelModal, ModelRowSel, RolePickerState, MODEL_CTRL_SLOTS,
+    ModelDraft, ModelFilterMode, ModelModal, ModelRowSel, RolePickerState, SettingsPage,
+    MODEL_CTRL_SLOTS,
 };
 use super::SettingsState;
 
@@ -197,6 +198,20 @@ impl SettingsState {
         self.model_editing = false;
         self.model_provider_cursor = None;
         self.model_modal = Some(ModelModal::new_add(provider_idx, session_only));
+    }
+
+    /// After a new provider or OAuth connection, open Add Model with that
+    /// connection already chosen. The model field is ready to type.
+    pub fn jump_to_new_model(&mut self, provider_idx: usize) {
+        self.open_model_modal_add(false);
+        if let Some(modal) = self.model_modal.as_mut() {
+            modal.provider_idx = provider_idx;
+            // Name, Provider, Model. Land on Model so the chosen connection stays visible.
+            modal.field = 2;
+        }
+        self.model_editing = true;
+        self.model_provider_cursor = None;
+        self.page = SettingsPage::ModelForm;
     }
 
     /// Open the edit-model modal, prefilled from `models[idx]`.

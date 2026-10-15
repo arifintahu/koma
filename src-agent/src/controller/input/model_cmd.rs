@@ -2,6 +2,7 @@
 
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
+use crate::app::mode::settings::SettingsPage;
 use crate::app::mode::{ModelCmdState, ModelCmdSub};
 use crate::controller::input::action::Action;
 
@@ -48,6 +49,20 @@ pub(crate) fn handle_model_cmd(
             query.pop();
             m.set_query(query);
             Action::None
+        }
+        // Search owns these letters once a model list is open.
+        KeyCode::Char(c)
+            if !m.searchable()
+                && matches!(c.to_ascii_lowercase(), 'p' | 'o' | 'm')
+                && !key
+                    .modifiers
+                    .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT) =>
+        {
+            Action::ModelOpenSettings(match c.to_ascii_lowercase() {
+                'p' => SettingsPage::Providers,
+                'o' => SettingsPage::OAuth,
+                _ => SettingsPage::Models,
+            })
         }
         KeyCode::Enter if m.selected().is_none() && !matches!(m.sub, ModelCmdSub::Help { .. }) => {
             Action::None
@@ -177,5 +192,45 @@ mod tests {
             KeyEvent::new(KeyCode::Backspace, KeyModifiers::NONE),
         );
         assert_eq!(m.query, "猫");
+    }
+    #[test]
+    fn role_list_p_o_m_open_settings_and_search_keeps_those_letters() {
+        let mut m = ModelCmdState {
+            sub: ModelCmdSub::RoleList,
+            query: String::new(),
+            from_roles: false,
+            options: vec![(Some("main".into()), "main".into())],
+            cursor: 0,
+            note: String::new(),
+        };
+        let mut rest = crate::app::state::AppStateRest::default();
+        let press =
+            |m: &mut ModelCmdState, rest: &mut crate::app::state::AppStateRest, c: char, mods| {
+                handle_model_cmd(m, rest, KeyEvent::new(KeyCode::Char(c), mods))
+            };
+        assert!(matches!(
+            press(&mut m, &mut rest, 'p', KeyModifiers::NONE),
+            Action::ModelOpenSettings(SettingsPage::Providers)
+        ));
+        assert!(matches!(
+            press(&mut m, &mut rest, 'O', KeyModifiers::SHIFT),
+            Action::ModelOpenSettings(SettingsPage::OAuth)
+        ));
+        assert!(matches!(
+            press(&mut m, &mut rest, 'm', KeyModifiers::NONE),
+            Action::ModelOpenSettings(SettingsPage::Models)
+        ));
+        assert!(matches!(
+            press(&mut m, &mut rest, 'p', KeyModifiers::CONTROL),
+            Action::None
+        ));
+        m.sub = ModelCmdSub::RolePick {
+            role: ModelRole::Main,
+        };
+        assert!(matches!(
+            press(&mut m, &mut rest, 'p', KeyModifiers::NONE),
+            Action::None
+        ));
+        assert_eq!(m.query, "p");
     }
 }

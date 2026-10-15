@@ -58,13 +58,16 @@ export function Overlay({
   hint,
   theme,
   children,
+  corner,
 }: {
   title: ReactNode
   hint: ReactNode
   theme: Theme
   children: ReactNode
+  /** Mixed-color label drawn in the top-right border. */
+  corner?: ReactNode
 }) {
-  return (
+  const frame = (
     <box
       border
       borderStyle="rounded"
@@ -80,6 +83,13 @@ export function Overlay({
         {children}
       </box>
       {typeof hint === "string" ? <text fg={theme.dim}>{` ${hint}`}</text> : hint}
+    </box>
+  )
+  if (!corner) return frame
+  return (
+    <box height={OVERLAY_HEIGHT} flexShrink={0}>
+      {frame}
+      <box position="absolute" right={2} top={0} height={1} flexDirection="row" backgroundColor={theme.bg} zIndex={1}>{corner}</box>
     </box>
   )
 }
@@ -128,6 +138,7 @@ export function Lines({
   selected,
   theme,
   visible,
+  rail = false,
   onPress,
 }: {
   rows: Line[]
@@ -135,6 +146,8 @@ export function Lines({
   theme: Theme
   /** Used only until the box reports its real height. */
   visible?: number
+  /** Solid thumb when the windowed list is taller than the box. */
+  rail?: boolean
   onPress: (index: number) => void
 }) {
   const full = useContext(FullscreenContext)
@@ -145,6 +158,9 @@ export function Lines({
   const start = selected < 0 ? 0 : paletteWindow(startRef.current, selected, rows.length, slots)
   startRef.current = start
   const window = rows.slice(start, start + slots)
+  const showRail = rail && rows.length > slots
+  const thumb = showRail ? Math.max(1, Math.min(slots, Math.round((slots / rows.length) * slots))) : 0
+  const railOffset = showRail ? Math.round((start / Math.max(1, rows.length - slots)) * Math.max(0, slots - thumb)) : 0
   return (
     <box ref={boxRef} flexDirection="column" flexGrow={1} flexBasis={0} flexShrink={1} minHeight={0} overflow="hidden">
       {rows.length === 0 ? <text fg={theme.dim}> Nothing here yet</text> : null}
@@ -162,6 +178,14 @@ export function Lines({
           />
         )
       })}
+      {showRail ? (
+        <box position="absolute" right={0} top={0} width={1} height={slots} flexDirection="column" zIndex={2} backgroundColor={theme.panel}>
+          {Array.from({ length: slots }, (_, index) => {
+            const on = index >= railOffset && index < railOffset + thumb
+            return <text key={index} height={1} fg={on ? theme.dim : theme.panel} bg={theme.panel}>{on ? "█" : " "}</text>
+          })}
+        </box>
+      ) : null}
       <box position="absolute" left={0} bottom={0} width="100%" height={1} visible={indicator} backgroundColor={theme.bg} zIndex={1}>
         <text fg={theme.dim} wrapMode="none">{` ${start > 0 ? "↑ " : ""}${start + 1}–${Math.min(rows.length, start + slots)} / ${rows.length}${start + slots < rows.length ? " ↓" : ""}`}</text>
       </box>

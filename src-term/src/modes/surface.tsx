@@ -21,7 +21,7 @@ import { modeParts, type Rec } from "./read.ts"
 import { settingsView } from "./settings.tsx"
 import { keyInputView, onboardProviderView, onboardView, sessionHubView, sessionPickerView } from "./setup.tsx"
 
-type Built = { title: ReactNode; hint: ReactNode; children: ReactNode }
+type Built = { title: ReactNode; hint: ReactNode; children: ReactNode; corner?: ReactNode }
 
 export function ModeSurface({
   mode,
@@ -70,7 +70,7 @@ export function ModeSurface({
   const place = placeOf(mode)
   if (place === "overlay") {
     return (
-      <Overlay title={built.title} hint={built.hint} theme={theme}>
+      <Overlay title={built.title} hint={built.hint} corner={built.corner} theme={theme}>
         {built.children}
       </Overlay>
     )

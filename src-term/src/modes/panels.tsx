@@ -1,7 +1,7 @@
 import { select, replaceField } from "./actions.ts"
 import type { MenuData } from "./data.ts"
 import type { Theme } from "../theme.ts"
-import { Action, Document, InputField, Lines, Note, OVERLAY_BODY, Panel, Paragraphs, type Line } from "./bits.tsx"
+import { Action, Document, InputField, Lines, Note, OVERLAY_BODY, Panel, Paragraphs, sendKey, type Line } from "./bits.tsx"
 import { editorFrom, TextEditor } from "./editor.tsx"
 import { clip, flag, num, rec, rows, str, strings, type Rec } from "./read.ts"
 import { UsageBoard } from "./usage.tsx"
@@ -61,6 +61,8 @@ export function modelView(body: Rec, theme: Theme, onMove: (index: number) => vo
   return {
     title: sub === "roles" ? "model · roles" : sub === "role_pick" ? `model · ${str(body.role)}` : sub === "agent_pick" ? `model · ${str(body.agent_name)}` : sub.replaceAll("_", " "),
     hint: sub === "roles" ? "↑↓ choose role · enter open · esc close" : searchable ? "type search · ↑↓ · enter set · esc back" : `${str(body.note)} · enter set · esc back`.replace(/^ · /, ""),
+    // Letters belong to the search box once a model list is open.
+    corner: searchable ? undefined : settingsShortcuts(theme, send),
     children: <box flexGrow={1} flexBasis={0} minHeight={0} flexDirection="column">
       {searchable ? <InputField key={`${sub}:${str(body.role) || str(body.agent_name)}`} field="query" label="Search models" value={str(body.query)} placeholder="Name, model ID, or provider" active theme={theme} onChange={value => replaceField(send, "query", value)} /> : null}
       <Lines rows={lines} selected={num(body.cursor)} theme={theme} visible={OVERLAY_BODY - (searchable ? 3 : 0)} onPress={visibleIndex => {
@@ -107,7 +109,7 @@ export function bashView(body: Rec, theme: Theme, wide: boolean, onMove: (index:
   return {
     title: "bash",
     hint: "↑↓ · ctrl+x kill · any other key closes",
-    children: side(wide, theme, lines, selected, onMove, detail),
+    children: side(wide, theme, lines, selected, onMove, detail, true),
   }
 }
 
@@ -144,6 +146,23 @@ export function attachmentsView(body: Rec, theme: Theme, onMove: (index: number)
     hint: "↑↓ or j k · enter open · d remove · esc close",
     children: <Lines rows={lines} selected={num(body.selected)} theme={theme} visible={OVERLAY_BODY} onPress={onMove} />,
   }
+}
+
+/** Top-right jump from `/model` into settings. The trigger letter is the key. */
+function settingsShortcuts(theme: Theme, send: (request: unknown) => void) {
+  const words = [["provider", "p"], ["oauth", "o"], ["model", "m"]] as const
+  return (
+    <box height={1} flexDirection="row" flexShrink={0} backgroundColor={theme.bg}>
+      <text fg={theme.dim}> </text>
+      {words.map(([word, key], index) => (
+        <box key={key} height={1} flexDirection="row" flexShrink={0} onMouseDown={() => sendKey(send, { Char: key })}>
+          {index > 0 ? <text fg={theme.dim}>{" · "}</text> : null}
+          <text wrapMode="none"><span fg={theme.accent}>{key}</span><span fg={theme.dim}>{word.slice(1)}</span></text>
+        </box>
+      ))}
+      <text fg={theme.dim}> </text>
+    </box>
+  )
 }
 
 function notificationTime(value: unknown): string {
@@ -194,12 +213,12 @@ export function usageView(body: MenuData["Usage"] & Rec, theme: Theme, _wide: bo
   }
 }
 
-function side(wide: boolean, theme: Theme, lines: Line[], selected: number, onMove: (index: number) => void, detail: string[]) {
-  const list = <Lines rows={lines} selected={selected} theme={theme} visible={OVERLAY_BODY} onPress={onMove} />
+function side(wide: boolean, theme: Theme, lines: Line[], selected: number, onMove: (index: number) => void, detail: string[], rail = false) {
+  const list = <Lines rows={lines} selected={selected} theme={theme} visible={OVERLAY_BODY} rail={rail} onPress={onMove} />
   const text = <Paragraphs lines={detail.slice(0, OVERLAY_BODY).map((line) => clip(line, 80))} theme={theme} />
   return (
-    <box flexDirection="row" flexGrow={1}>
-      <box width={wide ? 28 : 18} flexDirection="column">
+    <box flexDirection="row" flexGrow={1} minHeight={0}>
+      <box width={wide ? 28 : 18} flexGrow={1} minHeight={0} flexDirection="column">
         {list}
       </box>
       <box flexGrow={1} paddingLeft={1}>

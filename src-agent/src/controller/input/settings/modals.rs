@@ -312,7 +312,11 @@ pub(super) fn handle_model_form(
 
 /// Handle a key on the ProviderForm page (provider modal open as a full page).
 /// Same logic as the old `handle_provider_modal` but Esc goes back to Providers.
-pub(super) fn handle_provider_form(s: &mut SettingsState, key: KeyEvent) -> Action {
+pub(super) fn handle_provider_form(
+    s: &mut SettingsState,
+    rest: &mut AppStateRest,
+    key: KeyEvent,
+) -> Action {
     let field = s.prov_modal.as_ref().map_or(0, |m| m.field);
     if field < 3 && key.code == KeyCode::Enter && !s.provider_editing {
         s.provider_editing = true;
@@ -351,8 +355,15 @@ pub(super) fn handle_provider_form(s: &mut SettingsState, key: KeyEvent) -> Acti
         KeyCode::Enter => {
             let field = s.prov_modal.as_ref().map(|m| m.field).unwrap_or(0);
             if field == 3 {
-                s.save_provider_modal();
-                s.page = SettingsPage::Providers;
+                match s.save_provider_modal() {
+                    Some(idx) => {
+                        s.jump_to_new_model(idx);
+                        if let Some((ep, key)) = s.mm_provider_conn() {
+                            rest.request_catalogue(&ep, &key, &s.mm_provider_oauth_uuid());
+                        }
+                    }
+                    None => s.page = SettingsPage::Providers,
+                }
             } else if field == 4 {
                 s.close_provider_modal();
                 s.page = SettingsPage::Providers;
