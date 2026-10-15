@@ -53,7 +53,6 @@ const fullScreens: [string, Record<string, unknown>][] = [
   ["Settings", { page: "oauth", oauth_flow: { kind: "pick", cursor: 7, options: OAUTH_OPTIONS } }],
   ["Settings", { page: "oauth", oauth_flow: { kind: "codex_wait", url: "https://example.test/auth", provider: "codex" } }],
   ["Help", { all: [{ key: "/settings", desc: "Manage settings" }], selected: 0 }],
-  ["Effort", { options: ["low", "medium", "high"], selected: 1 }],
   ["Agents", { agents: [{ name: "Test agent", description: "Test description" }], list_sel: 0 }],
   ["Mcp", { mode: "create", field: "command", draft_transport: "stdio", draft_command: "example" }],
   ["Extensions", { mode: "browse", rows: [{ name: "Test extension", description: "An extension" }], list_sel: 0 }],

@@ -28,13 +28,14 @@ export function helpView(body: MenuData["Help"] & Rec, theme: Theme, onMove: (in
 
 export function effortView(body: MenuData["Effort"] & Rec, theme: Theme, onMove: (index: number) => void) {
   const lines: Line[] = strings(body.options).map((label) => ({ label }))
+  const note = str(body.note)
   return {
     title: "effort",
     hint: "↑↓ · enter set · esc cancel",
     children: (
       <box flexDirection="column" flexGrow={1} flexBasis={0} minHeight={0}>
-        <Panel title="Reasoning effort" maxLines={lines.length} hot theme={theme}><Lines rows={lines} selected={num(body.selected)} theme={theme} onPress={onMove} /></Panel>
-        <Note text={str(body.note)} theme={theme} />
+        <Lines rows={lines} selected={num(body.selected)} visible={OVERLAY_BODY - (note ? 1 : 0)} theme={theme} onPress={onMove} />
+        {note ? <Note text={note} theme={theme} /> : null}
       </box>
     ),
   }

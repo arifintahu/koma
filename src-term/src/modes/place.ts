@@ -13,7 +13,7 @@ export function placeOf(mode: unknown): "overlay" | "full" | null {
   }
   if (name === "Extensions") return body.mode === "use" ? "overlay" : "full"
   if (name === "Attachments") return body.editor ? "full" : "overlay"
-  if (name === "Model" || name === "Bash" || name === "Todo" || name === "Skill") return "overlay"
+  if (name === "Effort" || name === "Model" || name === "Bash" || name === "Todo" || name === "Skill") return "overlay"
   return "full"
 }
 

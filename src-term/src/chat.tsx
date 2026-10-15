@@ -58,6 +58,7 @@ export function Chat({
   focused,
   rewind = null,
   overlay = null,
+  modalOverlay = null,
   notice = null,
   onNoticeDismiss,
   send,
@@ -70,6 +71,7 @@ export function Chat({
   focused: boolean
   rewind?: { entries: string[]; selected: number } | null
   overlay?: ReactNode
+  modalOverlay?: ReactNode
   notice?: LocalNotice | null
   onNoticeDismiss?: () => void
   send: (request: unknown) => void
@@ -85,24 +87,26 @@ export function Chat({
       </box>
     )
   }
+  const interaction = modalOverlay ? modalOverlay : session.awaiting_approval ? <Approval session={session} theme={theme} send={send} /> : rewind ? (
+    <RewindOverlay rewind={rewind} theme={theme} send={send} />
+  ) : overlay ? (
+    overlay
+  ) : (
+    <Palette snap={snap} theme={theme} flushRef={flushRef} send={send} />
+  )
   return (
     <box flexDirection="column" flexGrow={1} backgroundColor={theme.bg} paddingTop={1} paddingBottom={1}>
       {snap.global.toast ? <Toast key={`daemon:${snap.global.toast_event_id ?? snap.global.toast.join(":")}`} id={snap.global.toast_event_id ?? snap.global.toast.join(":")} kind={snap.global.toast[0]} text={snap.global.toast[1]} theme={theme} hidden={notice != null} /> : null}
       {notice ? <Toast key={`local:${notice.id}`} id={notice.id} kind={notice.kind ?? "info"} text={notice.text} theme={theme} onDismiss={onNoticeDismiss} /> : null}
       <HistoryPane session={session} theme={theme} syntaxStyle={syntaxStyle} />
       <Steers session={session} theme={theme} selected={snap.global.pending_steer_sel} focused={snap.global.pending_steer_focus} />
-      {session.awaiting_approval ? <Approval session={session} theme={theme} send={send} /> : rewind ? (
-        <RewindOverlay rewind={rewind} theme={theme} send={send} />
-      ) : overlay ? (
-        overlay
-      ) : (
-        <Palette snap={snap} theme={theme} flushRef={flushRef} send={send} />
-      )}
       <Composer
         snap={snap}
         session={session}
         theme={theme}
         focused={focused}
+        compact={Boolean(modalOverlay)}
+        interaction={interaction}
         send={send}
         sendTracked={sendTracked}
         flushRef={flushRef}
@@ -920,6 +924,8 @@ function Composer({
   session,
   theme,
   focused,
+  compact = false,
+  interaction,
   send,
   sendTracked,
   flushRef,
@@ -929,6 +935,8 @@ function Composer({
   session: SessionSnap
   theme: Theme
   focused: boolean
+  compact?: boolean
+  interaction?: ReactNode
   send: (request: unknown) => void
   sendTracked: (request: unknown) => Promise<string>
   flushRef: { current: () => Promise<boolean> }
@@ -946,7 +954,7 @@ function Composer({
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const flushToken = useRef(0)
   const [lines, setLines] = useState(Math.max(1, snap.global.input.split("\n").length))
-  const innerCap = session.awaiting_approval ? 1 : Math.max(1, Math.floor(height / 2) - 2)
+  const innerCap = session.awaiting_approval || compact ? 1 : Math.max(1, Math.floor(height / 2) - 2)
   const boxHeight = Math.min(innerCap, Math.max(1, lines)) + 2
   const paletteOpen = commandSuggestions(snap.global.command_palette, snap.global.palette_sel).rows.length > 0 || (snap.global.file_palette?.length ?? 0) > 0
   const keyQueue = useRef(Promise.resolve())
@@ -1160,6 +1168,7 @@ function Composer({
         <text fg={theme.dim}>{session.resolved_model_id}</text>
       </box>
       <box height={1} />
+      <box flexDirection="column" flexShrink={0}>{interaction}</box>
       <box
         border
         borderStyle="rounded"

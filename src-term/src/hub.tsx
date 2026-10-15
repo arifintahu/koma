@@ -1,7 +1,7 @@
 import { Action, Fullscreen, InputField, Lines, Note, Panel, nativeMenuInput, type Line } from "./modes/bits.tsx"
 import { useKeyboard } from "@opentui/react"
 import { basename } from "node:path"
-import { useEffect, useRef, useState } from "react"
+import { useEffect, useRef, useState, type ReactNode } from "react"
 import { deleteSession, killSession, listSessions, type HistorySession, type LiveSession, type SessionsFile } from "./paths.ts"
 import type { Theme } from "./theme.ts"
 
@@ -9,7 +9,8 @@ const SPINNER = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", 
 
 type Pane = "cooking" | "history"
 
-export function Hub({ theme, onOpen, onBack, currentId }: { theme: Theme; onOpen: (id: string) => void; onBack?: () => void; currentId?: string | null }) {
+export function Hub({ theme, onOpen, onBack, currentId, overlay }: { overlay?: ReactNode; theme: Theme; onOpen: (id: string) => void; onBack?: () => void; currentId?: string | null }) {
+  const disabled = Boolean(overlay)
   const liveIdentity = useRef<string | null>(null)
   const historyIdentity = useRef<string | null>(null)
   const queryRef = useRef("")
@@ -63,6 +64,7 @@ export function Hub({ theme, onOpen, onBack, currentId }: { theme: Theme; onOpen
   queryRef.current = query
 
   function openCooking() {
+    if (disabled) return
     if (cookingIndex === 0) {
       onOpen(crypto.randomUUID())
       return
@@ -72,11 +74,13 @@ export function Hub({ theme, onOpen, onBack, currentId }: { theme: Theme; onOpen
   }
 
   function openHistory() {
+    if (disabled) return
     const row = history[historyIndex]
     if (row) onOpen(row.session_id)
   }
 
   function remove() {
+    if (disabled) return
     const id = pane === "cooking" ? live[cookingIndex - 1]?.session_id : history[historyIndex]?.session_id
     if (!id) return
     if (armed === id) {
@@ -86,7 +90,7 @@ export function Hub({ theme, onOpen, onBack, currentId }: { theme: Theme; onOpen
   }
 
   useKeyboard((key) => {
-    if (key.eventType === "release") return
+    if (key.eventType === "release" || disabled) return
     if (key.name === "escape") {
       if (armed) setArmed(null)
       else if (query) {setQuery("");nativeMenuInput.current?.setText("")}
@@ -134,21 +138,21 @@ export function Hub({ theme, onOpen, onBack, currentId }: { theme: Theme; onOpen
   const liveRows: Line[] = [{ label: "+ New session", color: "accent" }, ...live.map((row): Line => ({ label: row.name || row.session_id.slice(0, 8), detail: `${basename(row.pwd)} · ${row.session_id.slice(0,8)}`, badge: { text: row.session_id === currentId ? "current" : row.working ? `${glyph} working` : "ready", role: row.working ? "success" : "info" } }))]
   const historyRows: Line[] = history.map((row) => ({label:row.name || row.session_id.slice(0,8), detail:`${row.dir_label || basename(row.pwd)} · ${age(row.updated_at)} · ${row.session_id.slice(0,8)}`}))
   const target = [...live,...history].find((s)=>s.session_id===armed)
-  return <Fullscreen title="Sessions" theme={theme} hint={<box flexDirection="column" flexShrink={0}>
+  return <box flexDirection="column" flexGrow={1} minHeight={0}><Fullscreen title="Sessions" theme={theme} hint={<box flexDirection="column" flexShrink={0}>
     {armed ? <Note text={`${pane === "cooking" ? "Stop" : "Delete"} ${target?.name || armed} (${armed})?`} color={theme.warn} theme={theme} /> : null}
-    <box flexDirection="row" flexWrap="wrap"><Action label={armed ? "Confirm (enter)" : "Open (enter)"} theme={theme} onPress={() => {if(armed)remove();else if(pane === "cooking")openCooking();else openHistory()}} /><Action label="New session" theme={theme} onPress={() => onOpen(crypto.randomUUID())} /><Action label={pane === "cooking" ? "Stop (ctrl+x)" : "Delete (ctrl+x)"} theme={theme} onPress={remove} />{onBack ? <Action label="Back (esc)" theme={theme} onPress={onBack} /> : null}</box>
+    <box flexDirection="row" flexWrap="wrap"><Action disabled={disabled} label={armed ? "Confirm (enter)" : "Open (enter)"} theme={theme} onPress={() => {if(armed)remove();else if(pane === "cooking")openCooking();else openHistory()}} /><Action disabled={disabled} label="New session" theme={theme} onPress={() => onOpen(crypto.randomUUID())} /><Action disabled={disabled} label={pane === "cooking" ? "Stop (ctrl+x)" : "Delete (ctrl+x)"} theme={theme} onPress={remove} />{onBack ? <Action disabled={disabled} label="Back (esc)" theme={theme} onPress={onBack} /> : null}</box>
   </box>}>
-    <box flexDirection="row" flexShrink={0}><Action label="Cooking (c)" primary={pane==="cooking"} theme={theme} onPress={()=>{setPane("cooking");setArmed(null)}} /><Action label="History (h)" primary={pane==="history"} theme={theme} onPress={()=>{setPane("history");setArmed(null)}} /></box>
+    <box flexDirection="row" flexShrink={0}><Action disabled={disabled} label="Cooking (c)" primary={pane==="cooking"} theme={theme} onPress={()=>{setPane("cooking");setArmed(null)}} /><Action disabled={disabled} label="History (h)" primary={pane==="history"} theme={theme} onPress={()=>{setPane("history");setArmed(null)}} /></box>
     {error ? <Note text={error} color={theme.error} theme={theme} /> : null}
     <box flexDirection="column" flexGrow={1} flexBasis={0} minHeight={0}>
-      {pane === "cooking" ? <Panel key="cooking" title={`cooking · ${live.length}`} mark={0} hot theme={theme}><Lines rows={liveRows} selected={cookingIndex} theme={theme} onPress={(i)=>{setCookingSel(i);setArmed(null)}} /></Panel> :
+      {pane === "cooking" ? <Panel key="cooking" title={`cooking · ${live.length}`} mark={0} hot theme={theme}><Lines rows={liveRows} selected={cookingIndex} theme={theme} onPress={(i)=>{if(!disabled){setCookingSel(i);setArmed(null)}}} /></Panel> :
       <Panel key="history" title={`history · ${history.length}`} mark={0} hot theme={theme}>
-        <InputField label="Search sessions" value={query} active={!armed} onChange={(value)=>{setQuery(value);setHistorySel(0);setCookingSel(0)}} theme={theme} />
-        <Lines rows={historyRows} selected={historyIndex} theme={theme} onPress={(i)=>{setHistorySel(i);setArmed(null)}} />
+        <InputField label="Search sessions" value={query} active={!armed && !disabled} onChange={(value)=>{setQuery(value);setHistorySel(0);setCookingSel(0)}} theme={theme} />
+        <Lines rows={historyRows} selected={historyIndex} theme={theme} onPress={(i)=>{if(!disabled){setHistorySel(i);setArmed(null)}}} />
       </Panel>
       }
     </box>
-  </Fullscreen>
+  </Fullscreen>{overlay}</box>
 }
 
 function matches(needle: string, ...parts: string[]): boolean {

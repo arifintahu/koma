@@ -191,10 +191,10 @@ export function SessionScreen({
   const rewind = snap ? rewindOf(snap.global.mode) : null
   const warming = snap ? warmSplash(snap.global.mode) : null
   const place = snap ? placeOf(snap.global.mode) : null
-  const subagents = Boolean(snap?.global.subagents_open) && place == null && rewind == null
-  const viewer = snap?.global.agent_viewer != null && place == null && rewind == null
+  const subagents = !quit && Boolean(snap?.global.subagents_open) && place == null && rewind == null
+  const viewer = !quit && snap?.global.agent_viewer != null && place == null && rewind == null
   const menuKeys = place != null || subagents || viewer
-  const chat = mode === "Chat" || rewind != null || place === "overlay" || subagents
+  const chat = quit != null || mode === "Chat" || rewind != null || place === "overlay" || subagents
   const approval = Boolean(session?.awaiting_approval)
   const busy = Boolean(session && (session.working || session.waiting || session.streaming))
   const [exiting, setExiting] = useState<number | null>(null)
@@ -233,11 +233,12 @@ export function SessionScreen({
   }
 
   usePaste((event) => {
-    if (approval && !quit && !warming) { event.preventDefault(); event.stopPropagation() }
+    if (quit || exiting != null || approval && !warming) { event.preventDefault(); event.stopPropagation() }
   })
 
   useKeyboard((key) => {
     if (key.eventType === "release") return
+    if (exiting != null) { key.preventDefault(); key.stopPropagation(); return }
     if ((key.ctrl && key.name === "c") || key.sequence === "\u0003") {
       if (phase === "live" && !quit) send({ SendKey: { code: { Char: "c" }, mods: 2 } })
       return
@@ -340,10 +341,7 @@ export function SessionScreen({
   if (warming) {
     return <WarmingSplash theme={theme} warm={warming} />
   }
-  if (quit) {
-    return <QuitScreen state={quit} theme={theme} exiting={exiting} onPick={chooseQuit} />
-  }
-  if (leavePrompt && !approval) {
+  if (leavePrompt && !approval && !quit) {
     return <Fullscreen title="Unsaved changes" theme={theme} hint={<box flexDirection="row"><Action label="Save (s)" primary={leaveSelected === 0} theme={theme} onPress={() => decideLeave("Save")} /><Action label="Discard (d)" primary={leaveSelected === 1} theme={theme} onPress={() => decideLeave({ Key: { code: "Esc", mods: 0 } })} /><Action label="Keep editing (esc)" primary={leaveSelected === 2} theme={theme} onPress={() => setLeavePrompt(false)} /></box>}><Note text="Save these changes before leaving?" color={theme.warn} theme={theme} /></Fullscreen>
   }
   if (place === "full") {
@@ -381,9 +379,10 @@ export function SessionScreen({
         snap={snap}
         theme={theme}
         syntaxStyle={syntaxStyle}
-        focused={!approval && !rewind && !menuKeys}
+        focused={!quit && exiting == null && !approval && !rewind && !menuKeys}
         rewind={rewind}
         overlay={overlay}
+        modalOverlay={quit ? <QuitScreen state={quit} theme={theme} exiting={exiting} onPick={chooseQuit} /> : null}
         notice={notice}
         onNoticeDismiss={() => setNotice((current) => current?.id === notice?.id ? null : current)}
         send={send}

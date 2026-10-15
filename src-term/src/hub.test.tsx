@@ -1,6 +1,7 @@
 import { expect, spyOn, test } from "bun:test"
-import { act } from "react"
+import { act, useState } from "react"
 import { testRender } from "@opentui/react/test-utils"
+import { QuitScreen } from "./quit.tsx"
 import { Hub } from "./hub.tsx"
 import { nativeMenuInput } from "./modes/bits.tsx"
 import * as paths from "./paths.ts"
@@ -47,4 +48,22 @@ test("Sessions tabs show one pane and retain selection and History search", asyn
       } finally { await act(async () => { await view.dispose() }) }
     }
   } finally { list.mockRestore() }
+})
+
+for(const [width,height] of [[50,24],[80,18]])test(`hub exit overlay suspends underlying controls and preserves selection / ${width}×${height}`,async()=>{
+ const list=spyOn(paths,"listSessions").mockResolvedValue({live:[{session_id:"live-fixture",name:"Active fixture",pwd:"/tmp",working:false}],history:[]})
+ const opened:string[]=[];let show=()=>{}
+ function Harness(){const [confirm,setConfirm]=useState(false);show=()=>setConfirm(true);return <Hub theme={themeFor("dark")} onOpen={id=>opened.push(id)} overlay={confirm?<QuitScreen scope="hub" state={{working:1,total:1,selected:2}} theme={themeFor("dark")} exiting={null} onPick={i=>{if(i===2)setConfirm(false)}}/>:null}/>}
+ const view=await testRender(<Harness/>,{width,height})
+ const settle=async()=>{for(let n=0;n<3;n++)await act(async()=>{await view.waitForVisualIdle()})}
+ try{
+  await settle();await act(async()=>{view.mockInput.pressArrow("down")});await settle()
+  await act(async()=>{show()});await settle()
+  expect(view.captureCharFrame()).toContain("Confirm exit");expect(view.captureCharFrame()).toContain("Koma / Sessions")
+  await act(async()=>{view.mockInput.pressEnter();view.mockInput.pressTab()});await settle();expect(opened).toEqual([])
+  const lines=view.captureCharFrame().split("\n"),y=lines.findIndex(l=>l.includes("Cancel (esc)"))
+  await act(async()=>{await view.mockMouse.click(lines[y]!.indexOf("Cancel (esc)")+1,y)});await settle()
+  expect(view.captureCharFrame()).toContain("› Active fixture")
+  await act(async()=>{view.mockInput.pressEnter()});await settle();expect(opened).toEqual(["live-fixture"])
+ }finally{await act(async()=>{await view.dispose()});list.mockRestore()}
 })

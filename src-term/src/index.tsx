@@ -112,19 +112,6 @@ function App({ syntaxStyle: baseSyntaxStyle }: { syntaxStyle: SyntaxStyleHandle 
   let screen
   if (tooSmall) {
     screen = <TooNarrow theme={theme} width={width} />
-  } else if (route.kind === "hub" && hubQuit) {
-    screen = (
-      <QuitScreen
-        scope="hub"
-        state={hubQuit}
-        theme={theme}
-        exiting={null}
-        onPick={(index) => {
-          if (index === 2) setHubQuit(null)
-          else leave()
-        }}
-      />
-    )
   } else if (route.kind === "remote") {
     screen = <RemoteScreen remote={route.remote} theme={theme} syntaxStyle={syntaxStyle} onHome={onHome} onExit={leave} onRemote={onRemote} onPalette={setPalette} ctrlC={sessionCtrlC} />
   } else if (route.kind === "session") {
@@ -142,7 +129,7 @@ function App({ syntaxStyle: baseSyntaxStyle }: { syntaxStyle: SyntaxStyleHandle 
       />
     )
   } else {
-    screen = <Hub theme={theme} onOpen={onOpen} currentId={returnSession.current} onBack={returnSession.current ? () => onOpen(returnSession.current!) : undefined} />
+    screen = <Hub overlay={hubQuit ? <QuitScreen scope="hub" state={hubQuit} theme={theme} exiting={null} onPick={(index) => {if(index===2)setHubQuit(null);else leave()}} /> : null} theme={theme} onOpen={onOpen} currentId={returnSession.current} onBack={returnSession.current ? () => onOpen(returnSession.current!) : undefined} />
   }
   if (tooSmall) {
     return <TooNarrow theme={theme} width={width} />

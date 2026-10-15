@@ -42,10 +42,11 @@ settings persistence.
 - Notification banners show a working countdown and a clickable `[x]` for
   immediate dismissal. Time notifications by event identity, never by a newly
   allocated payload or callback; repeated identical notices are distinct events.
-- The quit page uses the same full-screen title, compact rounded confirmation
-  surface, plain clickable actions, muted shortcuts, and accent focus as the
-  other menus. Spare space stays outside the confirmation border. Preserve
-  quit/detach/cancel shortcuts, scope semantics, and the exiting input lock.
+- Exit confirmation uses the shared compact overlay above the composer. Keep
+  the chat and native composer mounted; suspend their input while confirming.
+  In the sessions hub, show it below the hub content and suspend hub controls.
+  Preserve Quit/Detach/Cancel shortcuts, scope semantics, approval priority on
+  return, draft/selection restoration, and the exiting input lock.
 - All terminal on/off controls use the same switch: `[━●]` in `success` when on,
   `[●─]` in `dim` when off. No checkbox squares, dot-only checkmarks, or redundant
   on/off words. The user approved exactly two arrangements:
@@ -80,8 +81,15 @@ settings persistence.
 ## Current menu system
 
 - `src/modes/place.ts` decides full-screen versus overlay. Preserve the existing
-  distinction unless the user changes it. Model, Bash, Todo, Skill, attachment
+  distinction unless the user changes it. Effort, Model, Bash, Todo, Skill, attachment
   lists, extension `use`, and the old settings menu remain chat overlays.
+  The effort selector sits above the composer in the same compact frame, with
+  its choices and any model-specific reasoning note inside that frame.
+  All chat overlays share this order: spacer, Koma/version/mode/model row,
+  spacer, overlay, composer border, tips/status. Keep no gap between the overlay
+  and composer. This includes suggestions, menu overlays, approvals, rewind,
+  subagents and exit confirmation. Keep the native composer mounted and preserve
+  existing input ownership and overlay priority. The hub has no composer.
 - `src/modes/surface.tsx` handles every full-screen `ModeSnapshot` menu, including
   SessionHub. It forwards bracketed paste to the daemon as `Paste`.
 - `Fullscreen` in `src/modes/bits.tsx` gives menus a common title/content/actions

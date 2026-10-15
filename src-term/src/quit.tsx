@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react"
 import type { Theme } from "./theme.ts"
-import { Action, Fullscreen } from "./modes/bits.tsx"
+import { Action, Overlay } from "./modes/bits.tsx"
 
 const LABELS = ["Quit (k)", "Detach (d)", "Cancel (esc)"] as const
 const DESCS = [
@@ -50,19 +50,14 @@ export function QuitScreen({
   const selected = exiting ?? state.selected
   const plural = state.working === 1 ? "session" : "sessions"
   return (
-    <Fullscreen title="Quit" theme={theme} hint={exiting != null ? exiting === 0 ? "Quitting…" : "Detaching…" : "←/→ move · Tab switch · Enter select"}>
+    <Overlay title="Confirm exit" theme={theme} hint={exiting != null ? exiting === 0 ? "Quitting…" : "Detaching…" : "←/→ move · Tab switch · Enter select"}>
       <box
         width="100%"
-        maxWidth={72}
-        flexShrink={0}
+        flexGrow={1}
+        minHeight={0}
         flexDirection="column"
-        border
-        borderStyle="rounded"
-        borderColor={theme.accent}
-        title=" Confirm exit "
-        titleColor={theme.accent}
-        padding={1}
-        gap={1}
+        paddingLeft={1}
+        paddingRight={1}
       >
         <text fg={theme.fg}>Do you want to quit?</text>
         {state.working > 0 ? (
@@ -71,11 +66,11 @@ export function QuitScreen({
         <box flexDirection="row" flexWrap="wrap" columnGap={1} flexShrink={0}>
           {LABELS.map((label, index) => {
             const spinning = exiting === index
-            return <Action key={label} label={spinning ? `${glyph} ${label}` : label} primary={index === selected} disabled={exiting != null} theme={theme} onPress={() => onPick(index)} />
+            return <Action plain key={label} label={spinning ? `${glyph} ${label}` : label} primary={index === selected} disabled={exiting != null} theme={theme} onPress={() => onPick(index)} />
           })}
         </box>
         <text fg={theme.dim}>{scope === "hub" ? selected === 2 ? "Back to sessions" : "Close this terminal. Sessions keep running." : DESCS[selected] ?? DESCS[2]}</text>
       </box>
-    </Fullscreen>
+    </Overlay>
   )
 }

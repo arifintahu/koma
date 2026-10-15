@@ -332,9 +332,9 @@ export function InputField({ label, value, placeholder = "Not set", active = fal
   )
 }
 
-export function Action({ label, theme, onPress, primary = false, disabled = false }: { label: string; theme: Theme; onPress: () => void; primary?: boolean; disabled?: boolean }) {
+export function Action({ label, theme, onPress, primary = false, disabled = false, plain = false }: { label: string; theme: Theme; onPress: () => void; primary?: boolean; disabled?: boolean; plain?: boolean }) {
   const [hot, setHot] = useState(false)
-  const full = useContext(FullscreenContext)
+  const full = useContext(FullscreenContext) || plain
   const shortcut = full ? /^(.*?)( \([^()]+\))$/.exec(label) : null
   return <box height={1} flexShrink={0} paddingLeft={1} paddingRight={1} backgroundColor={!full && primary ? theme.selBg : hot ? theme.panel : undefined} onMouseOver={() => setHot(true)} onMouseOut={() => setHot(false)} onMouseDown={() => { if (!disabled) onPress() }}><text fg={disabled ? theme.dim : !full ? primary ? theme.selFg : theme.accent : primary || hot ? theme.accent : theme.fg}>{full ? shortcut ? <><span>{shortcut[1]}</span><span fg={theme.dim}>{shortcut[2]}</span></> : label : `[ ${label} ]`}</text></box>
 }
