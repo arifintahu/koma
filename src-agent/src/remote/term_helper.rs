@@ -39,7 +39,7 @@ pub(crate) enum Event {
     Directories { path: String, entries: Vec<String> },
     Connected { session_id: String },
     Daemon(Value),
-    Usage(crate::model::usage::reader::Response),
+    Usage(Box<crate::model::usage::reader::Response>),
     UsageError { request_id: u64, message: String },
     Error { message: String },
     Disconnected,
@@ -176,7 +176,7 @@ async fn run_async(
                     lane = Some(child);
                     decoder = FrameReader::new();
                 }
-                let child = lane.as_mut().unwrap();
+                let child = lane.as_mut().context("usage ssh session was not started")?;
                 write_frame_to(&mut child.stdin, &serde_json::to_vec(&request)?).await?;
                 let bytes = read_frame_from(&mut child.stdout, &mut decoder).await?;
                 Ok(serde_json::from_slice(&bytes)?)
@@ -187,7 +187,7 @@ async fn run_async(
                     Err(_) => Err(anyhow::anyhow!("Remote usage reader timed out")),
                 };
             let event = match result {
-                Ok(response) => Event::Usage(response),
+                Ok(response) => Event::Usage(Box::new(response)),
                 Err(error) => {
                     lane = None;
                     Event::UsageError {

@@ -114,9 +114,7 @@ impl SettingsState {
     /// Returns the new provider's index when this was an add. An edit returns
     /// `None` so the caller stays on the provider list.
     pub fn save_provider_modal(&mut self) -> Option<usize> {
-        let Some(m) = self.prov_modal.take() else {
-            return None;
-        };
+        let m = self.prov_modal.take()?;
         if let Some(index) = self.prov_replace.take() {
             if let Some(existing) = self.providers.get_mut(index) {
                 if existing.ext_id.is_some() {

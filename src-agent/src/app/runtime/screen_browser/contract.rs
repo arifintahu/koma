@@ -37,6 +37,7 @@ pub fn capture_size(width: u32, height: u32) -> (u32, u32) {
 /// Still block `file:`, `javascript:`, `koma://` unless the user reviews and
 /// remembers a grant ([`navigation_allowed`]). Omnibox stays stricter via
 /// [`validate_content_url`].
+#[cfg(any(feature = "gui", test))]
 pub fn allow_content_url(url: &str) -> bool {
     let u = url.trim();
     if u.is_empty() || u.chars().any(|c| c.is_control()) {
@@ -57,6 +58,7 @@ pub fn allow_content_url(url: &str) -> bool {
 }
 
 /// Schemes the user must never grant, even with "Always allow".
+#[cfg(any(feature = "gui", test))]
 pub fn nav_never_allow(url: &str) -> bool {
     let lower = url.trim().to_ascii_lowercase();
     lower.starts_with("javascript:")
@@ -66,6 +68,7 @@ pub fn nav_never_allow(url: &str) -> bool {
 }
 
 /// Stable remember-key for a blocked navigation (`scheme:vscode`, `host:example.com`).
+#[cfg(any(feature = "gui", test))]
 pub fn nav_remember_key(url: &str) -> Option<String> {
     if nav_never_allow(url) {
         return None;
@@ -97,6 +100,7 @@ pub fn nav_remember_key(url: &str) -> Option<String> {
     }
 }
 
+#[cfg(any(feature = "gui", test))]
 pub fn nav_grant_label(key: &str) -> String {
     if let Some(host) = key.strip_prefix("host:") {
         host.to_string()
@@ -108,6 +112,7 @@ pub fn nav_grant_label(key: &str) -> String {
 }
 
 /// Engine navigation: built-in allowlist, else a remembered / this-session grant.
+#[cfg(any(feature = "gui", test))]
 pub fn navigation_allowed(
     url: &str,
     always: &[String],

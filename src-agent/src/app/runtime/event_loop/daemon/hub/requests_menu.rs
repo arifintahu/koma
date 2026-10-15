@@ -9,6 +9,12 @@ use crate::service::openrouter::OpenRouterClient;
 use anyhow::{bail, ensure, Result};
 use std::sync::Arc;
 
+pub(super) struct MenuCall {
+    pub request_id: String,
+    pub mode: String,
+    pub action: MenuAction,
+}
+
 impl DaemonHub {
     pub(super) fn menu(
         &mut self,
@@ -16,10 +22,13 @@ impl DaemonHub {
         state: &mut AppState,
         client: &mut Option<Arc<OpenRouterClient>>,
         handle: &tokio::runtime::Handle,
-        request_id: String,
-        mode: String,
-        action: MenuAction,
+        call: MenuCall,
     ) {
+        let MenuCall {
+            request_id,
+            mode,
+            action,
+        } = call;
         let result = menu_action(state, client, handle, &mode, action);
         self.send_to(
             idx,
@@ -206,26 +215,29 @@ fn menu_action(
                     }
                     Mode::Settings(s) if s.prov_modal.is_some() => {
                         s.provider_editing = false;
-                        let m = s.prov_modal.as_mut().unwrap();
-                        m.field = (m.field + if forward { 1 } else { 4 }) % 5;
+                        if let Some(m) = s.prov_modal.as_mut() {
+                            m.field = (m.field + if forward { 1 } else { 4 }) % 5;
+                        }
                         return Ok(());
                     }
                     Mode::Settings(s) if s.model_modal.is_some() => {
                         s.model_editing = false;
                         s.model_provider_cursor = None;
                         let len = s.model_modal_fields().len();
-                        let m = s.model_modal.as_mut().unwrap();
-                        m.field = (m.field + if forward { 1 } else { len - 1 }) % len;
+                        if let Some(m) = s.model_modal.as_mut() {
+                            m.field = (m.field + if forward { 1 } else { len - 1 }) % len;
+                        }
                         return Ok(());
                     }
                     Mode::Remote(s) if s.editor.is_some() => {
                         s.editing_field = false;
-                        let e = s.editor.as_mut().unwrap();
-                        e.focused = if forward {
-                            e.focused.next()
-                        } else {
-                            e.focused.prev()
-                        };
+                        if let Some(e) = s.editor.as_mut() {
+                            e.focused = if forward {
+                                e.focused.next()
+                            } else {
+                                e.focused.prev()
+                            };
+                        }
                         return Ok(());
                     }
                     Mode::Agents(_)
@@ -343,7 +355,10 @@ fn select(state: &mut AppState, group: &str, index: usize, id: Option<&str>) -> 
                     .ok_or_else(|| anyhow::anyhow!("Unknown settings page"))?;
                 }
                 _ if s.search_editor.is_some() => {
-                    let e = s.search_editor.as_mut().unwrap();
+                    let e = s
+                        .search_editor
+                        .as_mut()
+                        .ok_or_else(|| anyhow::anyhow!("Search form closed"))?;
                     let provider = *crate::model::web_search::SearchProvider::ALL
                         .get(index)
                         .ok_or_else(|| anyhow::anyhow!("Unknown search provider"))?;
@@ -356,7 +371,10 @@ fn select(state: &mut AppState, group: &str, index: usize, id: Option<&str>) -> 
                     e.editing = provider != crate::model::web_search::SearchProvider::BuiltIn;
                 }
                 _ if s.picker.is_some() => {
-                    let p = s.picker.as_mut().unwrap();
+                    let p = s
+                        .picker
+                        .as_mut()
+                        .ok_or_else(|| anyhow::anyhow!("Directory list closed"))?;
                     p.sel = bounded(index, p.matches.len())?;
                 }
                 _ if s.list_editing => {
@@ -373,36 +391,40 @@ fn select(state: &mut AppState, group: &str, index: usize, id: Option<&str>) -> 
                     let p = s
                         .model_modal
                         .as_mut()
-                        .unwrap()
-                        .role_picker
-                        .as_mut()
-                        .unwrap();
+                        .and_then(|modal| modal.role_picker.as_mut())
+                        .ok_or_else(|| anyhow::anyhow!("Role picker closed"))?;
                     p.cursor = bounded(index, p.checked.len())?;
                 }
                 _ if s.prov_modal.is_some() => {
-                    s.prov_modal.as_mut().unwrap().field = bounded(index, 5)?;
+                    let field = bounded(index, 5)?;
+                    if let Some(modal) = s.prov_modal.as_mut() {
+                        modal.field = field;
+                    }
                     s.provider_editing = index < 3;
                 }
                 _ if s.model_modal.is_some() => {
                     let len = s.model_modal_fields().len();
-                    s.model_modal.as_mut().unwrap().field = bounded(index, len)?;
+                    let field = bounded(index, len)?;
+                    if let Some(modal) = s.model_modal.as_mut() {
+                        modal.field = field;
+                    }
                     s.model_editing = matches!(
                         s.mm_current_field(),
                         Some(settings::ModelField::Name | settings::ModelField::Model)
                     );
-                    s.model_provider_cursor =
-                        if s.mm_current_field() == Some(settings::ModelField::Provider) {
-                            Some(
-                                s.mm_provider_choices()
-                                    .iter()
-                                    .position(|p| {
-                                        p.index == s.model_modal.as_ref().unwrap().provider_idx
-                                    })
-                                    .unwrap_or(0),
-                            )
-                        } else {
-                            None
-                        };
+                    s.model_provider_cursor = if s.mm_current_field()
+                        == Some(settings::ModelField::Provider)
+                    {
+                        let provider_idx = s.model_modal.as_ref().map(|modal| modal.provider_idx);
+                        Some(
+                            s.mm_provider_choices()
+                                .iter()
+                                .position(|choice| Some(choice.index) == provider_idx)
+                                .unwrap_or(0),
+                        )
+                    } else {
+                        None
+                    };
                 }
                 _ if matches!(s.oauth_flow, OAuthFlowState::Pick(_)) => {
                     s.oauth_flow = OAuthFlowState::Pick(bounded(index, 8)?);
@@ -467,8 +489,13 @@ fn select(state: &mut AppState, group: &str, index: usize, id: Option<&str>) -> 
                     .ok_or_else(|| anyhow::anyhow!("Unknown agent field"))?;
                 s.editing = false;
             } else {
-                let p = s.agents.get(bounded(index, s.agents.len())?).unwrap();
-                identity(id, &p.name)?;
+                let at = bounded(index, s.agents.len())?;
+                let name = s
+                    .agents
+                    .get(at)
+                    .map(|agent| agent.name.clone())
+                    .ok_or_else(|| anyhow::anyhow!("The selected item is no longer available"))?;
+                identity(id, &name)?;
                 s.list_sel = index;
             }
         }

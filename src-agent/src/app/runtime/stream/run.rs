@@ -613,9 +613,7 @@ over sec_remote (stateful socket).\n",
     // The same gate sends only the latest computer frame.
     let computer_frames = {
         let computer = &state.rest.sessions[sess_idx].computer;
-        let active =
-            computer.status.enabled && (computer.owner.is_some() || computer.detached_at.is_some());
-        active
+        computer.status.enabled && (computer.owner.is_some() || computer.detached_at.is_some())
     };
     hide_inactive_runtime_tools(
         &mut advertise,

@@ -205,10 +205,9 @@ fn tilde_listing<'a>(raw: &'a str, home: Option<&Path>) -> Option<(String, &'a s
         ('/', "")
     } else if let Some(rest) = raw.strip_prefix("~/") {
         ('/', rest)
-    } else if let Some(rest) = raw.strip_prefix("~\\") {
-        ('\\', rest)
     } else {
-        return None;
+        let rest = raw.strip_prefix("~\\")?;
+        ('\\', rest)
     };
     let (dir, prefix) = split_dir_prefix(rest);
     let display = if dir.is_empty() {
@@ -228,10 +227,9 @@ fn tilde_listing<'a>(raw: &'a str, home: Option<&Path>) -> Option<(String, &'a s
 fn dot_listing<'a>(raw: &'a str, cwd: &Path) -> Option<(String, &'a str, PathBuf)> {
     let (sep, rest) = if let Some(rest) = raw.strip_prefix("./") {
         ('/', rest)
-    } else if let Some(rest) = raw.strip_prefix(".\\") {
-        ('\\', rest)
     } else {
-        return None;
+        let rest = raw.strip_prefix(".\\")?;
+        ('\\', rest)
     };
     let (dir, prefix) = split_dir_prefix(rest);
     let display = if dir.is_empty() {

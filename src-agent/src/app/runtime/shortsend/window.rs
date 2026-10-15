@@ -364,9 +364,7 @@ fn shape_inner(
     let body = &history[1..];
     // Computer-use sends one frame. Charges and the live tail use that reduced
     // copy. Fingerprints, protection, and the archive index still see `body`.
-    let browser_frames = body
-        .iter()
-        .any(|message| super::frame::is_browser_observation(message));
+    let browser_frames = body.iter().any(super::frame::is_browser_observation);
     let wire_charges = (computer_frames || browser_frames).then(|| {
         let mut copy = body.to_vec();
         if computer_frames {

@@ -219,7 +219,17 @@ impl DaemonHub {
                 mode,
                 action,
             } => {
-                self.menu(idx, state, client, handle, request_id, mode, action);
+                self.menu(
+                    idx,
+                    state,
+                    client,
+                    handle,
+                    super::requests_menu::MenuCall {
+                        request_id,
+                        mode,
+                        action,
+                    },
+                );
             }
             ClientRequest::Computer(control) => self.computer(idx, state, control),
             ClientRequest::ScreenBrowser(control) => self.screen_browser(idx, state, control),
@@ -461,7 +471,7 @@ impl DaemonHub {
                 self.replace_input(idx, state, text, cursor);
                 self.send_to(idx, DaemonEvent::MenuResult { request_id, error: None });
             }
-            ClientRequest::Menu { request_id, mode, action } => self.menu(idx, state, client, handle, request_id, mode, action),
+            ClientRequest::Menu { request_id, mode, action } => self.menu(idx, state, client, handle, super::requests_menu::MenuCall { request_id, mode, action }),
             // UUID-keyed foreground switch: resolve the id to an index, reject an
             // unknown id (critique #5), else reuse the local foreground-switch path (LiveSwitch)
             // and clear that session's sticky finished-unseen marker (critique #3 —
