@@ -1,4 +1,5 @@
 import type { MenuData } from "./data.ts"
+import type { ReactNode } from "react"
 import type { Theme } from "../theme.ts"
 import { Action, Document, FieldList, Lines, Note, OVERLAY_BODY, Panel, Paragraphs, Split, sendKey, type Line } from "./bits.tsx"
 import { editorFrom, TextEditor } from "./editor.tsx"
@@ -42,11 +43,11 @@ export function agentsView(body: MenuData["Agents"] & Rec, theme: Theme, wide: b
   return {
     title: "agents",
     hint: "↑↓ · enter edit · n new · d delete · esc close",
-    children: wideList(wide, theme, lines, selected, onMove, detail, agents[selected]?.name ? `${selected + 1}/${agents.length}  ${str(agents[selected]?.name)}` : "0"),
+    children: managementList("Agents", theme, lines, selected, onMove, <Action label="+ New (n)" theme={theme} onPress={() => sendKey(send, { Char: "n" })} />),
   }
 }
 
-export function mcpView(body: MenuData["Mcp"] & Rec, theme: Theme, wide: boolean, onMove: (index: number) => void) {
+export function mcpView(body: MenuData["Mcp"] & Rec, theme: Theme, wide: boolean, onMove: (index: number) => void, send: (request: unknown) => void) {
   const mode = str(body.mode) || "browse"
   const servers = rows(body.servers)
   const selected = num(body.list_sel)
@@ -70,7 +71,8 @@ export function mcpView(body: MenuData["Mcp"] & Rec, theme: Theme, wide: boolean
     const fields = mcpFields(transport)
     const form: Line[] = fields.map((field) => ({
       label: field,
-      detail: mcpDraft(body, field),
+      detail: field === "enabled" ? undefined : mcpDraft(body, field),
+      toggle: field === "enabled" ? flag(body.draft_enabled) : undefined,
     }))
     return {
       title: `mcp · ${mode}`,
@@ -83,7 +85,7 @@ export function mcpView(body: MenuData["Mcp"] & Rec, theme: Theme, wide: boolean
   return {
     title: "mcp",
     hint: "↑↓ · enter edit · n new · d delete · esc close",
-    children: wideList(wide, theme, lines, selected, onMove, detail, `${selected + 1}/${Math.max(servers.length, 1)}`),
+    children: managementList("MCP servers", theme, lines, selected, onMove, <Action label="+ New (n)" theme={theme} onPress={() => sendKey(send, { Char: "n" })} />),
   }
 }
 
@@ -100,7 +102,7 @@ export function extensionsView(body: MenuData["Extensions"] & Rec, theme: Theme,
     return {
       title: "use extension",
       hint: "↑↓ · enter load · x unload · esc close",
-      children: <Lines rows={lines} selected={selected} theme={theme} visible={OVERLAY_BODY} onPress={onMove} />,
+      children: <Lines rows={lines.map((line, index) => ({ ...line, toggle: flag(list[index]?.active), toggleLayout: "before" as const }))} selected={selected} theme={theme} visible={OVERLAY_BODY} onPress={onMove} />,
     }
   }
   if (mode === "uninstall_confirm") {
@@ -213,7 +215,7 @@ export function securityView(body: MenuData["Security"] & Rec, theme: Theme, onM
   }
 }
 
-export function remoteView(body: MenuData["Remote"] & Rec, theme: Theme, wide: boolean, onMove: (index: number) => void) {
+export function remoteView(body: MenuData["Remote"] & Rec, theme: Theme, wide: boolean, onMove: (index: number) => void, send: (request: unknown) => void) {
   const sub = str(body.sub)
   const view = sub.split(":")[1] || "browse"
   const hosts = rows(body.hosts)
@@ -272,7 +274,7 @@ export function remoteView(body: MenuData["Remote"] & Rec, theme: Theme, wide: b
   return {
     title: `remote · ${sub.split(":")[0] || "manage"}`,
     hint: "↑↓ or j k · enter connect · n new · e edit · d delete · i import · esc close",
-    children: wideList(wide, theme, lines, selected, onMove, detail, host ? `${selected + 1}/${filtered.length}  ${str(host.name)}` : "0"),
+    children: managementList("Hosts", theme, lines, selected, onMove, <Action label="+ New (n)" theme={theme} onPress={() => sendKey(send, { Char: "n" })} />),
   }
 }
 
@@ -332,8 +334,7 @@ function pickerView(title: string, picker: Rec, theme: Theme, onMove: (index: nu
   const checked = Array.isArray(picker.checked) ? picker.checked : []
   const lines: Line[] = options.map((row, index) => {
     const label = Array.isArray(row) ? str(row[1] ?? row[0]) : str(row)
-    const mark = checks ? (checked[index] ? "● " : "· ") : ""
-    return { label: `${mark}${label}`, matches: !checks || label.toLowerCase().includes(str(picker.filter).toLowerCase()) }
+    return { label, toggle: checks ? flag(checked[index]) : undefined, toggleLayout: "before" as const, matches: !checks || label.toLowerCase().includes(str(picker.filter).toLowerCase()) }
   }).filter((row)=>row.matches)
   return {
     title,
@@ -379,7 +380,6 @@ export function mcpFields(transport: string): string[] {
 
 function mcpDraft(body: Rec, field: string): string {
   if (field === "name") return str(body.draft_name)
-  if (field === "enabled") return flag(body.draft_enabled) ? "on" : "off"
   if (field === "transport") return str(body.draft_transport) || "stdio"
   if (field === "url") return str(body.draft_url)
   if (field === "command") return str(body.draft_command)
@@ -387,14 +387,6 @@ function mcpDraft(body: Rec, field: string): string {
   return str(body.draft_env)
 }
 
-function wideList(
-  wide: boolean,
-  theme: Theme,
-  lines: Line[],
-  selected: number,
-  onMove: (index: number) => void,
-  detail: string[],
-  collapsed: string,
-) {
-  return <Lines rows={lines} selected={selected} theme={theme} onPress={onMove} />
+function managementList(title: string, theme: Theme, lines: Line[], selected: number, onMove: (index: number) => void, actions: ReactNode) {
+  return <Panel title={title} hot theme={theme} actions={actions}><Lines rows={lines} selected={selected} theme={theme} onPress={onMove} /></Panel>
 }

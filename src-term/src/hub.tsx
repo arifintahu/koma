@@ -141,8 +141,8 @@ export function Hub({ theme, onOpen, onBack, currentId }: { theme: Theme; onOpen
     <box flexDirection="row" flexShrink={0}><Action label="Cooking (c)" primary={pane==="cooking"} theme={theme} onPress={()=>{setPane("cooking");setArmed(null)}} /><Action label="History (h)" primary={pane==="history"} theme={theme} onPress={()=>{setPane("history");setArmed(null)}} /></box>
     {error ? <Note text={error} color={theme.error} theme={theme} /> : null}
     <box flexDirection="column" flexGrow={1} flexBasis={0} minHeight={0}>
-      {pane === "cooking" ? <Panel key="cooking" title={`cooking · ${live.length}`} hot theme={theme}><Lines rows={liveRows} selected={cookingIndex} theme={theme} onPress={(i)=>{setCookingSel(i);setArmed(null)}} /></Panel> :
-      <Panel key="history" title={`history · ${history.length}`} hot theme={theme}>
+      {pane === "cooking" ? <Panel key="cooking" title={`cooking · ${live.length}`} mark={0} hot theme={theme}><Lines rows={liveRows} selected={cookingIndex} theme={theme} onPress={(i)=>{setCookingSel(i);setArmed(null)}} /></Panel> :
+      <Panel key="history" title={`history · ${history.length}`} mark={0} hot theme={theme}>
         <InputField label="Search sessions" value={query} active={!armed} onChange={(value)=>{setQuery(value);setHistorySel(0);setCookingSel(0)}} theme={theme} />
         <Lines rows={historyRows} selected={historyIndex} theme={theme} onPress={(i)=>{setHistorySel(i);setArmed(null)}} />
       </Panel>

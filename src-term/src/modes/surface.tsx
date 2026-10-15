@@ -101,7 +101,7 @@ function viewOf(name: string, body: Rec, theme: Theme, wide: boolean, onMove: (i
     case "Agents":
       return agentsView(body as MenuData["Agents"] & Rec, theme, wide, onMove, send)
     case "Mcp":
-      return mcpView(body as MenuData["Mcp"] & Rec, theme, wide, onMove)
+      return mcpView(body as MenuData["Mcp"] & Rec, theme, wide, onMove, send)
     case "Extensions":
       return extensionsView(body as MenuData["Extensions"] & Rec, theme, wide, onMove, send)
     case "ExtStore":
@@ -111,7 +111,7 @@ function viewOf(name: string, body: Rec, theme: Theme, wide: boolean, onMove: (i
     case "Security":
       return securityView(body as MenuData["Security"] & Rec, theme, onMove)
     case "Remote":
-      return remoteView(body as MenuData["Remote"] & Rec, theme, wide, onMove)
+      return remoteView(body as MenuData["Remote"] & Rec, theme, wide, onMove, send)
     case "Onboard":
       return onboardView(body as MenuData["Onboard"] & Rec, theme, onMove)
     case "OnboardProvider":

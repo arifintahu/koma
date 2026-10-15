@@ -5,7 +5,7 @@ import { act, useMemo } from "react"
 import { useRenderer } from "@opentui/react"
 import { SyntaxStyle } from "@opentui/core"
 import { Chat } from "../chat.tsx"
-import { fold } from "../protocol.ts"
+import { controlOf, fold } from "../protocol.ts"
 import { themeFor } from "../theme.ts"
 import { Fullscreen, Lines, Panel, Split } from "./bits.tsx"
 import { ModeSurface } from "./surface.tsx"
@@ -174,6 +174,46 @@ test("chat keeps its composer, command palette and compact model overlay", async
       const top = lines.findIndex((line) => line.includes(overlay ? "choose" : "commands"))
       expect(lines[top + 9]).toContain("╰")
       if (overlay) expect(frame).toContain("● Second model")
+    } finally { await act(async () => { await view.dispose() }) }
+  }
+})
+
+test("slash suggestions hide /select while clicks, arrows and direct execution still work", async () => {
+  const dark = themeFor("dark")
+  for (const direct of [false, true]) {
+    const requests: unknown[] = []
+    const input = direct ? "/select" : "/"
+    const commands = (direct ? ["/select"] : ["/settings", "/select", "/help"]).map((name) => ({ name, desc: `Run ${name}` }))
+    const snapshot = fold(null, { Snapshot: {
+      foreground_id: "slash-review",
+      sessions: [{ id: "slash-review", name: "Slash review", cwd: "/tmp", messages: [] }],
+      global: { mode: "Chat", palette: "dark", input, cursor: input.length, command_palette: commands },
+    } })!
+    function Harness() {
+      const renderer = useRenderer()
+      const style = useMemo(() => SyntaxStyle.fromStyles({ default: { fg: dark.fg } }, renderer.nativeScene), [renderer])
+      return <Chat snap={snapshot} theme={dark} syntaxStyle={style} focused send={(r) => requests.push(r)} sendTracked={async () => "ack"} onFlushError={() => {}} />
+    }
+    const view = await testRender(<Harness />, { width: 80, height: 24 })
+    try {
+      await act(async () => { await view.waitForVisualIdle() })
+      await act(async () => { await view.waitForVisualIdle() })
+      if (direct) {
+        expect(view.captureCharFrame()).not.toContain("commands")
+        await act(async () => { view.mockInput.pressEnter() })
+        expect(requests).toEqual([{ SendKey: { code: "Enter", mods: 0 } }])
+        expect(controlOf("EnterSelect")).toEqual({ kind: "select" })
+      } else {
+        expect(view.captureCharFrame()).toContain("Run /help")
+        expect(view.captureCharFrame()).not.toContain("/select")
+        await act(async () => { view.mockInput.pressArrow("down") })
+        expect(requests).toEqual(Array.from({ length: 2 }, () => ({ SendKey: { code: "Down", mods: 0 } })))
+        requests.length = 0
+        const lines = view.captureCharFrame().split("\n")
+        const y = lines.findIndex((line) => line.includes("Run /help"))
+        await act(async () => { await view.mockMouse.click(lines[y]!.indexOf("/help") + 2, y) })
+        expect(requests).toEqual(Array.from({ length: 2 }, () => ({ SendKey: { code: "Down", mods: 0 } })))
+      }
     } finally { await act(async () => { await view.dispose() }) }
   }
 })

@@ -101,7 +101,7 @@ export function skillView(body: Rec, theme: Theme, onMove: (index: number) => vo
   const filtered = Array.isArray(body.filtered_idx) ? body.filtered_idx.map(num) : all.map((_, index) => index)
   const lines: Line[] = filtered.map((index) => {
     const row = all[index] ?? {}
-    return { label: str(row.name), detail: flag(row.is_active) ? "active" : clip(str(row.description), 40) }
+    return { label: str(row.name), toggle: flag(row.is_active), toggleLayout: "before" as const, detail: clip(str(row.description), 40) }
   })
   return {
     title: `skills · ${str(body.chip) || "all"}${str(body.query) ? ` · ${str(body.query)}` : ""}`,

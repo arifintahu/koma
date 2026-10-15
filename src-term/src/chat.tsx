@@ -10,7 +10,7 @@ import {
   pageFromTurn,
   visibleFromTurn,
 } from "./history.ts"
-import { PALETTE_VISIBLE, paletteWindow } from "./palette.ts"
+import { PALETTE_VISIBLE, commandSuggestions, commandSuggestionOffset, paletteWindow } from "./palette.ts"
 import { attachmentFile } from "./paths.ts"
 import {
   showImagePath,
@@ -22,6 +22,7 @@ import {
   type ToolCall,
 } from "./protocol.ts"
 import type { Theme } from "./theme.ts"
+import { Toast, type LocalNotice } from "./toast.tsx"
 
 const COMPOSER_KEYS = [
   { name: "return", action: "submit" as const },
@@ -46,6 +47,7 @@ export function Chat({
   rewind = null,
   overlay = null,
   notice = null,
+  onNoticeDismiss,
   send,
   sendTracked,
   onFlushError,
@@ -56,7 +58,8 @@ export function Chat({
   focused: boolean
   rewind?: { entries: string[]; selected: number } | null
   overlay?: ReactNode
-  notice?: string | null
+  notice?: LocalNotice | null
+  onNoticeDismiss?: () => void
   send: (request: unknown) => void
   sendTracked: (request: unknown) => Promise<string>
   onFlushError: (text: string) => void
@@ -72,7 +75,8 @@ export function Chat({
   }
   return (
     <box flexDirection="column" flexGrow={1} backgroundColor={theme.bg} paddingTop={1} paddingBottom={1}>
-      <Toast snap={snap} theme={theme} notice={notice} />
+      {snap.global.toast ? <Toast key={`daemon:${snap.global.toast_event_id ?? snap.global.toast.join(":")}`} id={snap.global.toast_event_id ?? snap.global.toast.join(":")} kind={snap.global.toast[0]} text={snap.global.toast[1]} theme={theme} hidden={notice != null} /> : null}
+      {notice ? <Toast key={`local:${notice.id}`} id={notice.id} kind="info" text={notice.text} theme={theme} onDismiss={onNoticeDismiss} /> : null}
       <HistoryPane session={session} theme={theme} syntaxStyle={syntaxStyle} />
       <Steers session={session} theme={theme} selected={snap.global.pending_steer_sel} />
       {session.awaiting_approval ? <Approval session={session} theme={theme} send={send} /> : null}
@@ -94,52 +98,6 @@ export function Chat({
         onFlushError={onFlushError}
       />
       <Status snap={snap} session={session} theme={theme} />
-    </box>
-  )
-}
-
-const TOAST_MS = 3000
-
-function Toast({ snap, theme, notice }: { snap: Snapshot; theme: Theme; notice?: string | null }) {
-  const toast = notice ? (["info", notice] as [string, string]) : snap.global.toast
-  const toastId = notice ? `local:${notice}` : snap.global.toast_event_id ?? (toast ? `${toast[0]}:${toast[1]}` : "")
-  const [dismissedId, setDismissedId] = useState<string | null>(null)
-  const [leftMs, setLeftMs] = useState(TOAST_MS)
-  useEffect(() => {
-    if (!toast || dismissedId === toastId) return
-    const started = Date.now()
-    setLeftMs(TOAST_MS)
-    const timer = setInterval(() => {
-      const remain = TOAST_MS - (Date.now() - started)
-      if (remain <= 0) {
-        setDismissedId(toastId)
-        return
-      }
-      setLeftMs(remain)
-    }, 100)
-    return () => clearInterval(timer)
-  }, [toast, toastId, dismissedId])
-  if (!toast || dismissedId === toastId) return null
-  const error = toast[0] === "error"
-  const color = error ? theme.error : theme.fg
-  const text = toast[1].replace(/^\n+/, "").split("\n").filter((line) => line.length > 0).slice(0, 3).join(" ")
-  const seconds = Math.max(1, Math.ceil(leftMs / 1000))
-  return (
-    <box
-      border
-      borderStyle="rounded"
-      borderColor={theme.dim}
-      flexShrink={0}
-      flexDirection="row"
-      justifyContent="space-between"
-      paddingLeft={1}
-      paddingRight={1}
-      marginBottom={1}
-    >
-      <text fg={color} selectable>
-        {text}
-      </text>
-      <text fg={theme.dim}>{`${seconds}s`}</text>
     </box>
   )
 }
@@ -829,13 +787,14 @@ function Palette({
   flushRef: { current: () => Promise<boolean> }
   send: (request: unknown) => void
 }) {
-  const commands = snap.global.command_palette
+  const suggestions = commandSuggestions(snap.global.command_palette, snap.global.palette_sel)
+  const commands = suggestions.rows
   const files = snap.global.file_palette ?? []
   const command = commands.length > 0
   const rows = command
     ? commands.map((row) => ({ label: row.name, detail: row.desc }))
     : files.map((row) => ({ label: row, detail: "" }))
-  const selected = rows.length === 0 ? 0 : Math.min(snap.global.palette_sel, rows.length - 1)
+  const selected = rows.length === 0 ? 0 : command ? suggestions.selected : Math.min(snap.global.palette_sel, rows.length - 1)
   const signature = rows.map((row) => row.label).join("\n")
   const signatureRef = useRef(signature)
   const [start, setStart] = useState(0)
@@ -868,7 +827,7 @@ function Palette({
             theme={theme}
             selected={absolute === selected}
             onPress={() => {
-              const steps = absolute - selected
+              const steps = command ? commands[absolute]!.sourceIndex - snap.global.palette_sel : absolute - selected
               if (steps === 0) return
               const code = steps > 0 ? "Down" : "Up"
               for (let i = 0; i < Math.abs(steps); i++) send({ SendKey: { code, mods: 0 } })
@@ -909,7 +868,7 @@ function Composer({
   const [lines, setLines] = useState(Math.max(1, snap.global.input.split("\n").length))
   const innerCap = Math.max(1, Math.floor(height / 2) - 2)
   const boxHeight = Math.min(innerCap, Math.max(1, lines)) + 2
-  const paletteOpen = snap.global.command_palette.length > 0 || (snap.global.file_palette?.length ?? 0) > 0
+  const paletteOpen = commandSuggestions(snap.global.command_palette, snap.global.palette_sel).rows.length > 0 || (snap.global.file_palette?.length ?? 0) > 0
   const keyQueue = useRef(Promise.resolve())
   const lastPaletteKey = useRef({ code: "", at: 0 })
   useKeyboard((key) => {
@@ -936,6 +895,11 @@ function Composer({
     keyQueue.current = keyQueue.current.then(async () => {
       const ok = await flush()
       if (!ok) return
+      if (snap.global.command_palette.length) {
+        const offset = commandSuggestionOffset(snap.global.command_palette, snap.global.palette_sel, code === "Up" ? -1 : code === "Down" ? 1 : 0)
+        for (let i = 0; i < Math.abs(offset); i++) send({ SendKey: { code: offset < 0 ? "Up" : "Down", mods: 0 } })
+        if (code === "Up" || code === "Down") return
+      }
       send({ SendKey: { code, mods: 0 } })
     })
   })
@@ -1055,7 +1019,11 @@ function Composer({
         onSubmit={() => {
           void (async () => {
             const ok = await flush()
-            if (ok) send({ SendKey: { code: "Enter", mods: 0 } })
+            if (ok) {
+              const offset = commandSuggestionOffset(snap.global.command_palette, snap.global.palette_sel, 0)
+              for (let i = 0; i < Math.abs(offset); i++) send({ SendKey: { code: offset < 0 ? "Up" : "Down", mods: 0 } })
+              send({ SendKey: { code: "Enter", mods: 0 } })
+            }
           })()
         }}
       />

@@ -1,10 +1,11 @@
 import { useEffect, useState } from "react"
 import type { Theme } from "./theme.ts"
+import { Action, Fullscreen } from "./modes/bits.tsx"
 
-const LABELS = ["quit", "detach", "cancel"] as const
+const LABELS = ["Quit (k)", "Detach (d)", "Cancel (esc)"] as const
 const DESCS = [
   "Quit session and stop current progress",
-  "Minimize — as usual agent keep cooking",
+  "Detach and keep the session running",
   "Back to chat",
 ]
 const SPINNER = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
@@ -46,52 +47,35 @@ export function QuitScreen({
     return () => clearInterval(timer)
   }, [exiting])
   const glyph = SPINNER[tick % SPINNER.length] ?? "⠋"
-  const selected = state.selected
+  const selected = exiting ?? state.selected
   const plural = state.working === 1 ? "session" : "sessions"
   return (
-    <box flexDirection="column" flexGrow={1} backgroundColor={theme.bg}>
+    <Fullscreen title="Quit" theme={theme} hint={exiting != null ? exiting === 0 ? "Quitting…" : "Detaching…" : "←/→ move · Tab switch · Enter select"}>
       <box
-        height={3}
-        border={["top", "bottom"]}
-        borderColor={theme.dim}
-        title=" quit "
-        titleColor={theme.dim}
-        paddingLeft={1}
-        paddingRight={1}
+        width="100%"
+        maxWidth={72}
+        flexShrink={0}
+        flexDirection="column"
+        border
+        borderStyle="rounded"
+        borderColor={theme.accent}
+        title=" Confirm exit "
+        titleColor={theme.accent}
+        padding={1}
+        gap={1}
       >
-        <text fg={theme.dim}>
-          {state.working > 0
-            ? "a quit was requested while work is still in flight"
-            : "a quit was requested"}
-        </text>
-      </box>
-      <box height={8} flexShrink={0} flexDirection="column" gap={1}>
         <text fg={theme.fg}>Do you want to quit?</text>
         {state.working > 0 ? (
-          <text fg={theme.dim}>{scope === "hub" ? `${state.working} ${plural} still working. They will keep running.` : `${state.working} ${plural} still working — in-flight work will be lost.`}</text>
+          <text fg={scope === "session" ? theme.warn : theme.dim}>{scope === "hub" ? `${state.working} ${plural} still working. They will keep running.` : `${state.working} ${plural} still working — in-flight work will be lost.`}</text>
         ) : null}
-        <box flexDirection="row" gap={3}>
+        <box flexDirection="row" flexWrap="wrap" columnGap={1} flexShrink={0}>
           {LABELS.map((label, index) => {
-            const on = index === selected
             const spinning = exiting === index
-            return (
-              <box
-                key={label}
-                backgroundColor={on ? theme.selBg : theme.bg}
-                paddingLeft={1}
-                paddingRight={1}
-                onMouseDown={() => {
-                  if (exiting == null) onPick(index)
-                }}
-              >
-                <text fg={on ? theme.selFg : theme.accent}>{spinning ? `[ ${glyph}${label} ]` : `[ ${label} ]`}</text>
-              </box>
-            )
+            return <Action key={label} label={spinning ? `${glyph} ${label}` : label} primary={index === selected} disabled={exiting != null} theme={theme} onPress={() => onPick(index)} />
           })}
         </box>
-        <text fg={theme.dim}>{scope === "hub" && selected !== 2 ? "Close this terminal. Sessions keep running." : DESCS[selected] ?? DESCS[2]}</text>
+        <text fg={theme.dim}>{scope === "hub" ? selected === 2 ? "Back to sessions" : "Close this terminal. Sessions keep running." : DESCS[selected] ?? DESCS[2]}</text>
       </box>
-      <text fg={theme.dim}>←/→ move · Enter select · k/d/Esc shortcut · click</text>
-    </box>
+    </Fullscreen>
   )
 }

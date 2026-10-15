@@ -31,6 +31,32 @@ settings persistence.
 - Use the available space for content. Short lists/forms can stay compact; do
   not stretch them just to fill the terminal. Long lists must use their actual
   allocated height, keep selection visible, and show that more items exist.
+- Put management Add/New actions in the top-right border of their list panel,
+  not at the end of the list or duplicated in the footer. Remove redundant
+  provider endpoint/type summaries beneath lists; retain errors and confirmations.
+- When a panel title has an existing letter shortcut, accent that letter even
+  when inactive (for example, the G in General for g/G). Do not invent shortcuts.
+- Hide `/select` from src-term slash suggestions while preserving the command
+  and its transcript-copy capability. Preserve daemon selection indices when
+  navigating or clicking the remaining suggestions.
+- Notification banners show a working countdown and a clickable `[x]` for
+  immediate dismissal. Time notifications by event identity, never by a newly
+  allocated payload or callback; repeated identical notices are distinct events.
+- The quit page uses the same full-screen title, compact rounded confirmation
+  surface, plain clickable actions, muted shortcuts, and accent focus as the
+  other menus. Spare space stays outside the confirmation border. Preserve
+  quit/detach/cancel shortcuts, scope semantics, and the exiting input lock.
+- All terminal on/off controls use the same switch: `[━●]` in `success` when on,
+  `[●─]` in `dim` when off. No checkbox squares, dot-only checkmarks, or redundant
+  on/off words. The user approved exactly two arrangements:
+  - Type A: `[━●] label`, before the text, for membership lists such as model
+    roles, agent tools, skills, and extension use.
+  - Type B: label aligned left, switch aligned to the right edge of its row,
+    for settings, security, and MCP enabled controls. Reserve switch width so
+    long labels/status text cannot push it off-screen.
+  Reuse the shared toggle renderer; keep existing selection, activation,
+  confirmation, and persistence handlers. Status badges, multi-way choices,
+  and expand/collapse disclosures are distinct from on/off controls.
 
 ## Design signature
 
@@ -108,8 +134,9 @@ settings persistence.
 - The previous pass's universal list/detail layout, hint-string button inference,
   and arrow-replay pointer behavior were regressions. Full-screen management lists
   now span their width and open dedicated forms/pages. Preserve compact overlays.
-- Panels use complete thin rounded borders with plain titles, accent only on
-  focus. Keep semantic toggle/status colors. Do not add decorative title
+- Panels use complete thin rounded borders with plain titles; existing shortcut
+  letters use accent, and focus accents the outline. Keep semantic toggle/status
+  colors. Do not add decorative title
   fragments, bulky theme swatches, duplicate edit controls, or bracket every
   full-screen action.
 - `modes/actions.ts` defines explicit controls and stable entity selection. Menu

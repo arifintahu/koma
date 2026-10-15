@@ -7,6 +7,7 @@ import { ModeSurface } from "./surface.tsx"
 import { PALETTE_NAMES, themeFor } from "../theme.ts"
 import { FormGuard } from "./drafts.ts"
 import { EventDispatcher, PendingOperations } from "../events.ts"
+import { Fullscreen, Lines, Panel } from "./bits.tsx"
 
 const escape = (s: string) => s.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll('"', "&quot;")
 const previews: string[] = []
@@ -22,8 +23,8 @@ for (const [width, height] of [[50, 24], [80, 18], [100, 40], [160, 45]]) {
       const text = view.captureCharFrame()
       expect(text).toContain("Appearance")
       expect(text).toContain("General")
-      expect(text).toContain("[━●] on")
-      expect(text).toContain("[●─] off")
+      expect(text).toContain("[━●]")
+      expect(text).toContain("[●─]")
       expect(text).not.toContain("Save")
       expect(text).not.toContain("Unsaved")
       expect(text).not.toContain("preview")
@@ -42,7 +43,10 @@ for (const [width, height] of [[50, 24], [80, 18], [100, 40], [160, 45]]) {
         const hit = line.spans.find((span) => { const end=offset+span.text.length; const found=offset<=at && end>at;offset=end;return found })!
         expect(rgbToHex(hit.fg).toLowerCase()).toBe(theme.accent)
       }
-      expect(spans.some((span) => span.text.includes("[━●] on") && rgbToHex(span.fg).toLowerCase() === theme.success)).toBe(true)
+      expect(spans.some((span) => span.text.includes("[━●]") && rgbToHex(span.fg).toLowerCase() === theme.success)).toBe(true)
+      expect(spans.some((span) => span.text.includes("[●─]") && rgbToHex(span.fg).toLowerCase() === theme.dim)).toBe(true)
+      const lines = text.split("\n")
+      expect(lines.find((line) => line.includes("Awareness"))!.indexOf("[━●]")).toBe(lines.find((line) => line.includes("Harness"))!.indexOf("[●─]"))
       const html = frame.lines.map((line) => line.spans.map((span) => `<span style="color:${rgbToHex(span.fg)};background:${rgbToHex(span.bg)}">${escape(span.text)}</span>`).join("")).join("\n")
       frames.push({name,width,height,lines:frame.lines.map((line)=>line.spans.map((span)=>({text:span.text,fg:rgbToHex(span.fg),bg:rgbToHex(span.bg),width:span.width})))})
       previews.push(`<article><h2>${escape(name)} · ${width}×${height}</h2><pre style="background:${theme.bg}">${html}</pre></article>`)
@@ -111,4 +115,109 @@ test("a click directly selects the intended model without arrow replay", async (
     expect(requests).toContainEqual({ MenuSelect: { group: "active", index: 5, id: "model-id" } })
     expect(requests.some((r) => JSON.stringify(r).includes('"Up"') || JSON.stringify(r).includes('"Down"'))).toBe(false)
   } finally { await act(async () => { await view.dispose() }) }
+})
+
+test("inactive panel titles accent only their existing shortcut letter", async () => {
+  const theme = themeFor("dark")
+  const view = await testRender(<Fullscreen title="Settings" hint="Esc back" theme={theme}><Panel title="General" mark={0} hot={false} theme={theme}><text>Settings fields</text></Panel></Fullscreen>, { width: 50, height: 24 })
+  try {
+    await act(async () => { await view.waitForVisualIdle() })
+    const line = view.captureSpans().lines.find((line) => line.spans.map((s) => s.text).join("").includes("General"))!
+    expect(line.spans.some((span) => span.text === "G" && rgbToHex(span.fg).toLowerCase() === theme.accent)).toBe(true)
+    expect(line.spans.some((span) => span.text.includes("eneral") && rgbToHex(span.fg).toLowerCase() === theme.dim)).toBe(true)
+  } finally { await act(async () => { await view.dispose() }) }
+})
+
+for (const [width, height] of [[50, 24], [80, 18], [100, 40], [160, 45]]) {
+  test(`management actions sit in the top-right border at ${width}×${height}`, async () => {
+    const fixtures = [
+      { mode: { Settings: { page: "providers", providers: [{ name: "Example", endpoint: "https://example.test/v1", api_type: "openai" }], prov_sel: 0 } }, title: "Providers", label: "+ Add (a)", code: "a" },
+      { mode: { Settings: { page: "oauth", oauth_flow: { kind: "idle" }, oauth_drafts: [], oauth_sel: 0 } }, title: "OAuth", label: "+ Connect (a)", code: "a" },
+      { mode: { Settings: { page: "models", model_filter: "all", models: [], model_sel: 0 } }, title: "Models", label: "+ Session", index: 1 },
+      { mode: { Agents: { mode: "browse", agents: [] } }, title: "Agents", label: "+ New (n)", code: "n" },
+      { mode: { Mcp: { mode: "browse", servers: [] } }, title: "MCP servers", label: "+ New (n)", code: "n" },
+      { mode: { Remote: { sub: "manage:browse", hosts: [], filtered: [] } }, title: "Hosts", label: "+ New (n)", code: "n" },
+    ]
+    for (const fixture of fixtures) {
+      const requests: unknown[] = []
+      const view = await testRender(<ModeSurface mode={fixture.mode} theme={themeFor("dark")} columns={width!} onMove={() => {}} send={(r) => requests.push(r)} />, { width, height })
+      try {
+        for (let pass = 0; pass < 4; pass++) await act(async () => { await view.waitForVisualIdle() })
+        const frame = view.captureCharFrame()
+        const lines = frame.split("\n")
+        const y = lines.findIndex((line) => line.includes(fixture.title) && line.includes("╭"))
+        expect(lines[y]).toContain(fixture.label)
+        expect(lines[y]!.indexOf(fixture.label)).toBeGreaterThan(width! / 2)
+        expect(frame.split(fixture.label).length - 1).toBe(1)
+        expect(frame).not.toContain("+ Add provider")
+        expect(frame).not.toContain("+ Add global model")
+        expect(frame).not.toContain("+ Connect a provider")
+        if (fixture.title === "Providers") {
+          expect(frame.split("https://example.test/v1").length - 1).toBe(1)
+          expect(frame).not.toContain("openai")
+        }
+        await act(async () => { await view.mockMouse.click(lines[y]!.indexOf(fixture.label) + 2, y) })
+        if (fixture.code) expect(requests).toContainEqual({ SendKey: { code: { Char: fixture.code }, mods: 0 } })
+        else {
+          expect(requests[0]).toMatchObject({ MenuSelect: { group: "active", index: fixture.index } })
+          expect(requests[1]).toEqual({ SendKey: { code: "Enter", mods: 0 } })
+        }
+      } finally { await act(async () => { await view.dispose() }) }
+    }
+  })
+
+  test(`toggle layouts stay aligned and visible at ${width}×${height}`, async () => {
+    const pressed: number[] = []
+    const view = await testRender(<Fullscreen title="Toggles" hint="Esc back" theme={themeFor("dark")}><Panel title="Controls" hot theme={themeFor("dark")}><Lines rows={[
+      { label: "Main role", toggle: true, toggleLayout: "before" },
+      { label: "Tool permission", toggle: false, toggleLayout: "before" },
+      { label: "Awareness", toggle: true },
+      { label: "A long setting name that must not push its switch off the screen".repeat(3), detail: "status ".repeat(40), toggle: false },
+    ]} selected={0} theme={themeFor("dark")} onPress={(index) => pressed.push(index)} /></Panel></Fullscreen>, { width, height })
+    try {
+      for (let pass = 0; pass < 3; pass++) await act(async () => { await view.waitForVisualIdle() })
+      const lines = view.captureCharFrame().split("\n")
+      expect(lines.find((line) => line.includes("Main role"))).toContain("[━●] Main role")
+      expect(lines.find((line) => line.includes("Tool permission"))).toContain("[●─] Tool permission")
+      const enabled = lines.find((line) => line.includes("Awareness"))!
+      const disabled = lines.find((line) => line.includes("A long setting"))!
+      expect(enabled.indexOf("[━●]")).toBe(disabled.indexOf("[●─]"))
+      expect(enabled.indexOf("[━●]")).toBeGreaterThan(width! - 10)
+      const y = lines.findIndex((line) => line.includes("Main role"))
+      await act(async () => { await view.mockMouse.click(lines[y]!.indexOf("[━●]") + 1, y) })
+      expect(pressed).toEqual([0])
+    } finally { await act(async () => { await view.dispose() }) }
+  })
+}
+
+test("all toggle families share the switch glyph and keep their selection handlers", async () => {
+  const fixtures = [
+    { mode: { Settings: { page: "model_form", model_modal: { role_picker: { checked: [true, false, false, false, false], cursor: 0 } } } }, label: "main", layout: "before" },
+    { mode: { Agents: { mode: "edit", tool_picker: { options: ["Hidden tool", "Visible tool"], checked: [true, false], filter: "Visible", cursor: 0 } } }, label: "Visible tool", layout: "before" },
+    { mode: { Skill: { all: [{ name: "Example skill", description: "Skill description", is_active: true }], selected: 0 } }, label: "Example skill", layout: "before" },
+    { mode: { Extensions: { mode: "use", rows: [{ name: "Example extension", active: true }], list_sel: 0 } }, label: "Example extension", layout: "before" },
+    { mode: { Mcp: { mode: "edit", field: "enabled", draft_enabled: true, draft_transport: "stdio" } }, label: "enabled", layout: "right" },
+    { mode: { Mcp: { mode: "browse", servers: [{ name: "Example server", enabled: true }], list_sel: 0 } }, label: "Example server", layout: "right" },
+    { mode: { Security: { status: { running: true, tools: [{ name: "Example tool", domain: "filesystem" }] }, selected: 0 } }, label: "Security daemon", layout: "right" },
+  ]
+  for (const fixture of fixtures) {
+    const requests: unknown[] = []
+    const moved: number[] = []
+    const view = await testRender(<ModeSurface mode={fixture.mode} theme={themeFor("dark")} columns={80} onMove={(index) => moved.push(index)} send={(request) => requests.push(request)} />, { width: 80, height: 24 })
+    try {
+      for (let pass = 0; pass < 4; pass++) await act(async () => { await view.waitForVisualIdle() })
+      const frame = view.captureCharFrame()
+      expect(frame).not.toMatch(/[☑☐]/)
+      const lines = frame.split("\n")
+      const y = lines.findIndex((line) => line.includes(fixture.label))
+      const line = lines[y]!
+      const x = Math.max(line.indexOf("[━●]"), line.indexOf("[●─]"))
+      expect(x).toBeGreaterThanOrEqual(0)
+      if (fixture.layout === "before") expect(x).toBeLessThan(line.indexOf(fixture.label))
+      else expect(x).toBeGreaterThan(line.indexOf(fixture.label))
+      if (fixture.label === "Visible tool") expect(line).toContain("[●─]")
+      await act(async () => { await view.mockMouse.click(x + 1, y) })
+      expect(requests.length + moved.length).toBeGreaterThan(0)
+    } finally { await act(async () => { await view.dispose() }) }
+  }
 })

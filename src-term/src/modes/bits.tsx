@@ -75,7 +75,12 @@ export function Overlay({
   )
 }
 
-export type Line = { label: string; detail?: string; dim?: boolean; color?: keyof Theme; badge?: { text: string; role: "success" | "warn" | "error" | "info" | "dim" }; toggle?: boolean }
+export type Line = { label: string; detail?: string; dim?: boolean; color?: keyof Theme; badge?: { text: string; role: "success" | "warn" | "error" | "info" | "dim" }; toggle?: boolean; toggleLayout?: "before" | "right" }
+
+/** Shared on/off glyph for both toggle layouts; focus never changes its state color. */
+export function Toggle({ checked, theme }: { checked: boolean; theme: Theme }) {
+  return <text width={4} height={1} flexShrink={0} fg={checked ? theme.success : theme.dim} wrapMode="none">{checked ? "[━●]" : "[●─]"}</text>
+}
 
 /** Read the actual layout, including subsequent terminal and sibling resizes. */
 export function useBodyHeight(fallback = 1) {
@@ -161,14 +166,19 @@ function LineRow({
   const [hot, setHot] = useState(false)
   const labelColor = on || hot ? theme.accent : row.dim ? theme.dim : theme.fg
   const detailColor = row.color ? theme[row.color] as string : !full && on ? theme.success : theme.dim
+  const marker = on ? full ? "› " : "● " : "  "
+  const content = <><span fg={labelColor}>{row.label}</span>
+    {row.badge ? <span fg={theme[row.badge.role]}>{`  ${row.badge.text}`}</span> : null}
+    {row.detail ? <span fg={detailColor}>{`  ${row.detail}`}</span> : null}
+  </>
   return (
-    <box width="100%" height={1} flexShrink={0} backgroundColor={full ? on || hot ? theme.panel : theme.bg : undefined} paddingLeft={1} paddingRight={1} onMouseOver={() => setHot(true)} onMouseOut={() => setHot(false)} onMouseDown={onPress}>
-      <text wrapMode="none">
-        <span fg={on ? theme.accent : theme.dim}>{on ? full ? "› " : "● " : "  "}</span><span fg={labelColor}>{row.label}</span>
-        {row.toggle != null ? <span fg={row.toggle ? theme.success : theme.dim}>{row.toggle ? "  [━●] on" : "  [●─] off"}</span> : null}
-        {row.badge ? <span fg={theme[row.badge.role]}>{`  ${row.badge.text}`}</span> : null}
-        {row.detail ? <span fg={detailColor}>{`  ${row.detail}`}</span> : null}
-      </text>
+    <box width="100%" height={1} flexShrink={0} flexDirection={row.toggle != null ? "row" : "column"} backgroundColor={full ? on || hot ? theme.panel : theme.bg : undefined} paddingLeft={1} paddingRight={1} onMouseOver={() => setHot(true)} onMouseOut={() => setHot(false)} onMouseDown={onPress}>
+      {row.toggle != null ? <>
+        <text width={2} height={1} flexShrink={0} fg={on ? theme.accent : theme.dim}>{marker}</text>
+        {row.toggleLayout === "before" ? <box width={5} height={1} flexShrink={0}><Toggle checked={row.toggle} theme={theme} /></box> : null}
+        <box flexGrow={1} flexBasis={0} minWidth={0} overflow="hidden"><text wrapMode="none">{content}</text></box>
+        {row.toggleLayout !== "before" ? <box width={5} height={1} flexShrink={0} paddingLeft={1}><Toggle checked={row.toggle} theme={theme} /></box> : null}
+      </> : <text wrapMode="none"><span fg={on ? theme.accent : theme.dim}>{marker}</span>{content}</text>}
     </box>
   )
 }
@@ -191,13 +201,14 @@ export function FieldList({
   editing?: boolean
   onPress: (index: number) => void
 }) {
+  const full = useContext(FullscreenContext)
   const { ref, height } = useBodyHeight(12)
   const start = paletteWindow(0, selected, rows.length, Math.max(1, Math.floor(height / 3)))
   return (
     <box ref={ref} flexDirection="column" flexGrow={1} flexBasis={0} minHeight={0} overflow="hidden">
-      {rows.slice(start, start + Math.max(1, Math.floor(height / 3))).map((row, offset) => (
-        <InputField key={start + offset} field={row.label} label={row.label} value={row.detail ?? ""} active={start + offset === selected} editing={editing && start + offset === selected} theme={theme} onPress={() => onPress(start + offset)} />
-      ))}
+      {rows.slice(start, start + Math.max(1, Math.floor(height / 3))).map((row, offset) => row.toggle != null
+        ? <box key={start + offset} height={3} flexShrink={0} paddingTop={1} paddingBottom={1}><LineRow row={row} on={start + offset === selected} theme={theme} full={full} onPress={() => onPress(start + offset)} /></box>
+        : <InputField key={start + offset} field={row.label} label={row.label} value={row.detail ?? ""} active={start + offset === selected} editing={editing && start + offset === selected} theme={theme} onPress={() => onPress(start + offset)} />)}
     </box>
   )
 }
@@ -233,14 +244,18 @@ export function Split({
 
 export function Panel({
   title,
+  mark,
+  actions,
   maxLines,
   hot,
   theme,
   children,
 }: {
   title: string
-  /** Accepted for older callers; panel titles have no decorative mnemonic. */
+  /** Index of an existing shortcut letter in the title. */
   mark?: number
+  /** Clickable actions placed in the top-right border. */
+  actions?: ReactNode
   /** Content rows. When set, the box does not grow past this. */
   maxLines?: number
   hot: boolean
@@ -249,11 +264,6 @@ export function Panel({
 }) {
   return (
     <box
-      border
-      borderStyle="rounded"
-      borderColor={hot ? theme.accent : theme.dim}
-      title={` ${title} `}
-      titleColor={hot ? theme.accent : theme.dim}
       flexGrow={maxLines == null ? 1 : 0}
       flexBasis={maxLines == null ? 0 : undefined}
       flexShrink={maxLines == null ? 1 : 0}
@@ -263,7 +273,11 @@ export function Panel({
       overflow="hidden"
       flexDirection="column"
     >
-      {children}
+      <box border borderStyle="rounded" borderColor={hot ? theme.accent : theme.dim} title={` ${title} `} titleColor={mark != null ? hot ? theme.fg : theme.dim : hot ? theme.accent : theme.dim} flexGrow={1} flexBasis={0} minHeight={0} minWidth={0} overflow="hidden" flexDirection="column">
+        {children}
+      </box>
+      {mark != null && mark >= 0 && mark < title.length ? <text position="absolute" left={3 + mark} top={0} height={1} width={1} zIndex={1} fg={theme.accent} bg={theme.bg}>{title[mark]}</text> : null}
+      {actions ? <box position="absolute" right={2} top={0} height={1} flexDirection="row" backgroundColor={theme.bg} zIndex={1}>{actions}</box> : null}
     </box>
   )
 }

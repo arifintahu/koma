@@ -46,7 +46,6 @@ export function settingsView(
   if (page === "menu") return pageOf("Settings", "↑↓ select · enter open · esc back", <Lines rows={["Appearance", "General", "Providers", "OAuth", "Models"].map((label) => ({ label }))} selected={num(body.menu_sel)} theme={theme} onPress={_onMove} />)
   if (page === "providers" || page === "oauth" || page === "models") {
     return pageOf(tabs(tabIndex(page), theme, send), keyBar(theme, send, [
-      { key: "a", action: "add" },
       { key: "enter", action: page === "oauth" ? "connect" : "edit" },
       { key: "ctrl+x", action: "delete" },
       { key: "esc", action: "back" },
@@ -78,7 +77,7 @@ function QuickDash({ body, theme, wide, send }: { body: Rec; theme: Theme; wide:
   const summaries = wide && height >= mainHeight + 7 && !editing && !body.list_editing
   const focus = str(body.quick_focus) || "appearance"
   const appearanceBox = (
-    <Panel title="Appearance" hot={focus === "appearance"} theme={theme}>
+    <Panel title="Appearance" mark={0} hot={focus === "appearance"} theme={theme}>
       <Lines
         rows={PALETTE_NAMES.map((name) => ({ label: name, detail: name === (str(body.palette) || "dark") ? "current" : undefined }))}
         selected={focus === "appearance" ? num(body.palette_sel) : -1}
@@ -91,7 +90,7 @@ function QuickDash({ body, theme, wide, send }: { body: Rec; theme: Theme; wide:
     </Panel>
   )
   const generalBox = (
-    <Panel title="General" hot={focus === "general" || Boolean(body.list_editing)} theme={theme}>
+    <Panel title="General" mark={0} hot={focus === "general" || Boolean(body.list_editing)} theme={theme}>
       <GeneralFields body={body} theme={theme} focused={focus === "general"} send={send} />
     </Panel>
   )
@@ -122,22 +121,13 @@ function providerDash(body: Rec, theme: Theme, wide: boolean, send: (request: un
     detail: str(row.endpoint),
     dim: Boolean(row.ext_id),
   }))
-  lines.push({ label: "+ Add provider", detail: "API connection" })
-  const current = list[selected]
-  return pair(
-    wide,
-    theme,
-    "providers",
-    <Lines rows={lines} selected={selected} theme={theme} onPress={(index) => nudge(send, selected, index)} />,
-    [
-      current ? str(current.name) : list.length ? "Another provider" : "No providers yet",
-      current ? str(current.endpoint) : "Add a provider to connect an API endpoint",
-      current ? str(current.api_type) : "",
-      current?.ext_id ? "extension managed" : "",
-      body.prov_delete_armed ? "ctrl+x again deletes" : "",
-      str(body.prov_msg),
-    ].filter(Boolean),
-  )
+  return <box flexGrow={1} flexBasis={0} minHeight={0} flexDirection="column">
+    <Panel title="Providers" hot theme={theme} actions={<Action label="+ Add (a)" primary={selected === list.length} theme={theme} onPress={() => sendKey(send, { Char: "a" })} />}>
+      <Lines rows={lines} selected={selected < list.length ? selected : -1} theme={theme} onPress={(index) => nudge(send, selected, index)} />
+    </Panel>
+    {body.prov_delete_armed ? <Note text="Ctrl+X again deletes this provider" theme={theme} color={theme.warn} /> : null}
+    {str(body.prov_msg) ? <Note text={str(body.prov_msg)} theme={theme} /> : null}
+  </box>
 }
 
 function oauthDash(body: Rec, theme: Theme, wide: boolean, send: (request: unknown) => void) {
@@ -149,13 +139,12 @@ function oauthDash(body: Rec, theme: Theme, wide: boolean, send: (request: unkno
     label: str(row.label) || str(row.provider) || "connection",
     detail: str(row.status) || str(row.provider),
   }))
-  lines.push({label:"+ Connect a provider",color:"accent"})
-  const current = list[selected]
-  return pair(wide, theme, "oauth", <Lines rows={lines} selected={selected} theme={theme} onPress={(index) => nudge(send, selected, index)} />, [
-    current ? str(current.label) || str(current.provider) : list.length ? "Another connection" : "No connections yet",
-    current ? str(current.status) || "signed in" : "a starts a sign-in",
-    body.oauth_armed != null && body.oauth_armed !== false ? "ctrl+x again deletes" : "",
-  ].filter(Boolean))
+  return <box flexGrow={1} flexBasis={0} minHeight={0} flexDirection="column">
+    <Panel title="OAuth" hot theme={theme} actions={<Action label="+ Connect (a)" primary={selected === list.length} theme={theme} onPress={() => sendKey(send, { Char: "a" })} />}>
+      <Lines rows={lines} selected={selected < list.length ? selected : -1} theme={theme} onPress={(index) => nudge(send, selected, index)} />
+    </Panel>
+    {body.oauth_armed != null && body.oauth_armed !== false ? <Note text="Ctrl+X again deletes this connection" theme={theme} color={theme.warn} /> : null}
+  </box>
 }
 
 function modelDash(body: Rec, theme: Theme, wide: boolean, send: (request: unknown) => void) {
@@ -163,23 +152,16 @@ function modelDash(body: Rec, theme: Theme, wide: boolean, send: (request: unkno
   const list = rows(body.models).filter((row) => filter === "all" || (filter === "local" ? flag(row.session_only) : !flag(row.session_only)))
   const selected = num(body.model_sel)
   const lines: Line[] = [
-    { label: "+ Add global model" }, { label: "+ Add session model" },
     ...["all", "local", "global"].map((name) => ({ label: `Filter: ${name}`, detail: name === filter ? "current" : "" })),
     ...list.map((row) => ({ label: str(row.name) || str(row.model_id), detail: strings(row.roles).join(" ") || (flag(row.session_only) ? "session" : "global") })),
   ]
-  const current = list[selected - 5]
-  const move = (index: number) => select(send, index)
-  return pair(wide, theme, "Models", <Lines rows={lines} selected={selected} theme={theme} onPress={move} />, [
-    current ? str(current.name) : lines[selected]?.label || "Models",
-    current ? str(current.model_id) : "Enter opens the selected action",
-    current ? `Roles  ${strings(current.roles).join(", ") || "none"}` : "Global models are available in every session.",
-    current?.route ? `Route  ${str(current.route)}` : "",
-    body.model_delete_armed ? "Press Ctrl+X again to delete this model" : "",
-  ].filter(Boolean))
-}
-
-function pair(wide: boolean, theme: Theme, title: string, list: ReactNode, detail: string[]) {
-  return <box flexDirection="column" flexGrow={1} flexBasis={0} minHeight={0}><Panel title={title} hot theme={theme}>{list}</Panel><box flexDirection="column" flexShrink={0}>{detail.slice(1).map((line, i) => <Note key={i} text={line} theme={theme} />)}</box></box>
+  const add = (index: number) => { select(send, index); sendKey(send, "Enter") }
+  return <box flexGrow={1} flexBasis={0} minHeight={0} flexDirection="column">
+    <Panel title="Models" hot theme={theme} actions={<><Action label="+ Global (a)" primary={selected === 0} theme={theme} onPress={() => add(0)} /><Action label="+ Session" primary={selected === 1} theme={theme} onPress={() => add(1)} /></>}>
+      <Lines rows={lines} selected={selected >= 2 ? selected - 2 : -1} theme={theme} onPress={(index) => select(send, index + 2)} />
+    </Panel>
+    {body.model_delete_armed ? <Note text="Ctrl+X again deletes this model" theme={theme} color={theme.warn} /> : null}
+  </box>
 }
 
 function quickFooter(body: Rec, theme: Theme, send: (request: unknown) => void) {
@@ -323,7 +305,7 @@ function modelForm(body: Rec, theme: Theme, send: (request: unknown) => void) {
   if (picker) {
     const checked = Array.isArray(picker.checked) ? picker.checked : []
     return <box flexDirection="column" flexGrow={1} flexBasis={0} minHeight={0} gap={1}>
-      <Panel title="Model roles" hot theme={theme}><Lines rows={ROLES.map((role, index) => ({ label: `${checked[index] ? "☑" : "☐"} ${role}` }))} selected={num(picker.cursor)} theme={theme} onPress={(index) => nudge(send, num(picker.cursor), index)} /></Panel>
+      <Panel title="Model roles" hot theme={theme}><Lines rows={ROLES.map((role, index) => ({ label: role, toggle: flag(checked[index]), toggleLayout: "before" as const }))} selected={num(picker.cursor)} theme={theme} onPress={(index) => nudge(send, num(picker.cursor), index)} /></Panel>
       <box flexDirection="row"><Action label="Toggle role" theme={theme} onPress={() => sendKey(send, { Char: " " })} /><Action label="Done" primary theme={theme} onPress={() => sendKey(send, "Enter")} /></box>
     </box>
   }

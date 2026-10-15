@@ -18,6 +18,7 @@ import { QuitScreen, quitState } from "./quit.tsx"
 import { rewindOf } from "./screens.tsx"
 import { DaemonLink } from "./socket.ts"
 import { themeFor, type Theme } from "./theme.ts"
+import type { LocalNotice } from "./toast.tsx"
 
 export function SessionScreen({
   id,
@@ -44,7 +45,7 @@ export function SessionScreen({
   const [snap, setSnap] = useState<Snapshot | null>(null)
   const [phase, setPhase] = useState<"connecting" | "live" | "error">("connecting")
   const [error, setError] = useState("")
-  const [notice, setNotice] = useState<string | null>(null)
+  const [notice, setNotice] = useState<LocalNotice | null>(null)
   const linkRef = useRef<DaemonLink | null>(null)
   const formGuard = useRef(new FormGuard())
   const [leavePrompt, setLeavePrompt] = useState(false)
@@ -109,7 +110,7 @@ export function SessionScreen({
           const text = transcriptOf(snapRef.current)
           if (text) {
             copyText(text)
-            setNotice("copied the transcript")
+            setNotice({ id: crypto.randomUUID(), text: "copied the transcript" })
           }
           return
         }
@@ -356,6 +357,7 @@ export function SessionScreen({
         rewind={rewind}
         overlay={overlay}
         notice={notice}
+        onNoticeDismiss={() => setNotice((current) => current?.id === notice?.id ? null : current)}
         send={send}
         sendTracked={sendTracked}
         onFlushError={(text) => setError(text)}
