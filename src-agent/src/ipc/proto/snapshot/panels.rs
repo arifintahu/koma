@@ -19,6 +19,10 @@ use super::settings::{
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[allow(dead_code)]
 pub struct McpSnapshot {
+    #[serde(default)]
+    pub errors: std::collections::HashMap<String, String>,
+    #[serde(default)]
+    pub available: Option<bool>,
     pub servers: Vec<crate::model::app_config::McpServerEntry>,
     pub list_sel: usize,
     pub in_detail: bool,

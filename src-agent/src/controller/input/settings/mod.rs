@@ -8,7 +8,7 @@ mod modals;
 mod nav;
 
 use super::{is_ctrl, Action};
-use crate::app::mode::settings::{OAuthFlowState, SettingsPage};
+use crate::app::mode::settings::{OAuthFlowState, QuickFocus, SettingsPage};
 use crate::app::mode::{SettingField, SettingsState};
 use crate::app::state::AppStateRest;
 use crate::model::app_config::OAuthProvider;
@@ -66,8 +66,10 @@ pub fn handle_settings(s: &mut SettingsState, rest: &mut AppStateRest, key: KeyE
         handle_list_editing(s, key)
     } else if s.editing {
         match key.code {
-            KeyCode::Enter | KeyCode::Esc => {
-                s.editing = false;
+            KeyCode::Enter | KeyCode::Esc | KeyCode::Tab | KeyCode::BackTab => {
+                s.finish_edit(key.code != KeyCode::Esc);
+                if key.code == KeyCode::Tab { s.down(); }
+                if key.code == KeyCode::BackTab { s.up(); }
                 Action::None
             }
             KeyCode::Backspace => {
@@ -82,8 +84,34 @@ pub fn handle_settings(s: &mut SettingsState, rest: &mut AppStateRest, key: KeyE
         }
     } else {
         // Page-specific navigation.
+        if matches!(
+            s.page,
+            SettingsPage::Quick | SettingsPage::Providers | SettingsPage::OAuth | SettingsPage::Models
+        ) {
+            match key.code {
+                KeyCode::Char('1') => {
+                    s.page = SettingsPage::Quick;
+                    return Action::None;
+                }
+                KeyCode::Char('2') => {
+                    s.page = SettingsPage::Providers;
+                    return Action::None;
+                }
+                KeyCode::Char('3') => {
+                    s.page = SettingsPage::OAuth;
+                    return Action::None;
+                }
+                KeyCode::Char('4') => {
+                    s.page = SettingsPage::Models;
+                    return Action::None;
+                }
+                KeyCode::Esc => return Action::SaveSettings,
+                _ => {}
+            }
+        }
         match s.page {
             SettingsPage::Menu => handle_menu(s, key),
+            SettingsPage::Quick => handle_quick(s, rest, key),
             SettingsPage::Appearance => handle_appearance_page(s, rest, key),
             SettingsPage::General => handle_general_page(s, rest, key),
             SettingsPage::Providers => handle_providers_nav(s, key),
@@ -94,6 +122,24 @@ pub fn handle_settings(s: &mut SettingsState, rest: &mut AppStateRest, key: KeyE
                 Action::None
             }
         }
+    }
+}
+
+/// Quick dashboard: `a` appearance, `g` general, arrows and Enter inside that box.
+fn handle_quick(s: &mut SettingsState, rest: &mut AppStateRest, key: KeyEvent) -> Action {
+    match key.code {
+        KeyCode::Char('a') | KeyCode::Char('A') => {
+            s.quick_focus = QuickFocus::Appearance;
+            Action::None
+        }
+        KeyCode::Char('g') | KeyCode::Char('G') => {
+            s.quick_focus = QuickFocus::General;
+            Action::None
+        }
+        _ => match s.quick_focus {
+            QuickFocus::Appearance => handle_appearance_page(s, rest, key),
+            QuickFocus::General => handle_general_page(s, rest, key),
+        },
     }
 }
 
@@ -143,7 +189,7 @@ fn handle_menu(s: &mut SettingsState, key: KeyEvent) -> Action {
 fn handle_appearance_page(s: &mut SettingsState, rest: &mut AppStateRest, key: KeyEvent) -> Action {
     match key.code {
         KeyCode::Esc => {
-            s.page = SettingsPage::Menu;
+            s.page = SettingsPage::Quick;
             Action::None
         }
         KeyCode::Up => {
@@ -173,7 +219,7 @@ fn handle_appearance_page(s: &mut SettingsState, rest: &mut AppStateRest, key: K
 fn handle_general_page(s: &mut SettingsState, rest: &mut AppStateRest, key: KeyEvent) -> Action {
     match key.code {
         KeyCode::Esc => {
-            s.page = SettingsPage::Menu;
+            s.page = SettingsPage::Quick;
             Action::None
         }
         KeyCode::Up => {
@@ -182,6 +228,20 @@ fn handle_general_page(s: &mut SettingsState, rest: &mut AppStateRest, key: KeyE
         }
         KeyCode::Down | KeyCode::Tab => {
             s.down();
+            Action::None
+        }
+        KeyCode::Char(' ') => {
+            let f = s.current_field();
+            if matches!(
+                f,
+                SettingField::AwarenessEnabled
+                    | SettingField::ClassifierEnabled
+                    | SettingField::ShortSendEnabled
+                    | SettingField::BashSaving
+                    | SettingField::CodingAutosave
+            ) {
+                s.enter();
+            }
             Action::None
         }
         KeyCode::Enter => {
@@ -219,7 +279,7 @@ fn handle_general_page(s: &mut SettingsState, rest: &mut AppStateRest, key: KeyE
 fn handle_oauth_page(s: &mut SettingsState, key: KeyEvent) -> Action {
     match key.code {
         KeyCode::Esc => {
-            s.page = SettingsPage::Menu;
+            s.page = SettingsPage::Quick;
             Action::None
         }
         KeyCode::Up => {
@@ -228,6 +288,10 @@ fn handle_oauth_page(s: &mut SettingsState, key: KeyEvent) -> Action {
         }
         KeyCode::Down | KeyCode::Tab => {
             s.oauth_down();
+            Action::None
+        }
+        KeyCode::Char('a') | KeyCode::Char('+') => {
+            s.oauth_open_picker();
             Action::None
         }
         KeyCode::Enter => {

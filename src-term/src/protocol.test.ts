@@ -67,11 +67,14 @@ describe("build skew", () => {
 })
 
 describe("theme", () => {
-  test("keeps the requested name and paints dark until that palette is filled", () => {
+  test("paints the named palette and falls back to dark", () => {
     const theme = themeFor("forest")
     expect(theme.name).toBe("forest")
-    expect(theme.bg).toBe("#000000")
-    expect(theme.accent).toBe("#39ff14")
+    expect(theme.bg).toBe("#333d29")
+    expect(theme.accent).toBe("#a68a64")
+    const unknown = themeFor("nope")
+    expect(unknown.name).toBe("nope")
+    expect(unknown.bg).toBe("#000000")
     expect(themeFor(undefined).name).toBe("dark")
   })
 })

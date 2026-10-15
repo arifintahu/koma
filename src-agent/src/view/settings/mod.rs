@@ -133,7 +133,7 @@ pub fn draw(
     });
 
     match st.page {
-        SettingsPage::Menu => {
+        SettingsPage::Menu | SettingsPage::Quick => {
             pages::draw_menu(frame, st.menu_sel, palette, body);
         }
         SettingsPage::Appearance => {
@@ -349,7 +349,7 @@ pub fn draw(
 /// Build the breadcrumb string for the header.
 fn breadcrumb_text(page: SettingsPage) -> String {
     match page {
-        SettingsPage::Menu => "settings".to_string(),
+        SettingsPage::Menu | SettingsPage::Quick => "settings".to_string(),
         SettingsPage::Appearance => "settings > Appearance".to_string(),
         SettingsPage::General => "settings > General".to_string(),
         SettingsPage::Providers => "settings > Providers".to_string(),
@@ -404,6 +404,7 @@ fn footer_hint(st: &SettingsState) -> String {
 
     match st.page {
         SettingsPage::Menu => "1-5 select · esc save & close".to_string(),
+        SettingsPage::Quick => "1-4 tab · a appearance · g general · esc save".to_string(),
         SettingsPage::Appearance => "↑↓ palette · enter apply · esc back".to_string(),
         SettingsPage::General => "↑↓ field · enter edit/toggle · esc back".to_string(),
         SettingsPage::Providers => {

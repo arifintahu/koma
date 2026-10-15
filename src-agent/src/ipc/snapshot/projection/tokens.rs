@@ -10,6 +10,7 @@ use crate::model::app_config::{ApiType, McpTransport, ModelRole, ThemeMode};
 pub fn settings_page_token(p: SettingsPage) -> &'static str {
     match p {
         SettingsPage::Menu => "menu",
+        SettingsPage::Quick => "quick",
         SettingsPage::Appearance => "appearance",
         SettingsPage::General => "general",
         SettingsPage::Providers => "providers",

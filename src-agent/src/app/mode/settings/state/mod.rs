@@ -28,19 +28,25 @@ use super::{
 
 /// Working state for the in-app `/settings` dashboard.
 ///
-/// Holds editable *drafts* of every settable value; nothing is persisted until
-/// the user saves (Esc from the menu), at which point the runtime reads these
-/// fields back out and applies them.
+/// Holds settings and the current unconfirmed text/form edit. Terminal controls
+/// persist activated choices and confirmed edits without leaving the dashboard.
 ///
 /// Navigation is now PAGE-BASED: `page` tracks which full-screen page is visible
 /// (Menu, Appearance, General, Providers, OAuth, Models, ProviderForm, ModelForm).
 /// Esc goes back one level; Esc from the menu saves and closes.
 #[derive(Debug, Clone)]
 pub struct SettingsState {
+    pub clean_fingerprint: u64,
+    /// Original text for cancelling only the current unconfirmed edit.
+    pub edit_original: Option<String>,
     pub web_search: crate::model::web_search::SearchStatus,
     pub search_editor: Option<crate::model::web_search::SearchEditor>,
     /// Which page is currently shown.
     pub page: super::SettingsPage,
+    /// Appearance or general, while `page` is Quick.
+    pub quick_focus: super::QuickFocus,
+    /// When set, saving the provider form replaces this index (delete, then add).
+    pub prov_replace: Option<usize>,
     /// Cursor index on the menu page (0-4, maps to SettingsPage::MENU_ORDER).
     pub menu_sel: usize,
     /// Selected field index within the General page field list.
@@ -150,6 +156,23 @@ pub struct SettingsState {
 }
 
 impl SettingsState {
+
+    /// Draft content only; navigation and live status never dirty a form.
+    pub fn fingerprint(&self) -> u64 {
+        use std::hash::{Hash, Hasher};
+        let mut hash = std::collections::hash_map::DefaultHasher::new();
+        format!("{:?}{:?}{:?}{:?}{:?}{:?}{:?}{:?}{:?}{:?}{:?}{:?}",
+            self.name, self.palette, self.workdir, self.allowed_folders,
+            (self.awareness_enabled, self.classifier_enabled, self.short_send_enabled,
+             self.bash_saving, self.coding_autosave),
+            self.internet_mode, self.mouse_capture, self.subagent_max_turns,
+            self.max_output_tokens, self.providers, self.models,
+            (&self.api_key, &self.model, &self.provider, &self.accent, &self.theme)
+        ).hash(&mut hash);
+        hash.finish()
+    }
+    pub fn dirty(&self) -> bool { self.clean_fingerprint != 0 && self.fingerprint() != self.clean_fingerprint }
+
     /// Build a dashboard pre-populated from the active session and global config.
     ///
     /// Text drafts come from `session.settings` (and `session.name`); the
@@ -251,10 +274,14 @@ impl SettingsState {
                 .iter()
                 .map(|m| map_entry(m, true)),
         );
-        Self {
+        let mut state = Self {
+            clean_fingerprint: 0,
+            edit_original: None,
             web_search: config.web_search.status(),
             search_editor: None,
-            page: super::SettingsPage::Menu,
+            page: super::SettingsPage::Quick,
+            quick_focus: super::QuickFocus::Appearance,
+            prov_replace: None,
             menu_sel: 0,
             field: 0,
             editing: false,
@@ -303,7 +330,9 @@ impl SettingsState {
             model_delete_armed: false,
             model_modal: None,
             model_filter: ModelFilterMode::All,
-        }
+        };
+        state.clean_fingerprint = state.fingerprint();
+        state
     }
 
     /// Return the [`SettingField`] currently highlighted in the General page's
@@ -369,6 +398,20 @@ impl SettingsState {
                 self.editing = true;
             }
         }
+        if self.editing {
+            self.edit_original = self.text_draft_mut(self.current_field()).cloned();
+        }
+    }
+
+    pub fn finish_edit(&mut self, commit: bool) {
+        if let Some(original) = self.edit_original.take() {
+            if !commit {
+                if let Some(value) = self.text_draft_mut(self.current_field()) {
+                    *value = original;
+                }
+            }
+        }
+        self.editing = false;
     }
 
     /// Append `c` to the draft of the current text field.

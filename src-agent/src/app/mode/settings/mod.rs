@@ -22,7 +22,7 @@ pub use model_types::{
     filter_models, ModelDraft, ModelField, ModelFilterMode, ModelModal, ModelRowSel,
     RolePickerState, MODEL_CTRL_SLOTS,
 };
-pub use oauth_types::OAuthFlowState;
+pub use oauth_types::{OAuthFlowState, OAUTH_OPTIONS};
 pub use provider_types::{new_uuid, ModelRole, OAuthDraft, ProviderDraft, ProviderModal};
 
 /// Which page of the settings dashboard is currently shown.
@@ -30,6 +30,8 @@ pub use provider_types::{new_uuid, ModelRole, OAuthDraft, ProviderDraft, Provide
 pub enum SettingsPage {
     /// The main menu: five numbered choices in a bordered box.
     Menu,
+    /// Dense dashboard: appearance, general, and the selected provider, oauth, and model.
+    Quick,
     /// Coolors-style palette-swatch list.
     Appearance,
     /// Session-level field list (name, workdir, toggles, etc.).
@@ -55,4 +57,12 @@ impl SettingsPage {
         SettingsPage::OAuth,
         SettingsPage::Models,
     ];
+}
+
+/// Which box on the Quick dashboard receives arrows and Enter.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum QuickFocus {
+    #[default]
+    Appearance,
+    General,
 }

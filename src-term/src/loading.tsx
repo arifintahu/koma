@@ -50,7 +50,7 @@ export function OpeningSplash({ theme }: { theme: Theme }) {
       </Center>
       <Center>
         <text>
-          <span fg={theme.accent}>{FRAMES[tick]} </span>
+          <span fg={theme.accent}>{FRAMES[Number(tick)]} </span>
           <span fg={theme.fg}>opening session</span>
         </text>
       </Center>

@@ -17,6 +17,7 @@ const BUN_NAME: &str = "bun";
 pub enum TermStart {
     /// Resume hub. No daemon until a row is opened.
     Hub,
+    Remote { target: String, key: Option<String>, port: Option<u16>, session: Option<String> },
     /// A session. `None` means the client mints a fresh id.
     Session(Option<String>),
 }
@@ -57,6 +58,12 @@ pub fn run_term_preview(start: TermStart) -> Result<()> {
     cmd.env("KOMA_BUILD", crate::model::store::build_fingerprint());
     cmd.env("KOMA_VERSION", crate::model::store::current_version());
     match start {
+        TermStart::Remote {target,key,port,session} => {
+            let mut parsed=crate::remote::parse_target(&target)?;
+            if let Some(port)=port {parsed.port=Some(port);}
+            let target=match parsed.port {Some(port)=>format!("{}@{}:{}",parsed.user,parsed.host,port),None=>format!("{}@{}",parsed.user,parsed.host)};
+            cmd.env("KOMA_REMOTE",serde_json::to_string(&serde_json::json!({"target":target,"key":key,"newSession":false,"sessionId":session,"hostId":null}))?);
+        }
         TermStart::Hub => {
             cmd.env("KOMA_START", "hub");
         }
@@ -252,4 +259,40 @@ impl Drop for ForegroundGuard {
             libc::signal(libc::SIGTTOU, libc::SIG_DFL);
         }
     }
+}
+
+/// SSH into a saved host, then return so the OpenTUI client can resume.
+///
+/// Invoked as `koma term-remote --target user@host`. The password never appears
+/// on the command line; the existing TUI auth modal asks when a key is not enough.
+pub fn run_term_remote() -> Result<()> {
+    let mut target_str = None;
+    let mut key = None;
+    let mut session_id = None;
+    let mut host_id = None;
+    let mut new_session = false;
+    let mut args = std::env::args().skip(2);
+    while let Some(flag) = args.next() {
+        match flag.as_str() {
+            "--target" => target_str = args.next(),
+            "--key" => key = blank_to_none(args.next()),
+            "--session" => session_id = blank_to_none(args.next()),
+            "--host" => host_id = blank_to_none(args.next()),
+            "--new" => new_session = true,
+            other => anyhow::bail!("unknown term-remote argument: {other}"),
+        }
+    }
+    let target_str = target_str.ok_or_else(|| anyhow!("term-remote requires --target"))?;
+    let mut parsed = crate::remote::parse_target(&target_str)?;
+    if let Some(ref path) = key {
+        parsed.key = Some(path.clone());
+    }
+    let host = host_id.or_else(|| {
+        crate::remote::secrets::host_id_for_address(&parsed.user, &parsed.host, parsed.port)
+    });
+    crate::remote::term_helper::run(parsed, host, session_id, new_session)
+}
+
+fn blank_to_none(value: Option<String>) -> Option<String> {
+    value.filter(|text| !text.is_empty())
 }

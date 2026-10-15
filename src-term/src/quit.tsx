@@ -31,11 +31,13 @@ export function QuitScreen({
   theme,
   exiting,
   onPick,
+  scope = "session",
 }: {
   state: QuitState
   theme: Theme
   exiting: number | null
   onPick: (index: number) => void
+  scope?: "session" | "hub"
 }) {
   const [tick, setTick] = useState(0)
   useEffect(() => {
@@ -63,10 +65,10 @@ export function QuitScreen({
             : "a quit was requested"}
         </text>
       </box>
-      <box flexGrow={1} flexDirection="column" justifyContent="center" alignItems="center" gap={1}>
+      <box height={8} flexShrink={0} flexDirection="column" gap={1}>
         <text fg={theme.fg}>Do you want to quit?</text>
         {state.working > 0 ? (
-          <text fg={theme.dim}>{`${state.working} ${plural} still working — in-flight work will be lost.`}</text>
+          <text fg={theme.dim}>{scope === "hub" ? `${state.working} ${plural} still working. They will keep running.` : `${state.working} ${plural} still working — in-flight work will be lost.`}</text>
         ) : null}
         <box flexDirection="row" gap={3}>
           {LABELS.map((label, index) => {
@@ -87,7 +89,7 @@ export function QuitScreen({
             )
           })}
         </box>
-        <text fg={theme.dim}>{DESCS[selected] ?? DESCS[2]}</text>
+        <text fg={theme.dim}>{scope === "hub" && selected !== 2 ? "Close this terminal. Sessions keep running." : DESCS[selected] ?? DESCS[2]}</text>
       </box>
       <text fg={theme.dim}>←/→ move · Enter select · k/d/Esc shortcut · click</text>
     </box>

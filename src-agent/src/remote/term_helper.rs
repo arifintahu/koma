@@ -1,0 +1,150 @@
+//! Headless SSH lifecycle for the OpenTUI client. Only framed data crosses these
+//! pipes. No terminal ownership and no credentials in argv.
+use anyhow::{Context, Result};
+use serde::{Deserialize, Serialize};
+use serde_json::Value;
+use tokio::io::{AsyncWriteExt, BufReader};
+use crate::ipc::frame::{read_frame_from, write_frame_to, FrameReader};
+use super::{auth, bootstrap, sessions, ssh, RemoteTarget};
+
+#[derive(Deserialize)]
+pub(crate) enum Control {
+    Password { value: String },
+    Directories { path: String },
+    Sessions,
+    Open { session_id: Option<String>, cwd: Option<String> },
+    Kill { session_id: String },
+    Delete { session_id: String },
+    Frame(Value),
+    Disconnect,
+    Cancel,
+}
+#[derive(Serialize)]
+pub(crate) enum Event {
+    Progress { stage: String },
+    AuthRequired { error: Option<String> },
+    Sessions(sessions::DiscoveredSessions),
+    Directories { path: String, entries: Vec<String> },
+    Connected { session_id: String },
+    Daemon(Value),
+    Error { message: String },
+    Disconnected,
+}
+async fn emit(out: &mut tokio::io::Stdout, event: Event) -> Result<()> {
+    write_frame_to(out, &serde_json::to_vec(&event)?).await?;
+    out.flush().await?;
+    Ok(())
+}
+
+pub(crate) fn run(target: RemoteTarget, host_id: Option<String>, requested: Option<String>, new_session: bool) -> Result<()> {
+    tokio::runtime::Runtime::new()?.block_on(run_async(target, host_id, requested, new_session))
+}
+async fn run_async(target: RemoteTarget, host_id: Option<String>, requested: Option<String>, new_session: bool) -> Result<()> {
+    let mut input = BufReader::new(tokio::io::stdin());
+    let mut reader = FrameReader::new();
+    let mut output = tokio::io::stdout();
+    emit(&mut output, Event::Progress { stage: "authenticating".into() }).await?;
+    let mut resolved = auth::resolve_ssh_auth(&target, host_id.as_deref(), None, auth::InteractivePassword::None).ok();
+    loop {
+        if let Some(ref r) = resolved {
+            emit(&mut output, Event::Progress { stage: "bootstrapping".into() }).await?;
+            // Bootstrap owns provisioning/version checks. Its structured stages are
+            // forwarded from a worker so stdout remains exclusively framed.
+            let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+            let bootstrap_target = target.clone();
+            let password = r.password.clone();
+            let task = tokio::task::spawn_blocking(move || {
+                let auth = password.map(auth::SshAuth::new).transpose()?;
+                bootstrap::ensure_koma_compatible_progress(&bootstrap_target, auth.as_ref(), |stage| {
+                    let _ = tx.send(format!("{stage:?}"));
+                })
+            });
+            while let Some(stage) = rx.recv().await { emit(&mut output, Event::Progress { stage }).await?; }
+            match task.await? {
+                Ok(_) => { auth::remember_password(r); break; }
+                Err(error) => { auth::forget_stored_password(r); emit(&mut output, Event::AuthRequired { error: Some(format!("{error:#}")) }).await?; }
+            }
+            resolved = None;
+        } else { emit(&mut output, Event::AuthRequired { error: None }).await?; }
+        let bytes = read_frame_from(&mut input, &mut reader).await?;
+        match serde_json::from_slice::<Control>(&bytes)? {
+            Control::Password { value } => { resolved = Some(auth::resolve_ssh_auth(&target, host_id.as_deref(), Some(&value), auth::InteractivePassword::None)?); }
+            Control::Cancel => return Ok(()),
+            _ => continue,
+        }
+    }
+    let resolved = resolved.context("SSH authentication was cancelled")?;
+    let auth = resolved.auth.as_ref();
+    let mut bridge: Option<ssh::SshSession> = None;
+    let mut daemon_reader = FrameReader::new();
+    if let Some(session_id) = requested { bridge = Some(open(&target, auth, &session_id, None, &mut output).await?); }
+    else if new_session { directories(&target, auth, "/".into(), &mut output).await?; }
+    else { discovery(&target, auth, &mut output).await?; }
+    loop {
+        let bytes = if let Some(session) = &mut bridge {
+            tokio::select! {
+                command = read_frame_from(&mut input, &mut reader) => command?,
+                frame = read_frame_from(&mut session.stdout, &mut daemon_reader) => {
+                    match frame {
+                        Ok(bytes) => { emit(&mut output, Event::Daemon(serde_json::from_slice(&bytes)?)).await?; }
+                        Err(error) => { emit(&mut output, Event::Error { message: format!("SSH connection lost: {error}") }).await?; bridge = None; }
+                    }
+                    continue;
+                }
+            }
+        } else { read_frame_from(&mut input, &mut reader).await? };
+        let command: Control = serde_json::from_slice(&bytes)?;
+        let result: Result<()> = match command {
+            Control::Cancel => break,
+            Control::Password { .. } => Ok(()),
+            Control::Frame(request) => {
+                if let Some(session) = &mut bridge {
+                    // Validate the vocabulary before forwarding, sharing the same
+                    // frame encoder and daemon event path as local sockets.
+                    let _: crate::ipc::proto::ClientRequest = serde_json::from_value(request.clone())?;
+                    write_frame_to(&mut session.stdin, &serde_json::to_vec(&request)?).await?;
+                }
+                Ok(())
+            }
+            Control::Disconnect => {
+                if let Some(mut session) = bridge.take() {
+                    let _ = write_frame_to(&mut session.stdin, &serde_json::to_vec(&crate::ipc::proto::ClientRequest::Detach)?).await;
+                    let _ = session.stdin.shutdown().await;
+                    crate::app::runtime::stdio_bridge::reap_bridge_child(&mut session.child).await;
+                }
+                daemon_reader = FrameReader::new();
+                emit(&mut output, Event::Disconnected).await
+            }
+            Control::Sessions => discovery(&target, auth, &mut output).await,
+            Control::Directories { path } => directories(&target, auth, path, &mut output).await,
+            Control::Open { session_id, cwd } => {
+                if let Some(mut old) = bridge.take() { let _ = old.child.kill().await; }
+                daemon_reader = FrameReader::new();
+                let id = session_id.unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
+                match open(&target, auth, &id, cwd.as_deref(), &mut output).await { Ok(session) => { bridge = Some(session); Ok(()) }, Err(error) => Err(error) }
+            }
+            Control::Kill { session_id } => { match sessions::kill_session_over_ssh(&target, auth, &session_id) {Ok(())=>discovery(&target, auth, &mut output).await,Err(error)=>Err(error)} }
+            Control::Delete { session_id } => { match sessions::delete_session_over_ssh(&target, auth, &session_id) {Ok(())=>discovery(&target, auth, &mut output).await,Err(error)=>Err(error)} }
+        };
+        if let Err(error) = result { emit(&mut output, Event::Error { message: format!("{error:#}") }).await?; }
+    }
+    if let Some(mut session) = bridge { let _ = session.child.kill().await; }
+    Ok(())
+}
+async fn open(target: &RemoteTarget, auth: Option<&auth::SshAuth>, id: &str, cwd: Option<&str>, out: &mut tokio::io::Stdout) -> Result<ssh::SshSession> {
+    emit(out, Event::Progress { stage: "connecting".into() }).await?;
+    let path = ssh::find_koma(target, auth)?;
+    let mut session = ssh::connect(target, id, auth, cwd, &path)?;
+    if let Some(mut stderr)=session.child.stderr.take() {
+        tokio::spawn(async move {let _=tokio::io::copy(&mut stderr,&mut tokio::io::sink()).await;});
+    }
+    emit(out, Event::Connected { session_id: id.into() }).await?;
+    Ok(session)
+}
+async fn discovery(target: &RemoteTarget, auth: Option<&auth::SshAuth>, out: &mut tokio::io::Stdout) -> Result<()> {
+    emit(out, Event::Sessions(sessions::list_sessions_over_ssh(target, auth)?)).await
+}
+async fn directories(target: &RemoteTarget, auth: Option<&auth::SshAuth>, path: String, out: &mut tokio::io::Stdout) -> Result<()> {
+    let entries = ssh::list_dirs(target, &path, auth)?;
+    emit(out, Event::Directories { path, entries }).await
+}

@@ -1,3 +1,5 @@
+import type { DaemonTransport } from "./transport.ts"
+import { EventDispatcher, PendingOperations } from "./events.ts"
 import { controlOf, encodeFrame, fold, FrameReader, needsRestart, type Control, type Snapshot } from "./protocol.ts"
 import { ensureDaemon, killSession, socketPath } from "./paths.ts"
 
@@ -14,13 +16,20 @@ export class DaemonLink {
   private detached = false
   private restarting = false
   private helloResolve: ((version: string) => void) | null = null
-  private waiters: Array<(result: string) => void> = []
+  readonly events = new EventDispatcher()
+  readonly operations = new PendingOperations()
+  menuVersion = 0
+
   snap: Snapshot | null = null
 
   constructor(
     private readonly onUpdate: (snap: Snapshot | null) => void,
     private readonly onControl: (control: Control) => void,
-  ) {}
+    private readonly transport?: DaemonTransport,
+  ) {
+    this.events.on("MenuCapabilities", ({ version }) => { this.menuVersion = version })
+    this.events.on("MenuResult", (result) => this.operations.complete(result))
+  }
 
   async start(sessionId: string): Promise<void> {
     await this.attach(sessionId, false)
@@ -31,24 +40,33 @@ export class DaemonLink {
     this.socket.write(encodeFrame(request))
   }
 
-  /** Write one request and wait for its Ack, or the Error the daemon sends instead. */
-  sendTracked(request: unknown): Promise<string> {
-    return new Promise((resolve) => {
-      const timer = setTimeout(() => resolve("timed out waiting for the daemon"), 2000)
-      this.waiters.push((result) => {
-        clearTimeout(timer)
-        resolve(result)
-      })
-      this.send(request)
-    })
+  async sendMenu(mode: string, action: import("./modes/actions.ts").MenuAction): Promise<string | null> {
+    if (!this.socket || this.detached) return "Not connected"
+    if (this.menuVersion < 1) return "This daemon needs menu protocol v1. Restart the session daemon with the current Koma build."
+    const request_id = crypto.randomUUID()
+    const pending = this.operations.wait(request_id)
+    this.send({ Menu: { request_id, mode, action } })
+    return pending
+  }
+
+  /** Correlated composer flush; unrelated key Acks cannot submit stale text. */
+  async sendTracked(request: unknown): Promise<string> {
+    if (!this.socket || this.detached) return "not connected"
+    if (this.menuVersion < 1) return "This daemon needs the current menu protocol. Restart it to enable editable inputs."
+    if (!request || typeof request !== "object" || !("ReplaceInput" in request)) return "unsupported tracked operation"
+    const request_id = crypto.randomUUID()
+    const pending = this.operations.wait(request_id)
+    this.send({ ReplaceInputTracked: { request_id, ...(request as { ReplaceInput: { text: string; cursor: number } }).ReplaceInput } })
+    return (await pending) ?? "ack"
   }
 
   private async attach(sessionId: string, restarted: boolean): Promise<void> {
-    await ensureDaemon(sessionId)
+    if (!this.transport?.remote) await ensureDaemon(sessionId)
     if (this.closed) return
     const hello = this.expectHello()
     await this.connect(sessionId)
     const version = await hello
+    if (this.transport?.remote) return
     if (!needsRestart(version, process.env.KOMA_BUILD, restarted) || this.closed) return
     this.restarting = true
     this.dropSocket()
@@ -77,6 +95,15 @@ export class DaemonLink {
   }
 
   private async connect(sessionId: string): Promise<void> {
+    this.reader = new FrameReader()
+    this.seq = -1
+    if (this.transport) {
+      await this.transport.open(sessionId, (data) => this.onData(data), () => this.onClose(), (error) => this.fail(error))
+      this.socket = this.transport
+      this.send({ Attach: { foreground_id: null, cwd: null } })
+      this.send("GetMenuCapabilities")
+      return
+    }
     const socket = await Bun.connect({
       unix: socketPath(sessionId),
       socket: {
@@ -97,6 +124,7 @@ export class DaemonLink {
     this.send({
       Attach: { foreground_id: null, cwd: process.cwd() },
     })
+    this.send("GetMenuCapabilities")
   }
 
   private dropSocket(): void {
@@ -111,6 +139,7 @@ export class DaemonLink {
 
   detach(): void {
     if (this.detached) return
+    this.operations.close()
     this.detached = true
     this.closed = true
     try {
@@ -149,21 +178,14 @@ export class DaemonLink {
       this.seq = envelope.seq
     }
     const event = envelope.event
+    this.events.dispatch(event)
     if (event && typeof event === "object" && "Hello" in (event as object)) {
       const version = String(((event as { Hello?: { version?: string } }).Hello ?? {}).version ?? "")
       this.helloResolve?.(version)
       return
     }
-    if (event === "Ack") {
-      this.waiters.shift()?.("ack")
-      return
-    }
+    if (event === "Ack") return
     const control = controlOf(event)
-    if (control.kind === "error" && this.waiters.length > 0) {
-      this.waiters.shift()?.(control.text)
-      this.onControl(control)
-      return
-    }
     if (control.kind !== "frame") {
       this.onControl(control)
       if (control.kind === "home" || control.kind === "new" || control.kind === "open") return
@@ -178,13 +200,15 @@ export class DaemonLink {
   private onClose(): void {
     if (this.detached || this.restarting) return
     this.closed = true
+    this.operations.close()
     this.socket = null
-    this.onControl({ kind: "error", text: "daemon closed the connection" })
+    this.onControl({ kind: "error", text: this.menuVersion ? "daemon closed the connection" : "The daemon does not support terminal menu protocol v1. Update the host daemon, then reconnect." })
   }
 
   private fail(error: unknown): void {
     if (this.detached || this.restarting) return
     const text = error instanceof Error ? error.message : String(error)
+    this.operations.close(text)
     this.onControl({ kind: "error", text })
   }
 }

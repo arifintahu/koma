@@ -49,12 +49,45 @@ pub fn mode_snapshot(state: &AppState) -> ModeSnapshot {
         Mode::OnboardProvider(op) => {
             ModeSnapshot::OnboardProvider(Box::new(onboard_provider_snapshot(op)))
         }
-        Mode::KeyInput(f) => ModeSnapshot::KeyInput(key_input_snapshot(f)),
+        Mode::KeyInput(f) => {
+            let mut snap = key_input_snapshot(f);
+            if state.rest.models_cache_endpoint.as_deref() == Some(f.endpoint.trim()) {
+                let cache = state.rest.models_cache.as_deref().unwrap_or(&[]);
+                snap.results = crate::app::mode::filter_models(cache, &f.query)
+                    .into_iter()
+                    .map(|i| cache[i].id.clone())
+                    .collect();
+            }
+            ModeSnapshot::KeyInput(snap)
+        }
         Mode::SessionPicker(p) => ModeSnapshot::SessionPicker(picker_snapshot(p)),
         Mode::SessionHub(h) => ModeSnapshot::SessionHub(session_hub_snapshot(h)),
         Mode::Chat => ModeSnapshot::Chat,
         Mode::Loading(s) => ModeSnapshot::Loading(loading_snapshot(s)),
-        Mode::Settings(s) => ModeSnapshot::Settings(Box::new(settings_snapshot(s))),
+        Mode::Settings(s) => {
+            let mut snap = settings_snapshot(s);
+            if let Some(modal) = &s.model_modal {
+                if let Some((endpoint,_))=s.mm_provider_conn() {
+                    snap.model_loading=state.rest.catalogue_fetching.as_deref()==Some(endpoint.as_str()) || state.rest.catalogue_pending.as_ref().is_some_and(|p|p.endpoint==endpoint);
+                    snap.model_error=(state.rest.models_cache_failed.as_deref()==Some(endpoint.as_str())).then(||"Model catalogue fetch failed. Re-select the provider to retry.".into());
+                }
+                let overlay = s.mm_static_overlay_catalogue();
+                let cache = if s.mm_selected_is_static_overlay() {
+                    overlay.as_slice()
+                } else if s.mm_provider_conn().is_some_and(|(ep, _)| {
+                    state.rest.models_cache_endpoint.as_deref() == Some(ep.as_str())
+                }) {
+                    state.rest.models_cache.as_deref().unwrap_or(&[])
+                } else {
+                    &[]
+                };
+                snap.model_results = crate::app::mode::filter_models(cache, &modal.query)
+                    .into_iter()
+                    .map(|i| cache[i].id.clone())
+                    .collect();
+            }
+            ModeSnapshot::Settings(Box::new(snap))
+        }
         Mode::Agents(a) => ModeSnapshot::Agents(Box::new(agents_snapshot(a, state))),
         // The `/mcp` dashboard projects a full wire snapshot, exactly like `/agents`:
         // the server list + drafts + sub-mode/field/transport tokens, plus the LIVE
@@ -110,6 +143,12 @@ pub fn onboard_snapshot(o: &OnboardState) -> OnboardSnapshot {
 
 pub fn onboard_provider_snapshot(op: &OnboardProviderState) -> OnboardProviderSnapshot {
     OnboardProviderSnapshot {
+        results: crate::app::mode::onboard_provider::candidate_model_ids(
+            op.provider,
+            &op.query,
+            &[],
+            None,
+        ),
         step: match op.step {
             OnboardProviderStep::Login => "login",
             OnboardProviderStep::ModelSelect => "model_select",
@@ -137,6 +176,7 @@ pub fn onboard_provider_snapshot(op: &OnboardProviderState) -> OnboardProviderSn
 
 pub fn key_input_snapshot(f: &KeyInputForm) -> KeyInputSnapshot {
     KeyInputSnapshot {
+        results: Vec::new(),
         step: f.step,
         field: f.field,
         endpoint: f.endpoint.clone(),
@@ -170,6 +210,7 @@ pub fn warm_status_wire(s: &WarmStatus) -> WarmStatusWire {
 
 pub fn session_hub_snapshot(h: &SessionHub) -> SessionHubSnapshot {
     SessionHubSnapshot {
+        pending_delete: h.pending_delete.clone(),
         cooking: h.cooking.iter().map(cooking_entry_snapshot).collect(),
         // Project the FILTERED history view (in filtered order) — the client renders
         // it verbatim and `history_selected` already indexes into this filtered list.
@@ -216,9 +257,30 @@ pub fn history_entry_snapshot(e: &HistoryEntry) -> HistoryEntrySnapshot {
 
 pub fn settings_snapshot(st: &SettingsState) -> SettingsSnapshot {
     SettingsSnapshot {
+        model_loading: false,
+        model_error: None,
+        // Compatibility fields for older clients; there is no screen-level
+        // save or theme preview state.
+        dirty: false,
+        confirm_leave: false,
+        leave_selected: 0,
+        saved_palette: st.palette.clone(),
+        model_fields: st
+            .model_modal_fields()
+            .iter()
+            .map(|field| format!("{field:?}").to_lowercase())
+            .collect(),
+        model_results: Vec::new(),
+        model_provider_label: st.mm_provider_label(),
         web_search: st.web_search.clone(),
         search_editor: st.search_editor.as_ref().map(|e| e.masked()),
         page: settings_page_token(st.page).to_string(),
+        quick_focus: match st.quick_focus {
+            crate::app::mode::settings::QuickFocus::Appearance => "appearance",
+            crate::app::mode::settings::QuickFocus::General => "general",
+        }
+        .to_string(),
+        prov_replace: st.prov_replace,
         field: st.field,
         editing: st.editing,
         api_key: st.api_key.clone(),
@@ -325,6 +387,7 @@ pub fn oauth_flow_snapshot(
             ..Default::default()
         },
         OAuthFlowState::Pick(cursor) => OAuthFlowSnapshot {
+            options: crate::app::mode::settings::OAUTH_OPTIONS.iter().map(|s| s.to_string()).collect(),
             kind: "pick".to_string(),
             cursor: *cursor,
             ..Default::default()
@@ -433,6 +496,7 @@ pub fn path_picker_snapshot(p: &PathPicker) -> PathPickerSnapshot {
 
 pub fn usage_snapshot(nav: &UsageNavState, state: &AppState) -> UsageSnapshot {
     UsageSnapshot {
+        session_totals: Some(crate::model::usage::RangeTotals { cost: state.rest.fg().cost, tokens_in: state.rest.fg().tokens_in as i64, tokens_out: state.rest.fg().tokens_out as i64, tokens_cached: state.rest.fg().tokens_cached as i64, calls: state.rest.fg().session.as_ref().map_or(0, |_| crate::view::usage::collect_usage_data(nav, &state.rest).session_calls) }),
         view: usage_view_token(nav.view).to_string(),
         range: nav.range.label().to_string(),
         metric: usage_metric_token(nav.metric).to_string(),
@@ -732,6 +796,8 @@ pub fn attachments_snapshot(a: &crate::app::mode::AttachmentsState) -> Attachmen
 
 pub fn mcp_snapshot(m: &McpState, state: &AppState) -> McpSnapshot {
     McpSnapshot {
+        errors: state.rest.mcp_manager.as_ref().map(|m| m.server_errors()).unwrap_or_default(),
+        available: Some(state.rest.mcp_manager.is_some()),
         // `McpServerEntry` is serde-able pure data (no secrets), so the server list
         // rides verbatim — the lightest projection that round-trips.
         servers: m.servers.clone(),

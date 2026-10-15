@@ -46,6 +46,8 @@ export interface SessionSnap {
   tool_idx: number
   resolved_model_id: string
   pending_steer: string[]
+  subagents: Record<string, unknown>[]
+  pending_subagents: Record<string, unknown>[]
   plan_todos: PlanTodo[]
   tokens_in: number
   tokens_out: number
@@ -82,6 +84,10 @@ export interface GlobalSnap {
   follow: boolean
   latest_version: string | null
   pending_steer_sel: number
+  pending_steer_focus: boolean
+  subagents_open: boolean
+  subagent_sel: number
+  agent_viewer: number | null
 }
 
 export interface Snapshot {
@@ -90,11 +96,21 @@ export interface Snapshot {
   global: GlobalSnap
 }
 
+export type RemoteHandoff = {
+  target: string
+  key: string | null
+  newSession: boolean
+  sessionId: string | null
+  hostId: string | null
+}
+
 export type Control =
   | { kind: "frame" }
   | { kind: "home" }
   | { kind: "new"; kill: boolean }
   | { kind: "open"; id: string }
+  | { kind: "select" }
+  | { kind: "remote"; remote: RemoteHandoff }
   | { kind: "error"; text: string }
 
 export function modeName(mode: unknown): string {
@@ -118,6 +134,7 @@ export function foregroundSession(snap: Snapshot): SessionSnap | null {
 /** What a daemon event means besides a state fold. */
 export function controlOf(event: unknown): Control {
   if (event === "OpenSwapper") return { kind: "home" }
+  if (event === "EnterSelect") return { kind: "select" }
   if (!event || typeof event !== "object" || Array.isArray(event)) return { kind: "frame" }
   const record = event as Record<string, unknown>
   if ("Error" in record) return { kind: "error", text: String(record.Error ?? "") }
@@ -125,6 +142,21 @@ export function controlOf(event: unknown): Control {
     const body = record.NewSession
     const kill = Boolean(body && typeof body === "object" && (body as { kill?: boolean }).kill)
     return { kind: "new", kill }
+  }
+  if ("ConnectRemote" in record) {
+    const body = asRecord(record.ConnectRemote)
+    const target = String(body.target ?? "")
+    if (!target) return { kind: "frame" }
+    return {
+      kind: "remote",
+      remote: {
+        target,
+        key: body.key == null ? null : String(body.key),
+        newSession: Boolean(body.new_session),
+        sessionId: body.session_id == null ? null : String(body.session_id),
+        hostId: body.host_id == null ? null : String(body.host_id),
+      },
+    }
   }
   if ("AttachSession" in record) {
     const body = record.AttachSession
@@ -140,7 +172,7 @@ export function isSnapshotEvent(event: unknown): boolean {
 }
 
 export class FrameReader {
-  private buf = new Uint8Array(0)
+  private buf: Uint8Array<ArrayBufferLike> = new Uint8Array(0)
 
   push(chunk: Uint8Array): unknown[] {
     this.buf = concat(this.buf, chunk)
@@ -320,6 +352,10 @@ function normalizeSnapshot(raw: unknown): Snapshot {
       follow: global.follow !== false,
       latest_version: global.latest_version == null ? null : String(global.latest_version),
       pending_steer_sel: numberOr(global.pending_steer_sel, 0),
+      pending_steer_focus: Boolean(global.pending_steer_focus),
+      subagents_open: Boolean(global.subagents_open),
+      subagent_sel: numberOr(global.subagent_sel, 0),
+      agent_viewer: global.agent_viewer == null ? null : numberOr(global.agent_viewer, 0),
     },
   }
 }
@@ -341,6 +377,10 @@ function normalizeSession(raw: unknown): SessionSnap {
     tool_idx: numberOr(body.tool_idx, 0),
     resolved_model_id: String(body.resolved_model_id ?? ""),
     pending_steer: Array.isArray(body.pending_steer) ? body.pending_steer.map((row) => String(row)) : [],
+    subagents: Array.isArray(body.subagents) ? body.subagents.filter((row) => row && typeof row === "object") as Record<string, unknown>[] : [],
+    pending_subagents: Array.isArray(body.pending_subagents)
+      ? body.pending_subagents.filter((row) => row && typeof row === "object") as Record<string, unknown>[]
+      : [],
     plan_todos: Array.isArray(body.plan_todos) ? (body.plan_todos as PlanTodo[]) : [],
     tokens_in: numberOr(body.tokens_in, 0),
     tokens_out: numberOr(body.tokens_out, 0),

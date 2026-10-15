@@ -1,11 +1,21 @@
+import { FormGuard } from "./modes/drafts.ts"
+import { Action, Fullscreen, Note } from "./modes/bits.tsx"
 import type { SyntaxStyle } from "@opentui/core"
 import { useKeyboard } from "@opentui/react"
 import { useCallback, useEffect, useRef, useState } from "react"
 import { Chat } from "./chat.tsx"
-import { foregroundSession, modeName, type Snapshot } from "./protocol.ts"
-import { QuitScreen, quitState } from "./quit.tsx"
+import { copyText } from "./copy.ts"
+import { useColumns } from "./columns.ts"
+import { forwardKey } from "./keys.ts"
 import { OpeningSplash, WarmingSplash, warmSplash } from "./loading.tsx"
-import { ModeView, modeScreen, rewindOf } from "./screens.tsx"
+import { AgentViewer, agentAt, SubagentPanel } from "./modes/subagents.tsx"
+import { placeOf, selectedOf, wideEnough } from "./modes/place.ts"
+import { nativeMenuInput } from "./modes/bits.tsx"
+import type { MenuAction } from "./modes/actions.ts"
+import { ModeSurface } from "./modes/surface.tsx"
+import { foregroundSession, modeName, type RemoteHandoff, type Snapshot } from "./protocol.ts"
+import { QuitScreen, quitState } from "./quit.tsx"
+import { rewindOf } from "./screens.tsx"
 import { DaemonLink } from "./socket.ts"
 import { themeFor, type Theme } from "./theme.ts"
 
@@ -15,23 +25,56 @@ export function SessionScreen({
   onHome,
   onOpen,
   onExit,
+  onRemote,
+  onPalette,
   ctrlC,
+  transport,
 }: {
   id: string
+  transport?: import("./transport.ts").DaemonTransport
   syntaxStyle: SyntaxStyle
   onHome: () => void
   onOpen: (id: string) => void
   onExit: () => void
+  onRemote: (remote: RemoteHandoff) => void
+  onPalette: (name: string) => void
   ctrlC?: { current: () => void }
 }) {
+  const columns = useColumns()
   const [snap, setSnap] = useState<Snapshot | null>(null)
   const [phase, setPhase] = useState<"connecting" | "live" | "error">("connecting")
   const [error, setError] = useState("")
+  const [notice, setNotice] = useState<string | null>(null)
   const linkRef = useRef<DaemonLink | null>(null)
+  const formGuard = useRef(new FormGuard())
+  const [leavePrompt, setLeavePrompt] = useState(false)
+  const [leaveSelected, setLeaveSelected] = useState(0)
+  const [pending, setPending] = useState(0)
   const snapRef = useRef<Snapshot | null>(null)
   const phaseRef = useRef(phase)
   const send = useCallback((request: unknown) => {
-    linkRef.current?.send(request)
+    const link = linkRef.current
+    const current = snapRef.current
+    if (link && current && placeOf(current.global.mode) === "full" && request && typeof request === "object") {
+      const r = request as Record<string, unknown>
+      let action: MenuAction | null = null
+      if (r.MenuSelect) action = { Select: r.MenuSelect as Extract<MenuAction, { Select: unknown }>["Select"] }
+      else if (r.MenuReplace) action = { Replace: r.MenuReplace as { field: string; value: string } }
+      else if (r.MenuAction) action = r.MenuAction as MenuAction
+      else if (r.SendKey) action = { Key: r.SendKey as import("./keys.ts").WireKey }
+      if (action) {
+        if ("Key" in Object(action) && typeof action === "object" && "Key" in action && action.Key.code === "Esc" && formGuard.current.canLeave(current.global.mode) && formGuard.current.dirty(current.global.mode)) {
+          setLeaveSelected(0)
+          setLeavePrompt(true)
+          return
+        }
+        const tracked = action === "Save"
+        if (tracked) {setPending((n) => n+1);setError("")}
+        void link.sendMenu(modeName(current.global.mode), action).then((error) => { if (error) setError(error) }).finally(() => {if (tracked) setPending((n) => Math.max(0,n-1))})
+        return
+      }
+    }
+    link?.send(request)
   }, [])
   const sendTracked = useCallback((request: unknown) => {
     return linkRef.current?.sendTracked(request) ?? Promise.resolve("not connected")
@@ -42,6 +85,7 @@ export function SessionScreen({
     const link = new DaemonLink(
       (next) => {
         if (dead) return
+        if (next) formGuard.current.observe(next.global.mode)
         snapRef.current = next
         setSnap(next)
         setPhase(next ? "live" : "connecting")
@@ -61,12 +105,30 @@ export function SessionScreen({
           onOpen(crypto.randomUUID())
           return
         }
+        if (control.kind === "select") {
+          const text = transcriptOf(snapRef.current)
+          if (text) {
+            copyText(text)
+            setNotice("copied the transcript")
+          }
+          return
+        }
+        if (control.kind === "remote") {
+          onRemote(control.remote)
+          return
+        }
         if (control.kind === "error" && control.text) {
           setError(control.text)
           if (!snapRef.current) setPhase("error")
         }
       },
+      transport,
     )
+    // Domain replies are observable even when no structural snapshot changes.
+    link.events.on("ExtensionOpResult", (result) => { if (!dead && !result.ok && result.error) setError(result.error) })
+    link.events.on("AgentOp", (result) => { if (!dead && !result.ok && result.error) setError(result.error) })
+    link.events.on("WebSearchValues", (result) => { if (!dead && result.error) setError(result.error) })
+    link.events.on("Notifications", ({ reply }) => { if (!dead && reply.error) setError(reply.error) })
     linkRef.current = link
     void link.start(id).catch((err: unknown) => {
       if (dead) return
@@ -78,9 +140,14 @@ export function SessionScreen({
       link.detach()
       if (linkRef.current === link) linkRef.current = null
     }
-  }, [id, onHome, onOpen])
+  }, [id, transport])
 
   phaseRef.current = phase
+
+  useEffect(() => {
+    const name = snap?.global.palette
+    if (name) onPalette(name)
+  }, [snap?.global.palette, onPalette])
 
   useEffect(() => {
     if (!ctrlC) return
@@ -100,8 +167,11 @@ export function SessionScreen({
   const quit = snap ? quitState(snap.global.mode) : null
   const rewind = snap ? rewindOf(snap.global.mode) : null
   const warming = snap ? warmSplash(snap.global.mode) : null
-  const screen = snap ? modeScreen(snap.global.mode) : null
-  const chat = mode === "Chat" || rewind != null
+  const place = snap ? placeOf(snap.global.mode) : null
+  const subagents = Boolean(snap?.global.subagents_open) && place == null && rewind == null
+  const viewer = snap?.global.agent_viewer != null && place == null && rewind == null
+  const menuKeys = place != null || subagents || viewer
+  const chat = mode === "Chat" || rewind != null || place === "overlay" || subagents
   const approval = Boolean(session?.awaiting_approval)
   const busy = Boolean(session && (session.working || session.waiting || session.streaming))
   const [exiting, setExiting] = useState<number | null>(null)
@@ -124,18 +194,39 @@ export function SessionScreen({
     onExit()
   }
 
-  function nudge(from: number, delta: number, length: number) {
-    if (delta === 0 || length === 0) return
+  function moveTo(index: number) {
+    if (!snap) return
+    const from = selectedOf(snap.global.mode)
+    const delta = index - from
+    if (delta === 0) return
     const code = delta > 0 ? "Down" : "Up"
-    const steps = Math.min(Math.abs(delta), Math.max(0, length - 1))
+    const steps = Math.min(Math.abs(delta), 40)
     for (let i = 0; i < steps; i++) send({ SendKey: { code, mods: 0 } })
-    void from
+  }
+
+  function decideLeave(action: MenuAction) {
+    setLeavePrompt(false)
+    if (snapRef.current) void linkRef.current?.sendMenu(modeName(snapRef.current.global.mode), action).then((error) => { if (error) setError(error) })
   }
 
   useKeyboard((key) => {
     if (key.eventType === "release") return
     if ((key.ctrl && key.name === "c") || key.sequence === "\u0003") {
       if (phase === "live" && !quit) send({ SendKey: { code: { Char: "c" }, mods: 2 } })
+      return
+    }
+    if (leavePrompt) {
+      if (typeof key.preventDefault === "function") key.preventDefault()
+      if (key.name === "escape") setLeavePrompt(false)
+      else if (key.name === "tab") setLeaveSelected((n)=>(n+(key.shift?2:1))%3)
+      else if (key.name === "left") setLeaveSelected((n)=>(n+2)%3)
+      else if (key.name === "right") setLeaveSelected((n)=>(n+1)%3)
+      else if (key.name === "s") decideLeave("Save")
+      else if (key.name === "d") decideLeave({Key:{code:"Esc",mods:0}})
+      else if (["enter","return"].includes(key.name)) {
+        if (leaveSelected===2) setLeavePrompt(false)
+        else decideLeave(leaveSelected===0 ? "Save" : {Key:{code:"Esc",mods:0}})
+      }
       return
     }
     if (warming && phase === "live" && !quit && key.name === "escape") {
@@ -168,16 +259,14 @@ export function SessionScreen({
       }
       return
     }
-    if (screen && phase === "live" && !quit) {
-      if (key.name === "up") nudge(screen.selected, -1, screen.rows.length)
-      else if (key.name === "down") nudge(screen.selected, 1, screen.rows.length)
-      else if (key.name === "escape") send({ SendKey: { code: "Esc", mods: 0 } })
-      else if (key.name === "return" || key.name === "enter") send({ SendKey: { code: "Enter", mods: 0 } })
-      else if (key.name === "left") send({ SendKey: { code: "Left", mods: 0 } })
-      else if (key.name === "right") send({ SendKey: { code: "Right", mods: 0 } })
-      else if (key.name === "tab") send({ SendKey: { code: key.shift ? "BackTab" : "Tab", mods: 0 } })
-      else if (key.name === "backspace") send({ SendKey: { code: "Backspace", mods: 0 } })
-      else if (key.name && key.name.length === 1 && !key.ctrl && !key.meta) send({ SendKey: { code: { Char: key.name }, mods: 0 } })
+    if (menuKeys && phase === "live" && !quit) {
+      if (nativeMenuInput.current) {
+        const navigation = ["escape", "tab", "return", "enter"].includes(key.name) || nativeMenuInput.multiline && key.ctrl && key.name === "x" || nativeMenuInput.listNavigation && (["up", "down"].includes(key.name) || key.ctrl && ["r", "x"].includes(key.name))
+        if (!navigation || nativeMenuInput.multiline && ["return", "enter", "tab"].includes(key.name)) return
+      }
+      if (typeof key.preventDefault === "function") key.preventDefault()
+      const wire = forwardKey(key)
+      if (wire) send({ SendKey: wire })
       return
     }
     if (quit && phase === "live") {
@@ -224,18 +313,38 @@ export function SessionScreen({
   if (quit) {
     return <QuitScreen state={quit} theme={theme} exiting={exiting} onPick={chooseQuit} />
   }
-  if (screen) {
-    return (
-      <ModeView
-        screen={screen}
-        theme={theme}
-        onMove={(index) => nudge(screen.selected, index - screen.selected, screen.rows.length)}
-      />
-    )
+  if (leavePrompt) {
+    return <Fullscreen title="Unsaved changes" theme={theme} hint={<box flexDirection="row"><Action label="Save (s)" primary={leaveSelected === 0} theme={theme} onPress={() => decideLeave("Save")} /><Action label="Discard (d)" primary={leaveSelected === 1} theme={theme} onPress={() => decideLeave({ Key: { code: "Esc", mods: 0 } })} /><Action label="Keep editing (esc)" primary={leaveSelected === 2} theme={theme} onPress={() => setLeavePrompt(false)} /></box>}><Note text="Save these changes before leaving?" color={theme.warn} theme={theme} /></Fullscreen>
+  }
+  if (place === "full") {
+    return <box flexDirection="column" flexGrow={1} minHeight={0}>{error ? <text fg={theme.error}>{error}</text> : null}{pending ? <text fg={theme.info}>Waiting for daemon…</text> : null}<ModeSurface mode={snap.global.mode} theme={theme} columns={columns} onMove={moveTo} send={send} /></box>
+  }
+  if (viewer) {
+    return <AgentViewer agent={agentAt(session?.subagents, snap.global.agent_viewer)} theme={theme} />
   }
   if (!chat) {
     return <OtherMode name={mode} theme={theme} note={error} />
   }
+  const overlay = place === "overlay"
+    ? <ModeSurface mode={snap.global.mode} theme={theme} columns={columns} onMove={moveTo} send={send} />
+    : subagents
+      ? (
+        <SubagentPanel
+          agents={session?.subagents ?? []}
+          pending={session?.pending_subagents ?? []}
+          selected={snap.global.subagent_sel}
+          theme={theme}
+          wide={wideEnough(columns)}
+          onMove={(index) => {
+            const from = snap.global.subagent_sel
+            const delta = index - from
+            if (delta === 0) return
+            const code = delta > 0 ? "Down" : "Up"
+            for (let i = 0; i < Math.min(Math.abs(delta), 40); i++) send({ SendKey: { code, mods: 0 } })
+          }}
+        />
+      )
+      : null
   return (
     <box flexDirection="column" flexGrow={1} backgroundColor={theme.bg}>
       {error ? <text fg={theme.warn}>{`  ${error}`}</text> : null}
@@ -243,14 +352,26 @@ export function SessionScreen({
         snap={snap}
         theme={theme}
         syntaxStyle={syntaxStyle}
-        focused={!approval && !rewind}
+        focused={!approval && !rewind && !menuKeys}
         rewind={rewind}
+        overlay={overlay}
+        notice={notice}
         send={send}
         sendTracked={sendTracked}
         onFlushError={(text) => setError(text)}
       />
     </box>
   )
+}
+
+function transcriptOf(snap: Snapshot | null): string {
+  const session = snap ? foregroundSession(snap) : null
+  if (!session) return ""
+  return session.messages
+    .filter((row) => row.role === "user" || row.role === "assistant")
+    .map((row) => row.content)
+    .filter((text) => text.trim().length > 0)
+    .join("\n\n")
 }
 
 function OtherMode({ name, theme, note }: { name: string; theme: Theme; note: string }) {

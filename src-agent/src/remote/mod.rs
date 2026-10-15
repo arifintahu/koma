@@ -27,6 +27,7 @@ pub(crate) mod hosts;
 pub(crate) mod secrets;
 pub(crate) mod sessions;
 pub(crate) mod ssh;
+pub(crate) mod term_helper;
 
 use anyhow::Result;
 

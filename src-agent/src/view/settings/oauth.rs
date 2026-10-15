@@ -17,19 +17,10 @@ use crate::view::theme::Palette;
 ///
 /// `pub(crate)` so the guided provider onboarding wizard reuses it for its Login step.
 pub(crate) fn draw_picker(frame: &mut Frame, cursor: usize, palette: &Palette, area: Rect) {
-    const OPTIONS: [&str; 8] = [
-        "Codex",
-        "Kilo Code",
-        "koma.run",
-        "xAI",
-        "Claude",
-        "Command Code",
-        "Codex (paste token)",
-        "Command Code (paste key)",
-    ];
+    let options = crate::app::mode::settings::OAUTH_OPTIONS;
     let full_w = area.width as usize;
     crate::view::clear_and_fill(frame, area, palette.bg);
-    let lines: Vec<Line> = OPTIONS
+    let lines: Vec<Line> = options
         .iter()
         .enumerate()
         .map(|(i, label)| {

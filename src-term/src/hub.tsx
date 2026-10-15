@@ -1,6 +1,7 @@
-import { useKeyboard, useTerminalDimensions } from "@opentui/react"
+import { Action, Fullscreen, InputField, Lines, Note, Panel, nativeMenuInput, type Line } from "./modes/bits.tsx"
+import { useKeyboard } from "@opentui/react"
 import { basename } from "node:path"
-import { useEffect, useState } from "react"
+import { useEffect, useRef, useState } from "react"
 import { deleteSession, killSession, listSessions, type HistorySession, type LiveSession, type SessionsFile } from "./paths.ts"
 import type { Theme } from "./theme.ts"
 
@@ -8,8 +9,10 @@ const SPINNER = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", 
 
 type Pane = "cooking" | "history"
 
-export function Hub({ theme, onOpen }: { theme: Theme; onOpen: (id: string) => void }) {
-  const { height } = useTerminalDimensions()
+export function Hub({ theme, onOpen, onBack, currentId }: { theme: Theme; onOpen: (id: string) => void; onBack?: () => void; currentId?: string | null }) {
+  const liveIdentity = useRef<string | null>(null)
+  const historyIdentity = useRef<string | null>(null)
+  const queryRef = useRef("")
   const [rows, setRows] = useState<SessionsFile>({ live: [], history: [] })
   const [error, setError] = useState("")
   const [query, setQuery] = useState("")
@@ -26,6 +29,11 @@ export function Hub({ theme, onOpen }: { theme: Theme; onOpen: (id: string) => v
         .then((next) => {
           if (dead) return
           setRows(next)
+          const needle=queryRef.current.toLowerCase().trim()
+          const live=next.live.filter((r)=>matches(needle,r.name,r.pwd,r.session_id))
+          const history=next.history.filter((r)=>matches(needle,r.name,r.pwd,r.session_id,r.dir_label))
+          if (liveIdentity.current) setCookingSel(Math.max(0,live.findIndex((r)=>r.session_id===liveIdentity.current)+1))
+          if (historyIdentity.current) setHistorySel(Math.max(0,history.findIndex((r)=>r.session_id===historyIdentity.current)))
           setError("")
         })
         .catch((err: unknown) => {
@@ -50,7 +58,9 @@ export function Hub({ theme, onOpen }: { theme: Theme; onOpen: (id: string) => v
   const cookingIndex = Math.min(cookingSel, cookingCount - 1)
   const historyIndex = history.length === 0 ? 0 : Math.min(historySel, history.length - 1)
   const glyph = SPINNER[tick % SPINNER.length] ?? "⠋"
-  const cookingHeight = Math.max(3, Math.floor(height / 2))
+  liveIdentity.current = live[cookingIndex-1]?.session_id ?? null
+  historyIdentity.current = history[historyIndex]?.session_id ?? null
+  queryRef.current = query
 
   function openCooking() {
     if (cookingIndex === 0) {
@@ -66,11 +76,21 @@ export function Hub({ theme, onOpen }: { theme: Theme; onOpen: (id: string) => v
     if (row) onOpen(row.session_id)
   }
 
+  function remove() {
+    const id = pane === "cooking" ? live[cookingIndex - 1]?.session_id : history[historyIndex]?.session_id
+    if (!id) return
+    if (armed === id) {
+      setArmed(null)
+      void (pane === "cooking" ? killSession(id) : deleteSession(id)).then(() => listSessions().then(setRows)).catch((err: unknown) => setError(String(err)))
+    } else setArmed(id)
+  }
+
   useKeyboard((key) => {
     if (key.eventType === "release") return
     if (key.name === "escape") {
-      setQuery("")
-      setArmed(null)
+      if (armed) setArmed(null)
+      else if (query) {setQuery("");nativeMenuInput.current?.setText("")}
+      else onBack?.()
       return
     }
     if (key.name === "tab") {
@@ -89,139 +109,46 @@ export function Hub({ theme, onOpen }: { theme: Theme; onOpen: (id: string) => v
       return
     }
     if (key.name === "return" || key.name === "enter") {
-      if (pane === "cooking") openCooking()
+      if (armed) remove()
+      else if (pane === "cooking") openCooking()
       else openHistory()
       return
     }
     if (key.ctrl && key.name === "x") {
-      const id = pane === "cooking" ? live[cookingIndex - 1]?.session_id : history[historyIndex]?.session_id
-      if (!id) return
-      if (armed === id) {
-        setArmed(null)
-        const run = pane === "cooking" ? killSession(id) : deleteSession(id)
-        void run.then(() => listSessions().then(setRows)).catch((err: unknown) => {
-          setError(err instanceof Error ? err.message : String(err))
-        })
-      } else {
-        setArmed(id)
-      }
+      remove()
       return
     }
+    if (nativeMenuInput.current) return
     if (key.name === "backspace") {
       setQuery((value) => value.slice(0, -1))
       return
     }
+    if (key.name === "c") {setPane("cooking");return}
+    if (key.name === "h") {setPane("history");return}
     if (key.name === "q" || key.ctrl || key.meta) return
     if (key.name && key.name.length === 1 && key.name >= " ") {
       setQuery((value) => value + key.name)
     }
   })
 
-  return (
-    <box flexDirection="column" flexGrow={1} backgroundColor={theme.bg}>
-      <box height={cookingHeight} flexDirection="column">
-        <Rule title={`cooking (${live.length})`} focused={pane === "cooking"} theme={theme} />
-        <scrollbox flexGrow={1} scrollY focusable={false}>
-          <Row
-            label="+ new session"
-            right=""
-            selected={pane === "cooking" && cookingIndex === 0}
-            focused={pane === "cooking"}
-            accent
-            theme={theme}
-            onPress={() => onOpen(crypto.randomUUID())}
-          />
-          {live.map((row, index) => (
-            <Row
-              key={row.session_id}
-              label={row.name || row.session_id.slice(0, 8)}
-              right={`${basename(row.pwd)}  ${row.working ? `${glyph} working` : "○ ready"}`}
-              selected={pane === "cooking" && cookingIndex === index + 1}
-              focused={pane === "cooking"}
-              theme={theme}
-              onPress={() => onOpen(row.session_id)}
-            />
-          ))}
-        </scrollbox>
-      </box>
-      <box flexGrow={1} flexDirection="column">
-        <Rule title={`history (${history.length})`} focused={pane === "history"} theme={theme} />
-        <text fg={theme.dim}>{` › ${query}`}</text>
-        <scrollbox flexGrow={1} scrollY focusable={false}>
-          {history.length === 0 ? (
-            <text fg={theme.dim}>{needle ? " no matches" : " no past sessions"}</text>
-          ) : (
-            history.map((row, index) => (
-              <Row
-                key={row.session_id}
-                label={row.name || row.session_id.slice(0, 8)}
-                right={`${(row.dir_label || basename(row.pwd)).slice(0, 14)}  ${age(row.updated_at)}`}
-                selected={pane === "history" && historyIndex === index}
-                focused={pane === "history"}
-                theme={theme}
-                onPress={() => onOpen(row.session_id)}
-              />
-            ))
-          )}
-        </scrollbox>
-      </box>
-      <text fg={theme.dim}>
-        {armed
-          ? " Ctrl+X again to confirm"
-          : " Tab switch · ↑/↓ select · Enter open · Ctrl+X kill (cooking) / delete (history) · type to search"}
-      </text>
-      {error ? <text fg={theme.error}>{error}</text> : null}
+  const liveRows: Line[] = [{ label: "+ New session", color: "accent" }, ...live.map((row): Line => ({ label: row.name || row.session_id.slice(0, 8), detail: `${basename(row.pwd)} · ${row.session_id.slice(0,8)}`, badge: { text: row.session_id === currentId ? "current" : row.working ? `${glyph} working` : "ready", role: row.working ? "success" : "info" } }))]
+  const historyRows: Line[] = history.map((row) => ({label:row.name || row.session_id.slice(0,8), detail:`${row.dir_label || basename(row.pwd)} · ${age(row.updated_at)} · ${row.session_id.slice(0,8)}`}))
+  const target = [...live,...history].find((s)=>s.session_id===armed)
+  return <Fullscreen title="Sessions" theme={theme} hint={<box flexDirection="column" flexShrink={0}>
+    {armed ? <Note text={`${pane === "cooking" ? "Stop" : "Delete"} ${target?.name || armed} (${armed})?`} color={theme.warn} theme={theme} /> : null}
+    <box flexDirection="row" flexWrap="wrap"><Action label={armed ? "Confirm (enter)" : "Open (enter)"} theme={theme} onPress={() => {if(armed)remove();else if(pane === "cooking")openCooking();else openHistory()}} /><Action label="New session" theme={theme} onPress={() => onOpen(crypto.randomUUID())} /><Action label={pane === "cooking" ? "Stop (ctrl+x)" : "Delete (ctrl+x)"} theme={theme} onPress={remove} />{onBack ? <Action label="Back (esc)" theme={theme} onPress={onBack} /> : null}</box>
+  </box>}>
+    <box flexDirection="row" flexShrink={0}><Action label="Cooking (c)" primary={pane==="cooking"} theme={theme} onPress={()=>{setPane("cooking");setArmed(null)}} /><Action label="History (h)" primary={pane==="history"} theme={theme} onPress={()=>{setPane("history");setArmed(null)}} /></box>
+    {error ? <Note text={error} color={theme.error} theme={theme} /> : null}
+    <box flexDirection="column" flexGrow={1} flexBasis={0} minHeight={0}>
+      {pane === "cooking" ? <Panel key="cooking" title={`cooking · ${live.length}`} hot theme={theme}><Lines rows={liveRows} selected={cookingIndex} theme={theme} onPress={(i)=>{setCookingSel(i);setArmed(null)}} /></Panel> :
+      <Panel key="history" title={`history · ${history.length}`} hot theme={theme}>
+        <InputField label="Search sessions" value={query} active={!armed} onChange={(value)=>{setQuery(value);setHistorySel(0);setCookingSel(0)}} theme={theme} />
+        <Lines rows={historyRows} selected={historyIndex} theme={theme} onPress={(i)=>{setHistorySel(i);setArmed(null)}} />
+      </Panel>
+      }
     </box>
-  )
-}
-
-function Rule({ title, focused, theme }: { title: string; focused: boolean; theme: Theme }) {
-  return (
-    <box height={1} border={["top"]} borderColor={focused ? theme.accent : theme.dim} title={` ${title} `} titleColor={focused ? theme.accent : theme.dim} />
-  )
-}
-
-function Row({
-  label,
-  right,
-  selected,
-  focused,
-  accent,
-  theme,
-  onPress,
-}: {
-  label: string
-  right: string
-  selected: boolean
-  focused: boolean
-  accent?: boolean
-  theme: Theme
-  onPress: () => void
-}) {
-  const [hot, setHot] = useState(false)
-  const on = selected || hot
-  const fg = on ? theme.selFg : accent ? theme.accent : focused ? theme.fg : theme.dim
-  return (
-    <box
-      flexDirection="row"
-      justifyContent="space-between"
-      backgroundColor={on ? theme.selBg : theme.bg}
-      paddingLeft={1}
-      paddingRight={1}
-      onMouseOver={() => setHot(true)}
-      onMouseOut={() => setHot(false)}
-      onMouseDown={onPress}
-    >
-      <text fg={fg} selectable>
-        {label}
-      </text>
-      {right ? (
-        <text fg={fg} selectable>
-          {right}
-        </text>
-      ) : null}
-    </box>
-  )
+  </Fullscreen>
 }
 
 function matches(needle: string, ...parts: string[]): boolean {

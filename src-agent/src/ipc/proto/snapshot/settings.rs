@@ -22,13 +22,38 @@ pub struct PathPickerSnapshot {
 #[allow(dead_code)]
 pub struct SettingsSnapshot {
     #[serde(default)]
+    pub model_loading: bool,
+    #[serde(default)]
+    pub model_error: Option<String>,
+    #[serde(default)]
+    pub dirty: bool,
+    #[serde(default)]
+    pub confirm_leave: bool,
+    #[serde(default)]
+    pub leave_selected: usize,
+    #[serde(default)]
+    pub saved_palette: String,
+    /// Conditional form fields and filtered catalogue in daemon navigation order.
+    #[serde(default)]
+    pub model_fields: Vec<String>,
+    #[serde(default)]
+    pub model_results: Vec<String>,
+    #[serde(default)]
+    pub model_provider_label: Option<String>,
+    #[serde(default)]
     pub web_search: crate::model::web_search::SearchStatus,
     #[serde(default)]
     pub search_editor: Option<crate::model::web_search::SearchEditor>,
-    /// Wire token for [`SettingsPage`]: "menu" / "appearance" / "general" /
+    /// Wire token for [`SettingsPage`]: "quick" / "menu" / "appearance" / "general" /
     /// "providers" / "provider_form" / "oauth" / "models" / "model_form".
     #[serde(default)]
     pub page: String,
+    /// "appearance" or "general" while `page` is quick.
+    #[serde(default)]
+    pub quick_focus: String,
+    /// Selected provider index being replaced by the open provider form.
+    #[serde(default)]
+    pub prov_replace: Option<usize>,
     pub field: usize,
     pub editing: bool,
     pub api_key: String,
@@ -126,6 +151,8 @@ fn default_i64_40() -> i64 {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[allow(dead_code)]
 pub struct UsageSnapshot {
+    #[serde(default)]
+    pub session_totals: Option<crate::model::usage::RangeTotals>,
     pub view: String,
     pub range: String,
     pub metric: String,

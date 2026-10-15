@@ -176,7 +176,11 @@ pub fn draw(frame: &mut Frame, state: &AppState) {
         Mode::SessionPicker(p) => session_picker::draw(frame, &state.rest, p, &palette),
         Mode::SessionHub(h) => session_hub::draw(frame, &state.rest, h, &palette),
         Mode::Settings(s) => {
-            if s.page == crate::app::mode::settings::SettingsPage::Menu {
+            if matches!(
+                s.page,
+                crate::app::mode::settings::SettingsPage::Menu
+                    | crate::app::mode::settings::SettingsPage::Quick
+            ) {
                 let resolved_model = resolved_main_model(&state.rest);
                 chat::draw(frame, &state.rest, &resolved_model, &palette);
                 let chunks = chat::layout_chunks(&state.rest, frame.area());

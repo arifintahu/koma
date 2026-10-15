@@ -1,5 +1,6 @@
-import type { ScrollBoxRenderable, SyntaxStyle, TextareaRenderable } from "@opentui/core"
+import type { Renderable, ScrollBoxRenderable, SyntaxStyle, TextareaRenderable, TextareaAction } from "@opentui/core"
 import { useKeyboard, useTerminalDimensions } from "@opentui/react"
+import { charIndexAt, composerIsAhead, utf16Offset } from "./caret.ts"
 import { existsSync } from "node:fs"
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react"
 import {
@@ -43,6 +44,8 @@ export function Chat({
   syntaxStyle,
   focused,
   rewind = null,
+  overlay = null,
+  notice = null,
   send,
   sendTracked,
   onFlushError,
@@ -52,6 +55,8 @@ export function Chat({
   syntaxStyle: SyntaxStyle
   focused: boolean
   rewind?: { entries: string[]; selected: number } | null
+  overlay?: ReactNode
+  notice?: string | null
   send: (request: unknown) => void
   sendTracked: (request: unknown) => Promise<string>
   onFlushError: (text: string) => void
@@ -67,12 +72,14 @@ export function Chat({
   }
   return (
     <box flexDirection="column" flexGrow={1} backgroundColor={theme.bg} paddingTop={1} paddingBottom={1}>
-      <Toast snap={snap} theme={theme} />
+      <Toast snap={snap} theme={theme} notice={notice} />
       <HistoryPane session={session} theme={theme} syntaxStyle={syntaxStyle} />
       <Steers session={session} theme={theme} selected={snap.global.pending_steer_sel} />
       {session.awaiting_approval ? <Approval session={session} theme={theme} send={send} /> : null}
       {rewind ? (
         <RewindOverlay rewind={rewind} theme={theme} send={send} />
+      ) : overlay ? (
+        overlay
       ) : (
         <Palette snap={snap} theme={theme} flushRef={flushRef} send={send} />
       )}
@@ -93,9 +100,9 @@ export function Chat({
 
 const TOAST_MS = 3000
 
-function Toast({ snap, theme }: { snap: Snapshot; theme: Theme }) {
-  const toast = snap.global.toast
-  const toastId = snap.global.toast_event_id ?? (toast ? `${toast[0]}:${toast[1]}` : "")
+function Toast({ snap, theme, notice }: { snap: Snapshot; theme: Theme; notice?: string | null }) {
+  const toast = notice ? (["info", notice] as [string, string]) : snap.global.toast
+  const toastId = notice ? `local:${notice}` : snap.global.toast_event_id ?? (toast ? `${toast[0]}:${toast[1]}` : "")
   const [dismissedId, setDismissedId] = useState<string | null>(null)
   const [leftMs, setLeftMs] = useState(TOAST_MS)
   useEffect(() => {
@@ -539,7 +546,7 @@ function MarkdownBody({
       syntaxStyle={syntaxStyle}
       fg={fg}
       conceal
-      selectable
+      {...{ selectable: true }}
       streaming={streaming}
       internalBlockMode="top-level"
       renderNode={renderMarkdownNode}
@@ -555,7 +562,7 @@ type ListNode = {
 }
 
 /** Keep lists as real blocks, then give each marker a gutter so wrapped lines hang. */
-function renderMarkdownNode(token: { type?: string }, context: { defaultRender: () => ListNode | null }) {
+function renderMarkdownNode(token: { type?: string }, context: { defaultRender: () => Renderable | null }) {
   if (token.type !== "list") return null
   const list = context.defaultRender()
   if (list) dressList(list)
@@ -756,7 +763,7 @@ function RewindOverlay({
 }) {
   const { width } = useTerminalDimensions()
   const selected = rewind.entries.length === 0 ? 0 : Math.min(rewind.selected, rewind.entries.length - 1)
-  const visible = 10
+  const visible = 7
   const [start, setStart] = useState(0)
   useEffect(() => {
     setStart((current) => paletteWindow(current, selected, rewind.entries.length, visible))
@@ -767,7 +774,7 @@ function RewindOverlay({
   })
   return (
     <box
-      height={12}
+      height={10}
       flexShrink={0}
       border
       borderColor={theme.dim}
@@ -898,6 +905,7 @@ function Composer({
   const lastCursor = useRef(snap.global.cursor)
   const applying = useRef(false)
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const flushToken = useRef(0)
   const [lines, setLines] = useState(Math.max(1, snap.global.input.split("\n").length))
   const innerCap = Math.max(1, Math.floor(height / 2) - 2)
   const boxHeight = Math.min(innerCap, Math.max(1, lines)) + 2
@@ -935,17 +943,26 @@ function Composer({
   useEffect(() => {
     const current = area.current
     if (!current) return
-    if (snap.global.input === lastSent.current) return
-    if (current.plainText === snap.global.input) {
-      lastSent.current = snap.global.input
-      lastCursor.current = snap.global.cursor
+    const text = snap.global.input
+    const cursor = snap.global.cursor
+    const local = current.plainText
+    // The echo is an older prefix. Putting it back deletes the letters typed since.
+    if (composerIsAhead(local, text)) {
+      if (local !== lastSent.current) schedule()
       return
     }
+    const localCursor = charIndexAt(local, current.cursorOffset ?? local.length)
+    if (text === local && cursor === localCursor && text === lastSent.current && cursor === lastCursor.current) return
+    // Same text, but the caret has already moved past this echo.
+    if (text === local && localCursor > cursor) return
     applying.current = true
-    current.setText(snap.global.input)
-    lastSent.current = snap.global.input
-    lastCursor.current = snap.global.cursor
-    setLines(Math.max(1, snap.global.input.split("\n").length))
+    if (local !== text) {
+      current.setText(text)
+      setLines(Math.max(1, text.split("\n").length))
+    }
+    current.cursorOffset = utf16Offset(text, cursor)
+    lastSent.current = text
+    lastCursor.current = cursor
     queueMicrotask(() => {
       applying.current = false
     })
@@ -962,15 +979,20 @@ function Composer({
       clearTimeout(timer.current)
       timer.current = null
     }
+    const token = ++flushToken.current
     const current = area.current
     const text = current?.plainText ?? ""
-    const cursor = current?.cursorCharacterOffset ?? [...text].length
+    const cursor = charIndexAt(text, current?.cursorOffset ?? text.length)
     if (text === lastSent.current && cursor === lastCursor.current) return true
     const result = await sendTracked({ ReplaceInput: { text, cursor } })
+    if (token !== flushToken.current) return result === "ack"
     if (result !== "ack") {
       onFlushError(result)
       return false
     }
+    // A key landed while this request was in flight. Don't record the short text as current.
+    const latest = area.current?.plainText ?? text
+    if (latest !== text) return true
     lastSent.current = text
     lastCursor.current = cursor
     return true
@@ -1021,13 +1043,13 @@ function Composer({
         ref={area}
         flexGrow={1}
         focused={focused}
-        focusable
+        {...{ focusable: true }}
         initialValue={snap.global.input}
         textColor={theme.fg}
         focusedTextColor={theme.fg}
         backgroundColor={theme.bg}
         focusedBackgroundColor={theme.bg}
-        keyBindings={paletteOpen ? [...COMPOSER_KEYS, ...PALETTE_KEYS] : COMPOSER_KEYS}
+        keyBindings={(paletteOpen ? [...COMPOSER_KEYS, ...PALETTE_KEYS] : COMPOSER_KEYS) as { name: string; action: TextareaAction; ctrl?: boolean; shift?: boolean }[]}
         onContentChange={schedule}
         onCursorChange={schedule}
         onSubmit={() => {

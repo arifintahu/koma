@@ -3,6 +3,8 @@ use serde::{Deserialize, Serialize};
 use std::sync::{mpsc::Receiver, Arc, Mutex};
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NotificationsState {
+    #[serde(default)]
+    pub loading: bool,
     pub session: Option<String>,
     pub app: bool,
     pub query: String,
@@ -18,7 +20,7 @@ pub struct NotificationsState {
 }
 impl PartialEq for NotificationsState {
     fn eq(&self, o: &Self) -> bool {
-        self.session == o.session
+        self.loading == o.loading && self.session == o.session
             && self.app == o.app
             && self.query == o.query
             && self.cursor == o.cursor
@@ -31,6 +33,7 @@ impl PartialEq for NotificationsState {
 impl NotificationsState {
     pub fn new(session: Option<String>) -> Self {
         let mut s = Self {
+            loading: false,
             app: session.is_none(),
             session,
             query: String::new(),
@@ -46,6 +49,7 @@ impl NotificationsState {
         s
     }
     pub fn request(&mut self, operation: Operation) {
+        self.loading=true;
         self.pending = Some(Arc::new(Mutex::new(crate::model::notifications::request(
             Request {
                 id: uuid::Uuid::new_v4().to_string(),
@@ -63,11 +67,14 @@ impl NotificationsState {
             .as_ref()
             .and_then(|rx| rx.lock().ok()?.try_recv().ok());
         if let Some(reply) = reply {
+            let selected=self.filtered().get(self.cursor).map(|e| e.id.clone());
             if reply.error.is_none() {
                 self.entries = reply.entries;
+                if let Some(id)=selected { self.cursor=self.filtered().iter().position(|e| e.id==id).unwrap_or(self.cursor); }
             }
             self.error = reply.error;
             self.pending = None;
+            self.loading = false;
             self.refreshed = Some(std::time::Instant::now());
             self.cursor = self.cursor.min(self.filtered().len().saturating_sub(1));
             true
@@ -95,6 +102,7 @@ mod tests {
     fn snapshots_and_keyboard_search_preserve_history() {
         use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
         let mut state = NotificationsState {
+            loading: false,
             session: Some("test-session".into()),
             app: false,
             query: String::new(),

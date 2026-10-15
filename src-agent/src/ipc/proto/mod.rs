@@ -5,6 +5,8 @@
 //! the agent runtime + session locks) and a thin attach/detach TUI client.
 
 pub mod key;
+mod menu;
+pub use menu::MenuAction;
 mod run;
 pub use run::{RunExtension, RunState};
 pub mod snapshot;
@@ -59,6 +61,10 @@ pub struct FileSearchItem {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[allow(dead_code)]
 pub enum ClientRequest {
+    /// Direct menu actions, correlated independently from legacy Ack traffic.
+    GetMenuCapabilities,
+    ReplaceInputTracked { request_id: String, text: String, cursor: usize },
+    Menu { request_id: String, mode: String, action: MenuAction },
     Notifications {
         request: crate::model::notifications::Request,
     },
@@ -905,6 +911,8 @@ pub struct DaemonFrame {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[allow(dead_code)]
 pub enum DaemonEvent {
+    MenuResult { request_id: String, error: Option<String> },
+    MenuCapabilities { version: u32 },
     Notifications {
         reply: crate::model::notifications::Reply,
     },

@@ -1,15 +1,21 @@
 import { createCliRenderer, SyntaxStyle, type SyntaxStyle as SyntaxStyleHandle } from "@opentui/core"
 import { createRoot, useKeyboard, useRenderer, useSelectionHandler } from "@opentui/react"
+import { RemoteScreen } from "./remote-screen.tsx"
 import { useCallback, useEffect, useRef, useState } from "react"
+import { useColumns } from "./columns.ts"
 import { copyText } from "./copy.ts"
 import { Hub } from "./hub.tsx"
+import { listSessions } from "./paths.ts"
+import { nativeMenuInput } from "./modes/bits.tsx"
+import type { RemoteHandoff } from "./protocol.ts"
 import { QuitScreen, type QuitState } from "./quit.tsx"
 import { SessionScreen } from "./session.tsx"
 import { themeFor } from "./theme.ts"
 
-type Route = { kind: "hub" } | { kind: "session"; id: string }
+type Route = { kind: "hub" } | { kind: "session"; id: string } | { kind: "remote"; remote: RemoteHandoff }
 
 function initialRoute(): Route {
+  if (process.env.KOMA_REMOTE) return { kind: "remote", remote: JSON.parse(process.env.KOMA_REMOTE) as RemoteHandoff }
   if (process.env.KOMA_START === "hub") return { kind: "hub" }
   return { kind: "session", id: process.env.KOMA_SESSION || crypto.randomUUID() }
 }
@@ -35,9 +41,16 @@ function App({ syntaxStyle }: { syntaxStyle: SyntaxStyleHandle }) {
   routeRef.current = route
   hubQuitRef.current = hubQuit
   tooSmallRef.current = tooSmall
-  const theme = themeFor("dark")
-  const onHome = useCallback(() => setRoute({ kind: "hub" }), [])
+  const [palette, setPalette] = useState("dark")
+  const theme = themeFor(palette)
+  useEffect(() => {
+    renderer.setBackgroundColor(theme.bg)
+  }, [renderer, theme.bg])
+  const returnSession = useRef<string | null>(null)
+  const onHome = useCallback(() => setRoute((current) => { if (current.kind === "session") returnSession.current=current.id; return { kind: "hub" } }), [])
+  const openHubQuit = () => { void listSessions().then((rows) => setHubQuit({working:rows.live.filter((r)=>r.working).length,total:rows.live.length,selected:2})).catch(()=>setHubQuit({working:0,total:0,selected:2})) }
   const onOpen = useCallback((id: string) => setRoute({ kind: "session", id }), [])
+  const onRemote = useCallback((remote: RemoteHandoff) => setRoute({ kind: "remote", remote }), [])
 
   useEffect(() => {
     onInterrupt = () => {
@@ -47,7 +60,7 @@ function App({ syntaxStyle }: { syntaxStyle: SyntaxStyleHandle }) {
         process.exit(0)
       }
       if (routeRef.current.kind === "hub") {
-        if (!hubQuitRef.current) setHubQuit({ working: 0, total: 0, selected: 2 })
+        if (!hubQuitRef.current) openHubQuit()
         return
       }
       sessionCtrlC.current()
@@ -74,7 +87,7 @@ function App({ syntaxStyle }: { syntaxStyle: SyntaxStyleHandle }) {
     if (route.kind !== "hub") return
     if (key.eventType === "release") return
     if (isCtrlC(key)) {
-      if (!hubQuit) setHubQuit({ working: 0, total: 0, selected: 2 })
+      if (!hubQuit) openHubQuit()
       return
     }
     if (hubQuit) {
@@ -90,7 +103,7 @@ function App({ syntaxStyle }: { syntaxStyle: SyntaxStyleHandle }) {
       else if ((key.name === "return" || key.name === "enter") && hubQuit.selected === 2) setHubQuit(null)
       return
     }
-    if (key.name === "q") leave()
+    if (key.name === "q" && !nativeMenuInput.current) leave()
   })
 
   let screen
@@ -99,6 +112,7 @@ function App({ syntaxStyle }: { syntaxStyle: SyntaxStyleHandle }) {
   } else if (route.kind === "hub" && hubQuit) {
     screen = (
       <QuitScreen
+        scope="hub"
         state={hubQuit}
         theme={theme}
         exiting={null}
@@ -108,6 +122,8 @@ function App({ syntaxStyle }: { syntaxStyle: SyntaxStyleHandle }) {
         }}
       />
     )
+  } else if (route.kind === "remote") {
+    screen = <RemoteScreen remote={route.remote} theme={theme} syntaxStyle={syntaxStyle} onHome={onHome} onExit={leave} onRemote={onRemote} onPalette={setPalette} ctrlC={sessionCtrlC} />
   } else if (route.kind === "session") {
     screen = (
       <SessionScreen
@@ -117,11 +133,13 @@ function App({ syntaxStyle }: { syntaxStyle: SyntaxStyleHandle }) {
         onHome={onHome}
         onOpen={onOpen}
         onExit={leave}
+        onRemote={onRemote}
+        onPalette={setPalette}
         ctrlC={sessionCtrlC}
       />
     )
   } else {
-    screen = <Hub theme={theme} onOpen={onOpen} />
+    screen = <Hub theme={theme} onOpen={onOpen} currentId={returnSession.current} onBack={returnSession.current ? () => onOpen(returnSession.current!) : undefined} />
   }
   if (tooSmall) {
     return <TooNarrow theme={theme} width={width} />
@@ -131,31 +149,6 @@ function App({ syntaxStyle }: { syntaxStyle: SyntaxStyleHandle }) {
       {screen}
     </box>
   )
-}
-
-function useColumns(): number {
-  const renderer = useRenderer()
-  const [width, setWidth] = useState(() => columnsNow(renderer.width))
-  useEffect(() => {
-    const read = () => {
-      const next = columnsNow(renderer.width)
-      setWidth((current) => (current === next ? current : next))
-    }
-    renderer.on("resize", read)
-    const timer = setInterval(read, 200)
-    return () => {
-      renderer.off("resize", read)
-      clearInterval(timer)
-    }
-  }, [renderer])
-  return width
-}
-
-function columnsNow(rendererWidth: number): number {
-  const reported = process.stdout.columns
-  const values = [rendererWidth, reported].filter((value): value is number => typeof value === "number" && value > 0)
-  if (values.length === 0) return 80
-  return Math.min(...values)
 }
 
 function TooNarrow({ theme, width }: { theme: ReturnType<typeof themeFor>; width: number }) {
@@ -173,7 +166,26 @@ function TooNarrow({ theme, width }: { theme: ReturnType<typeof themeFor>; width
 const renderer = await createCliRenderer({
   exitOnCtrlC: false,
   exitSignals: ["SIGTERM", "SIGQUIT", "SIGABRT", "SIGHUP", "SIGPIPE", "SIGBREAK", "SIGBUS"],
+  // A drag sends a resize on every pixel. The default debounce restarts on each
+  // one, so the last frame stays frozen and the new columns keep ghost text.
+  debounceDelay: 0,
+  targetFps: 30,
 })
+// Keep painting through a drag. The signal path still coalesces; this follows
+// the real tty size at 24fps and redraws the cells the emulator just exposed.
+let followSize = true
+setInterval(() => {
+  if (!followSize) return
+  const width = process.stdout.columns
+  const height = process.stdout.rows
+  if (!width || !height) return
+  if (width === renderer.width && height === renderer.height) return
+  try {
+    renderer.resize(width, height)
+  } catch {
+    // The current frame still owns the buffer. The next tick retries.
+  }
+}, 42)
 process.on("SIGINT", () => {
   onInterrupt()
 })

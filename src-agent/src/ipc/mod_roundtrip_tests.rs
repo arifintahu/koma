@@ -125,6 +125,7 @@ fn sample_global_snapshot() -> GlobalSnapshot {
         // Use a populated stage-2 payload (KeyInput) so a full mode projection
         // gets round-trip coverage, not just the unit/struct-light variants.
         mode: ModeSnapshot::KeyInput(KeyInputSnapshot {
+            results: Vec::new(),
             step: 1,
             field: 0,
             endpoint: "https://openrouter.ai/api/v1".to_string(),
@@ -503,6 +504,7 @@ fn mode_snapshot_stage3_variants_roundtrip() {
 
     // Usage: nav tokens + a populated ledger projection (both views' fields).
     let usage = ModeSnapshot::Usage(Box::new(UsageSnapshot {
+        session_totals: None,
         view: "global".to_string(),
         range: "week".to_string(),
         metric: "tokens".to_string(),
