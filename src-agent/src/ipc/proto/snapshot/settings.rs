@@ -22,6 +22,16 @@ pub struct PathPickerSnapshot {
 #[allow(dead_code)]
 pub struct SettingsSnapshot {
     #[serde(default)]
+    pub model_editing: bool,
+    #[serde(default)]
+    pub provider_editing: bool,
+
+    #[serde(default)]
+    pub model_provider_cursor: Option<usize>,
+    #[serde(default)]
+    pub model_provider_choices: Vec<ModelProviderChoice>,
+
+    #[serde(default)]
     pub model_loading: bool,
     #[serde(default)]
     pub model_error: Option<String>,
@@ -292,4 +302,12 @@ pub struct AgentEntry {
     /// extension instead of drowning the flat list.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ext_id: Option<String>,
+}
+
+/// Eligible bindings in canonical provider/OAuth order; index is never filtered.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ModelProviderChoice {
+    pub id: String,
+    pub index: usize,
+    pub label: String,
 }

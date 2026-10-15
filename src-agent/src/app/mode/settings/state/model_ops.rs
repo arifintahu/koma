@@ -194,6 +194,8 @@ impl SettingsState {
             .iter()
             .position(|p| p.api_type != crate::model::app_config::ApiType::KomaFree)
             .unwrap_or(0);
+        self.model_editing = false;
+        self.model_provider_cursor = None;
         self.model_modal = Some(ModelModal::new_add(provider_idx, session_only));
     }
 
@@ -230,6 +232,8 @@ impl SettingsState {
 
     /// Close the add/edit-model modal without saving.
     pub fn close_model_modal(&mut self) {
+        self.model_editing = false;
+        self.model_provider_cursor = None;
         self.model_modal = None;
     }
 

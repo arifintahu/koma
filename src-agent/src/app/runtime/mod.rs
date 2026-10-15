@@ -142,3 +142,5 @@ pub(crate) use actions::session::handle_live_switch;
 pub(super) type Term = Terminal<CrosstermBackend<std::io::Stdout>>;
 
 use ratatui::{backend::CrosstermBackend, Terminal};
+
+pub(crate) use actions::choose_model_provider;

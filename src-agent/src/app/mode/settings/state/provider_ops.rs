@@ -74,6 +74,7 @@ impl SettingsState {
 
     /// Open the add-provider modal with a blank draft.
     pub fn open_provider_modal(&mut self) {
+        self.provider_editing=false;
         self.prov_replace = None;
         self.prov_modal = Some(ProviderModal::new());
     }
@@ -103,6 +104,7 @@ impl SettingsState {
 
     /// Close the add-provider modal without saving.
     pub fn close_provider_modal(&mut self) {
+        self.provider_editing=false;
         self.prov_modal = None;
         self.prov_replace = None;
     }

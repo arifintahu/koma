@@ -1,10 +1,10 @@
 import type { MenuData } from "./data.ts"
 import { identifiedSelection, menuControls, replaceField, select } from "./actions.ts"
-import type { ReactNode } from "react"
+import { useRef, type ReactNode } from "react"
 import { usePaste } from "@opentui/react"
 import type { Theme } from "../theme.ts"
-import { Controls, DraftContext, InputSuspendedContext, Fullscreen, Overlay, nativeMenuInput } from "./bits.tsx"
-import { agentsView, extScreenView, extensionsView, mcpView, remoteView, securityView, storeView } from "./manage.tsx"
+import { Controls, DraftContext, NativeDraftContext, InputSuspendedContext, Fullscreen, Overlay, nativeMenuInput } from "./bits.tsx"
+import { agentFields, mcpFields, agentsView, extScreenView, extensionsView, mcpView, remoteView, securityView, storeView } from "./manage.tsx"
 import {
   attachmentsView,
   bashView,
@@ -44,8 +44,21 @@ export function ModeSurface({
     send({ Paste: { text: new TextDecoder().decode(event.bytes) } })
   })
   const parts = modeParts(mode)
+  const draftKey = `${parts?.name}:${parts?.body.page ?? ""}:${parts?.body.mode ?? ""}:${parts?.body.sub ?? ""}:${parts?.body.step ?? ""}:${parts?.body.page === "quick" && !parts?.body.search_editor ? parts?.body.editing : ""}:${parts?.body.prov_replace ?? ""}:${(parts?.body.model_modal as {uuid?:string} | undefined)?.uuid ?? ""}`
+  const store = useRef({key: draftKey, drafts: new Map()})
+  if (store.current.key !== draftKey) store.current = {key: draftKey, drafts: new Map()}
+  const search = parts?.body.search_editor as {provider?: string} | undefined
+  const searchProvider = useRef(search?.provider)
+  if (searchProvider.current !== search?.provider) { store.current = {key: draftKey, drafts: new Map()}; searchProvider.current = search?.provider }
+  const modelProvider = (parts?.body.model_modal as {provider_idx?: number} | undefined)?.provider_idx
+  const previousModelProvider = useRef(modelProvider)
+  if (previousModelProvider.current !== modelProvider) {
+    store.current.drafts.delete("Model")
+    previousModelProvider.current = modelProvider
+  }
   const originalSend = send
   send = (request) => {
+    if (request && typeof request === "object" && !("MenuReplace" in request)) nativeMenuInput.flush?.()
     if (parts && request && typeof request === "object" && "MenuSelect" in request) {
       const selection = (request as { MenuSelect: { group: string; index: number; id?: string } }).MenuSelect
       originalSend({ MenuSelect: identifiedSelection(parts.name, parts.body, selection) })
@@ -63,8 +76,8 @@ export function ModeSurface({
     )
   }
   return (
-    <Fullscreen title={built.title} hint={typeof built.hint === "string" ? <Controls actions={menuControls(parts!.name, parts!.body)} theme={theme} send={send} /> : built.hint} theme={theme}>
-      <InputSuspendedContext.Provider value={disabled}><DraftContext.Provider value={(field, value) => replaceField(send, field, value)}>{built.children}</DraftContext.Provider></InputSuspendedContext.Provider>
+    <Fullscreen status={menuStatus(parts?.name, parts?.body)} contentHeight={compactFormHeight(parts?.name, parts?.body)} title={built.title} hint={typeof built.hint === "string" ? <Controls actions={menuControls(parts!.name, parts!.body)} theme={theme} send={send} /> : built.hint} theme={theme}>
+      <NativeDraftContext.Provider value={store.current.drafts}><InputSuspendedContext.Provider value={disabled}><DraftContext.Provider value={(field, value) => replaceField(send, field, value)}>{built.children}</DraftContext.Provider></InputSuspendedContext.Provider></NativeDraftContext.Provider>
     </Fullscreen>
   )
 }
@@ -127,4 +140,21 @@ function viewOf(name: string, body: Rec, theme: Theme, wide: boolean, onMove: (i
     default:
       return null
   }
+}
+
+/** Keep short form actions adjacent; long forms retain a bounded browsing area. */
+function compactFormHeight(name: string | undefined, b: Rec | undefined): number | undefined {
+  if (!b) return
+  if (name === "Agents" && ["create", "edit"].includes(String(b.mode)) && !b.editor && !b.tool_picker && !b.model_picker) return agentFields(String(b.mode)).length * 3 + (b.mode === "create" ? 1 : 0)
+  if (name === "Mcp" && ["create", "edit"].includes(String(b.mode))) return mcpFields(String(b.draft_transport) || "stdio").length * 3
+  if (name === "Remote" && String(b.sub).endsWith(":edit")) return 15 + ((b.editor as {error?: string})?.error ? 1 : 0)
+  if (name === "KeyInput" && b.step === 0) return 6
+}
+
+/** A reserved footer row prevents transient work notices from moving content. */
+function menuStatus(name: string | undefined, b: Rec | undefined): string | undefined {
+  if (!b) return
+  if (name === "Settings" && b.page === "model_form") return (b.model_modal as {endpoints_loading?:boolean})?.endpoints_loading ? "Loading routes…" : b.model_loading ? "Loading models…" : ""
+  if (name === "ExtStore") return b.installing ? "Installing…" : b.loading || b.detail_loading ? "Loading catalogue…" : ""
+  if (name === "ExtScreen") return b.waiting ? "Loading…" : ""
 }

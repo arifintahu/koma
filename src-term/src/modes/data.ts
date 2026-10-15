@@ -2,6 +2,10 @@
 export type JsonValue = null | string | number | boolean | JsonValue[] | { [key: string]: JsonValue }
 
 export interface SettingsSnapshot {
+  model_editing: boolean
+  provider_editing: boolean
+  model_provider_cursor: number | null
+  model_provider_choices: Array<ModelProviderChoice>
   model_loading: boolean
   model_error: string | null
   dirty: boolean
@@ -221,6 +225,7 @@ export interface OnboardProviderSnapshot {
 }
 
 export interface KeyInputSnapshot {
+  editing: boolean
   results: Array<string>
   step: number
   field: number
@@ -370,6 +375,12 @@ export interface AttachmentLocatedEvent {
   name: string
 }
 
+export interface ModelProviderChoice {
+  id: string
+  index: number
+  label: string
+}
+
 export interface SearchStatus {
   provider: string
   saved_keys: Array<string>
@@ -377,6 +388,8 @@ export interface SearchStatus {
 
 export interface SearchEditor {
   provider: string
+  confirmed: boolean
+  editing: boolean
   key: string
   error: string | null
 }

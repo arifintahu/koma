@@ -427,10 +427,14 @@ fn handle_search_editor_with(
         return;
     };
     match key.code {
+        KeyCode::Esc if editor.confirmed => {
+            editor.confirmed = false;
+            editor.editing = false;
+        }
         KeyCode::Esc => {
             s.search_editor = None;
         }
-        KeyCode::Up | KeyCode::Left | KeyCode::Down | KeyCode::Right => {
+        KeyCode::Up | KeyCode::Left | KeyCode::Down | KeyCode::Right if !editor.confirmed => {
             let idx = SearchProvider::ALL
                 .iter()
                 .position(|p| *p == editor.provider)
@@ -444,16 +448,20 @@ fn handle_search_editor_with(
             editor.key.0.clear();
             editor.error = None;
         }
-        KeyCode::Backspace => {
+        KeyCode::Backspace if editor.editing => {
             editor.key.0.pop();
             editor.error = None;
         }
         KeyCode::Char(c)
             if !key.modifiers.contains(KeyModifiers::CONTROL)
-                && editor.provider != SearchProvider::BuiltIn =>
+                && editor.editing && editor.provider != SearchProvider::BuiltIn =>
         {
             editor.key.0.push(c);
             editor.error = None;
+        }
+        KeyCode::Enter if !editor.confirmed => {
+            editor.confirmed = true;
+            editor.editing = editor.provider != SearchProvider::BuiltIn;
         }
         KeyCode::Enter => {
             let key = if editor.key.0.is_empty() {
@@ -517,6 +525,9 @@ mod web_search_tests {
             s.search_editor.as_ref().unwrap().provider,
             SearchProvider::Firecrawl
         );
+        assert!(!s.search_editor.as_ref().unwrap().editing);
+        handle_search_editor_with(&mut s, &mut rest, key(KeyCode::Enter), save);
+        assert!(s.search_editor.as_ref().unwrap().editing);
         handle_search_editor_with(&mut s, &mut rest, key(KeyCode::Enter), save);
         assert!(s
             .search_editor
@@ -537,6 +548,8 @@ mod web_search_tests {
         };
         assert_eq!(snapshot.search_editor.unwrap().key.0, "•");
         handle_search_editor_with(&mut s, &mut rest, key(KeyCode::Esc), save);
+        assert!(!s.search_editor.as_ref().unwrap().editing);
+        handle_search_editor_with(&mut s, &mut rest, key(KeyCode::Esc), save);
         assert!(s.search_editor.is_none());
         assert!(rest.config.web_search.firecrawl_key.0.is_empty());
     }
@@ -545,6 +558,8 @@ mod web_search_tests {
         let (mut s, _) = fixture();
         s.search_editor = Some(SearchEditor {
             provider: SearchProvider::Exa,
+            confirmed: true,
+            editing: true,
             ..Default::default()
         });
         let mut app =
@@ -569,6 +584,8 @@ mod web_search_tests {
             provider: SearchProvider::Exa,
             key: SearchKey("secret".into()),
             error: None,
+            confirmed: true,
+            editing: true,
         });
         handle_search_editor_with(&mut s, &mut rest, key(KeyCode::Enter), |c, p, k| {
             commit_selection(c, p, k, |_| Err("Could not save".into()))
@@ -594,6 +611,8 @@ mod web_search_tests {
         handle_search_editor_with(&mut s, &mut rest, key(KeyCode::Enter), save);
         s.search_editor = Some(SearchEditor {
             provider: SearchProvider::Exa,
+            confirmed: true,
+            editing: true,
             ..Default::default()
         });
         handle_search_editor_with(&mut s, &mut rest, key(KeyCode::Enter), save);

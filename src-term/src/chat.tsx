@@ -1,7 +1,8 @@
+import { BoxRenderable, CodeRenderable, type RenderNodeContext } from "@opentui/core"
+import { syntaxClient } from "./syntax.ts"
 import type { Renderable, ScrollBoxRenderable, SyntaxStyle, TextareaRenderable, TextareaAction } from "@opentui/core"
 import { useKeyboard, useRenderer } from "@opentui/react"
 import { charIndexAt, composerIsAhead, mergeComposerChange, utf16Offset } from "./caret.ts"
-import { existsSync } from "node:fs"
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react"
 import {
   CHAT_TURNS_DEFAULT,
@@ -12,7 +13,6 @@ import {
 } from "./history.ts"
 import { PALETTE_VISIBLE, commandSuggestions, commandSuggestionOffset, paletteWindow } from "./palette.ts"
 import { forwardKey } from "./keys.ts"
-import { attachmentFile } from "./paths.ts"
 import {
   showImagePath,
   type Attachment,
@@ -90,7 +90,7 @@ export function Chat({
       {snap.global.toast ? <Toast key={`daemon:${snap.global.toast_event_id ?? snap.global.toast.join(":")}`} id={snap.global.toast_event_id ?? snap.global.toast.join(":")} kind={snap.global.toast[0]} text={snap.global.toast[1]} theme={theme} hidden={notice != null} /> : null}
       {notice ? <Toast key={`local:${notice.id}`} id={notice.id} kind="info" text={notice.text} theme={theme} onDismiss={onNoticeDismiss} /> : null}
       <HistoryPane session={session} theme={theme} syntaxStyle={syntaxStyle} />
-      <Steers session={session} theme={theme} selected={snap.global.pending_steer_sel} />
+      <Steers session={session} theme={theme} selected={snap.global.pending_steer_sel} focused={snap.global.pending_steer_focus} />
       {session.awaiting_approval ? <Approval session={session} theme={theme} send={send} /> : rewind ? (
         <RewindOverlay rewind={rewind} theme={theme} send={send} />
       ) : overlay ? (
@@ -465,14 +465,7 @@ function UserBand({
           ) : null}
         </box>
       </box>
-      {message.attachments?.map((attachment) => (
-        <AttachmentCard
-          key={`${attachment.kind ?? "image"}-${attachment.marker_n}`}
-          attachment={attachment}
-          session={session}
-          theme={theme}
-        />
-      ))}
+      <AttachmentPile attachments={message.attachments ?? []} theme={theme} />
     </box>
   )
 }
@@ -502,7 +495,7 @@ function AssistantCard({ theme, children }: { theme: Theme; children: ReactNode 
   )
 }
 
-function MarkdownBody({
+export function MarkdownBody({
   content,
   syntaxStyle,
   fg,
@@ -517,6 +510,7 @@ function MarkdownBody({
     <markdown
       content={content}
       syntaxStyle={syntaxStyle}
+      treeSitterClient={syntaxClient}
       fg={fg}
       conceal
       {...{ selectable: true }}
@@ -535,7 +529,27 @@ type ListNode = {
 }
 
 /** Keep lists as real blocks, then give each marker a gutter so wrapped lines hang. */
-function renderMarkdownNode(token: { type?: string }, context: { defaultRender: () => Renderable | null }) {
+function renderMarkdownNode(token: { type?: string; lang?: string }, context: RenderNodeContext) {
+  if (token.type === "code") {
+    const code = context.defaultRender()
+    if (!code) return null
+    if (code instanceof CodeRenderable) {
+      code.conceal = false
+      code.drawUnstyledText = true
+      code.wrapMode = "word"
+    }
+    code.marginTop = 0
+    code.marginBottom = 0
+    const frame = new BoxRenderable(code.ctx, {
+      flexDirection: "column", width: "100%", minWidth: 0, flexShrink: 0,
+      border: true, borderStyle: "single", borderColor: context.syntaxStyle.getStyle("conceal")?.fg ?? "#888888",
+      titleColor: context.syntaxStyle.getStyle("default")?.fg,
+      title: token.lang ? ` ${token.lang} ` : undefined,
+      paddingLeft: 1, paddingRight: 1, paddingTop: 1, paddingBottom: 1,
+    })
+    frame.add(code)
+    return frame
+  }
   if (token.type !== "list") return null
   const list = context.defaultRender()
   if (list) dressList(list)
@@ -594,29 +608,13 @@ function Reasoning({
   )
 }
 
-function AttachmentCard({
-  attachment,
-  session,
-  theme,
-}: {
-  attachment: Attachment
-  session: SessionSnap
-  theme: Theme
-}) {
-  if (attachment.kind === "pasted_text") {
-    return (
-      <box border borderStyle="rounded" borderColor={theme.dim} paddingLeft={1} paddingRight={1}>
-        <text fg={theme.dim}>{attachment.label || `Pasted text #${attachment.marker_n}`}</text>
-      </box>
-    )
-  }
-  const path = attachmentFile(session.cwd, session.id, attachment.rel_path)
-  return (
-    <box border borderStyle="rounded" borderColor={theme.dim} paddingLeft={1} paddingRight={1} flexDirection="column">
-      <text fg={theme.dim}>{`image #${attachment.marker_n}`}</text>
-      {existsSync(path) ? <image source={path} protocol="blocks" width={48} height={12} /> : null}
-    </box>
-  )
+export function AttachmentPile({ attachments, theme }: {attachments: Attachment[]; theme: Theme}) {
+  if (!attachments.length) return null
+  return <box flexDirection="row" flexWrap="wrap" columnGap={1} rowGap={0} minWidth={0}>
+    {attachments.map((attachment, index) => <box key={`${attachment.kind}-${attachment.marker_n}-${index}`} maxWidth="100%" border borderStyle="rounded" borderColor={theme.dim} paddingLeft={1} paddingRight={1}>
+      <text fg={theme.dim}>{previewLine(attachment.label || `${attachment.kind === "pasted_text" ? "Pasted text" : "Image"} #${attachment.marker_n}`, 40)}</text>
+    </box>)}
+  </box>
 }
 
 function ToolCard({
@@ -672,7 +670,7 @@ function ToolCard({
               </text>
             </>
           )}
-          {image && existsSync(image) ? <image source={image} protocol="blocks" width={48} height={12} /> : null}
+          {image ? <AttachmentPile attachments={[{kind:"image", marker_n:0, label:"Image attachment", rel_path:image}]} theme={theme} /> : null}
           {result?.content ? (
             <>
               <text fg={theme.dim}>result</text>
@@ -687,13 +685,13 @@ function ToolCard({
   )
 }
 
-function Steers({ session, theme, selected }: { session: SessionSnap; theme: Theme; selected: number }) {
+export function Steers({ session, theme, selected, focused }: { session: SessionSnap; theme: Theme; selected: number; focused: boolean }) {
   if (session.pending_steer.length === 0) return null
   return (
     <box border={["top"]} borderColor={theme.dim} paddingLeft={2} paddingRight={2} flexDirection="column">
       {session.pending_steer.map((text, index) => (
-        <text key={`${index}-${text.slice(0, 12)}`} fg={index === selected ? theme.accent : theme.dim}>
-          {`${index === selected ? "●" : "○"} ${text}${session.pending_steer_attachments[index]?.length ? ` · ${session.pending_steer_attachments[index]!.length} attachments` : ""}`}
+        <text key={`${index}-${text.slice(0, 12)}`} fg={focused && index === selected ? theme.accent : theme.dim}>
+          {`${focused && index === selected ? "●" : "○"} ${text}${session.pending_steer_attachments[index]?.length ? ` · ${session.pending_steer_attachments[index]!.length} attachments` : ""}`}
         </text>
       ))}
     </box>
@@ -1075,7 +1073,7 @@ function Composer({
     <box flexDirection="column" flexShrink={0}>
       {!session.awaiting_approval && snap.global.pending_attachments.length ? <scrollbox height={3} flexShrink={0} scrollY focusable={false} contentOptions={{ flexDirection: "row", flexWrap: "wrap" }}>
         {snap.global.pending_attachments.map((attachment) => <box key={`${attachment.kind}-${attachment.marker_n}`} flexDirection="row" border borderStyle="rounded" borderColor={theme.dim}>
-          <Choice label={previewLine(attachment.label || `${attachment.kind === "pasted_text" ? "Pasted text" : "Image"} #${attachment.marker_n}`, Math.max(8, Math.floor((width - 12) / 2)))} theme={theme} onPress={() => {
+          <Choice neutral label={previewLine(attachment.label || `${attachment.kind === "pasted_text" ? "Pasted text" : "Image"} #${attachment.marker_n}`, Math.max(8, Math.floor((width - 12) / 2)))} theme={theme} onPress={() => {
             if (!focused) return
             keyQueue.current = keyQueue.current.then(async () => {
               if (!await flush()) return
@@ -1087,7 +1085,7 @@ function Composer({
               if (await flush()) send({ SendKey: { code: { Char: "e" }, mods: 4 } })
             })
           }} />
-          <Choice label="×" theme={theme} onPress={() => {
+          <Choice neutral label="×" theme={theme} onPress={() => {
             if (!focused) return
             keyQueue.current = keyQueue.current.then(() => daemonEdit({ RemoveAttachment: { marker_n: attachment.marker_n, kind: attachment.kind ?? "image" } }))
           }} />
@@ -1236,8 +1234,10 @@ function Choice({
   detail,
   theme,
   selected,
+  neutral = false,
   onPress,
 }: {
+  neutral?: boolean
   label: string
   detail?: string
   theme: Theme
@@ -1246,7 +1246,7 @@ function Choice({
 }) {
   const [hot, setHot] = useState(false)
   const bg = selected ? theme.selBg : hot ? theme.panel : theme.bg
-  const labelFg = selected ? theme.selFg : theme.accent
+  const labelFg = selected ? theme.selFg : hot ? theme.accent : neutral ? theme.dim : theme.accent
   const detailFg = selected ? theme.selFg : theme.dim
   return (
     <box

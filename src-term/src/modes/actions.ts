@@ -25,11 +25,16 @@ const char = (label: string, c: string) => button(`${label} (${c})`, { Char: c }
 export function menuControls(name: string, b: Record<string, unknown>): ActionDescriptor[] {
   const mode = b.mode
   if (name === "Settings") {
+    if (b.search_editor) return [(b.search_editor as {confirmed?:boolean}).confirmed ? enter("Save") : enter("Choose provider"), button((b.search_editor as {confirmed?:boolean}).confirmed ? "Return to providers (esc)" : "Cancel (esc)", "Esc")]
+    if (b.model_provider_cursor != null) return [enter("Choose provider"), button("Cancel chooser (esc)", "Esc")]
+    if (b.model_editing || b.provider_editing) return [enter("Confirm field"), button("Browse fields (esc)", "Esc")]
+    if (b.page === "model_form" || b.page === "provider_form") return [enter("Edit / choose"), button("Field (tab)", "Tab"), back]
     const flow = b.oauth_flow as {kind?: string} | undefined
     if (b.page === "oauth" && flow?.kind && flow.kind !== "idle") return oauthControls(flow.kind)
     if (b.page === "appearance") return [enter("Apply"), back]
     return [back]
   }
+  if (name === "KeyInput" && b.step === 0) return [enter(b.editing ? "Continue" : "Edit field"), button("Field (tab)", "Tab"), back]
   if (name === "OnboardProvider" && b.step !== "model_select") return oauthControls((b.oauth_flow as {kind?:string})?.kind ?? "pick")
   if (mode === "delete_confirm" || mode === "uninstall_confirm") return [char(mode === "delete_confirm" ? "Delete" : "Uninstall", "y"), button("Cancel (esc)", "Esc")]
   if (name === "Agents" && b.editor) return b.editor_clear_confirm ? [char("Clear", "y"), char("Keep text", "n")] : [button("Done (esc)", "Esc"), button("Clear (ctrl+x)", { Char: "x" }, 2)]

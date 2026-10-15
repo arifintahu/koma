@@ -230,3 +230,31 @@ test("composer paste replaces native selection and submission waits for the daem
     expect(view.captureCharFrame()).toContain("replacement 🐈")
   }finally{await act(async()=>{await view.dispose()})}
 })
+
+for (const focused of [false, true]) test(`follow-up accent follows actual navigation focus / ${focused}`, async () => {
+  const { Steers } = await import("./chat.tsx")
+  const theme=themeFor("monokai")
+  const session={...snapshot().sessions[0]!,pending_steer:["Queued follow-up"],pending_steer_attachments:[[{kind:"image",marker_n:2,rel_path:"not-rendered.png"}]]}
+  const view=await testRender(<Steers session={session} theme={theme} selected={0} focused={focused}/>,{width:50,height:24})
+  try {
+    await act(async()=>{await view.waitForVisualIdle()})
+    const span=view.captureSpans().lines.flatMap(l=>l.spans).find(s=>s.text.includes("Queued follow-up"))!
+    expect(rgbToHex(span.fg)).toBe(focused ? theme.accent : theme.dim)
+    expect(view.captureCharFrame()).toContain(focused ? "●" : "○")
+  } finally {await act(async()=>{await view.dispose()})}
+})
+test("transcript attachments form a neutral wrapping pile with no image renderers",async()=>{
+  const {AttachmentPile}=await import("./chat.tsx")
+  const theme=themeFor("monokai")
+  const attachments=Array.from({length:6},(_,i)=>({kind:"image",marker_n:i+1,rel_path:"/tmp/existing-or-missing.png",label:`Image #${i+1}`}))
+  const view=await testRender(<AttachmentPile attachments={attachments} theme={theme}/>,{width:50,height:24})
+  try {
+    await act(async()=>{await view.waitForVisualIdle()})
+    const frame=view.captureCharFrame(), rows=frame.split("\n")
+    for(let i=1;i<=6;i++) expect(frame).toContain(`Image #${i}`)
+    expect(rows.findIndex(l=>l.includes("Image #6"))).toBeGreaterThan(rows.findIndex(l=>l.includes("Image #1")))
+    const visit=(node:any):boolean=>node.constructor.name.toLowerCase().includes("imagerenderable") || node.getChildren().some(visit)
+    expect(visit(view.renderer.root)).toBe(false)
+    for(const span of view.captureSpans().lines.flatMap(l=>l.spans).filter(s=>s.text.includes("Image #"))) expect(rgbToHex(span.fg)).toBe(theme.dim)
+  } finally {await act(async()=>{await view.dispose()})}
+})

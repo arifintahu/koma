@@ -129,3 +129,41 @@ release acceptance solely from the automated suite.
 - Real OS clipboard backends and every live provider/security/human gate remain
   external acceptance checks. Native input fixtures, runtime unit tests and an
   isolated socket harness do not establish those environment-specific integrations.
+
+### Form navigation, code rendering and status follow-up (2026-10-15)
+
+The current terminal distinguishes highlighted fields from active native editors.
+Web-search provider selection precedes key editing, and model provider fields open
+an anchored chooser using daemon-projected stable identities and canonical indices.
+Pointer and keyboard confirmation share the runtime binding transition, including
+query/route reset and catalogue refresh. Provider/model/credentials forms expose
+defaulted editing state; single-purpose searches retain autofocus. Native drafts,
+Unicode caret offsets and selections survive returning to browsing. Explicit form
+Cancel actions close the form, while Esc first returns to browsing.
+
+Markdown code tokens now render inside padded square borders with optional language
+labels. Python and Rust parsers/queries are vendored with release and content hashes;
+JavaScript/TypeScript/TSX reuse OpenTUI's local assets. Worker paths and language
+aliases are explicit. Unknown languages remain framed text, including incomplete
+streaming fences and literal backticks. Syntax colors use the active terminal palette.
+
+Unselected follow-ups and pending attachment controls are neutral. Transcript images
+are collapsed into wrapping attachment piles, with image rendering deferred. Native
+image paste, attachment metadata and open/remove operations remain available.
+Refreshing/loading/installing status uses a panel's bottom-right border or a reserved
+footer row so it cannot shift content when it appears.
+
+Verification uses Bun render/input tests, TypeScript, Rust settings/menu/protocol
+checks, `scripts/verify-daemon.py`, and `scripts/verify-form-input.tsx`. The latter
+uses a real isolated daemon plus a local catalogue server and actual OpenTUI keyboard,
+pointer, native selection and bracketed paste. It verifies provider browsing before
+editing, masked drafts and saved-key retention, cancellation/confirmation, catalogue
+refresh, Save/Cancel, and resized 50×24, 80×18, 100×40 and 160×45 layouts. Native code
+color spans are checked for Python, Rust, JavaScript and TypeScript across all ten
+palettes at those dimensions, with local assets under restricted network access.
+Captured frames are `/tmp/koma-form-frames.txt` and `/tmp/koma-code-frames.txt`.
+Shared-focus tests also cover credentials, provider/model/MCP/agent/remote forms,
+help and session searches, selection replacement, exactly-once paste and stable
+transient-status positions. Existing approval, composer and attachment regressions
+remain part of the Bun suite. Live external provider accounts, OAuth logins, SSH hosts
+and future image rendering remain outside this verification.

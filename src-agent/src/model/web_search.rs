@@ -138,6 +138,10 @@ pub(crate) fn commit_selection(
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct SearchEditor {
     pub provider: SearchProvider,
+    #[serde(default)]
+    pub confirmed: bool,
+    #[serde(default)]
+    pub editing: bool,
     pub key: SearchKey,
     pub error: Option<String>,
 }
@@ -145,6 +149,8 @@ impl SearchEditor {
     pub fn masked(&self) -> Self {
         Self {
             provider: self.provider,
+            confirmed: self.confirmed,
+            editing: self.editing,
             key: SearchKey("•".repeat(self.key.0.chars().count())),
             error: self.error.clone(),
         }

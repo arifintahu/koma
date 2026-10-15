@@ -70,6 +70,8 @@ pub(crate) fn shadow_onboard_provider(s: OnboardProviderSnapshot) -> OnboardProv
 /// Rebuild the first-run wizard form ([`KeyInputForm`]) from its projection.
 pub(crate) fn shadow_key_input(f: KeyInputSnapshot) -> KeyInputForm {
     KeyInputForm {
+        editing: f.editing,
+
         step: f.step,
         field: f.field,
         endpoint: f.endpoint,

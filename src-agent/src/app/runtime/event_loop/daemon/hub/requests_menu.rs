@@ -27,11 +27,32 @@ fn menu_action(state: &mut AppState, client: &mut Option<Arc<OpenRouterClient>>,
         .or_else(|| value.as_str()).unwrap_or("");
     ensure!(current == expected, "This menu changed. Refresh and try again.");
     match action {
-        MenuAction::Select { group, index, id } => select(state, &group, index, id.as_deref()),
+        MenuAction::Select { group, index, id } => {
+            if group == "model_providers" {
+                // Validate before taking the mode so errors cannot lose the form.
+                let Mode::Settings(s) = state.mode() else { bail!("Model form closed"); };
+                ensure!(s.model_provider_cursor.is_some(), "Provider chooser closed");
+                let choices=s.mm_provider_choices();
+                let p=choices.iter().find(|p| p.index==index).ok_or_else(|| anyhow::anyhow!("Provider unavailable"))?;
+                identity(id.as_deref(), &p.id)?;
+                let mut mode=state.take_mode();
+                if let Mode::Settings(s) = &mut mode {
+                    crate::app::runtime::choose_model_provider(s, &mut state.rest, index);
+                }
+                state.set_mode(mode);
+            } else { select(state, &group, index, id.as_deref())?; }
+            Ok(())
+        },
         MenuAction::Replace { field, value } => replace(state, &field, value),
         MenuAction::Save => {
             if let Mode::Settings(_) = state.mode() {
-                bail!("Settings apply when activated or confirmed")
+                if let Mode::Settings(s) = state.mode_mut() {
+                    if let Some(e) = s.search_editor.as_mut() { e.confirmed = true; }
+                    else { bail!("Settings apply when activated or confirmed") }
+                }
+                let action = handle_key(state, ratatui::crossterm::event::KeyEvent::new(ratatui::crossterm::event::KeyCode::Enter, ratatui::crossterm::event::KeyModifiers::NONE));
+                apply_action(action, state, client, handle)?;
+                Ok(())
             } else {
                 match state.mode_mut() { Mode::Mcp(s) => s.editing=false, Mode::Agents(s) => s.editing=false, Mode::Remote(s) => s.editing_field=false, _=>{} }
                 let key = crate::ipc::proto::KeyWire { code: crate::ipc::proto::KeyCodeWire::Char('s'), mods: 0 };
@@ -44,6 +65,14 @@ fn menu_action(state: &mut AppState, client: &mut Option<Arc<OpenRouterClient>>,
                 }
                 Ok(())
             }
+        }
+        MenuAction::Discard if matches!(state.mode(), Mode::Settings(_)) => {
+            let Mode::Settings(s) = state.mode_mut() else { unreachable!() };
+            if s.search_editor.is_some() { s.search_editor=None; }
+            else if s.prov_modal.is_some() { s.close_provider_modal(); s.page=settings::SettingsPage::Providers; }
+            else if s.model_modal.is_some() { s.close_model_modal(); s.page=settings::SettingsPage::Models; }
+            else { bail!("This menu has no form to cancel"); }
+            Ok(())
         }
         MenuAction::Discard | MenuAction::KeepEditing => {
             bail!("This menu has no pending screen-level save")
@@ -82,10 +111,10 @@ fn menu_action(state: &mut AppState, client: &mut Option<Arc<OpenRouterClient>>,
                         s.field=fields[(at+if forward {1} else {fields.len()-1})%fields.len()]; return Ok(());
                     }
                     Mode::Settings(s) if s.prov_modal.is_some() => {
-                        let m=s.prov_modal.as_mut().unwrap();m.field=(m.field+if forward {1} else {4})%5;return Ok(());
+                        s.provider_editing=false;let m=s.prov_modal.as_mut().unwrap();m.field=(m.field+if forward {1} else {4})%5;return Ok(());
                     }
                     Mode::Settings(s) if s.model_modal.is_some() => {
-                        let len=s.model_modal_fields().len();let m=s.model_modal.as_mut().unwrap();m.field=(m.field+if forward {1} else {len-1})%len;return Ok(());
+                        s.model_editing=false;s.model_provider_cursor=None;let len=s.model_modal_fields().len();let m=s.model_modal.as_mut().unwrap();m.field=(m.field+if forward {1} else {len-1})%len;return Ok(());
                     }
                     Mode::Remote(s) if s.editor.is_some() => {
                         s.editing_field=false;let e=s.editor.as_mut().unwrap();e.focused=if forward {e.focused.next()} else {e.focused.prev()};return Ok(());
@@ -126,17 +155,30 @@ fn select(state: &mut AppState, group: &str, index: usize, id: Option<&str>) -> 
         Mode::Settings(s) => {
             use settings::{QuickFocus, SettingsPage, OAuthFlowState};
             match group {
+                "search_back" => { let e=s.search_editor.as_mut().ok_or_else(|| anyhow::anyhow!("Search form closed"))?; e.confirmed=false; e.editing=false; }
+                "search_cancel" => { s.search_editor=None; }
                 "appearance" => { s.finish_edit(false); s.quick_focus = QuickFocus::Appearance; s.palette_sel = bounded(index, crate::view::theme::PALETTES.len())?; }
                 "general" => { s.finish_edit(false); s.quick_focus = QuickFocus::General; s.field = bounded(index, settings::GENERAL_FIELDS.len())?; s.editing = false; }
                 "model_results" => { let m=s.model_modal.as_mut().ok_or_else(|| anyhow::anyhow!("Model form closed"))?; m.result_sel=index; }
                 "routes" => { let m=s.model_modal.as_mut().ok_or_else(|| anyhow::anyhow!("Model form closed"))?; m.route_sel=bounded(index, m.endpoints.as_ref().map_or(0, Vec::len)+1)?; }
                 "page" => { s.finish_edit(false); s.page = *[SettingsPage::Quick, SettingsPage::Providers, SettingsPage::OAuth, SettingsPage::Models].get(index).ok_or_else(|| anyhow::anyhow!("Unknown settings page"))?; }
-                _ if s.search_editor.is_some() => { s.search_editor.as_mut().unwrap().provider = *crate::model::web_search::SearchProvider::ALL.get(index).ok_or_else(|| anyhow::anyhow!("Unknown search provider"))?; }
+                _ if s.search_editor.is_some() => {
+                    let e=s.search_editor.as_mut().unwrap();
+                    let provider=*crate::model::web_search::SearchProvider::ALL.get(index).ok_or_else(|| anyhow::anyhow!("Unknown search provider"))?;
+                    if e.provider != provider { e.key.0.clear(); e.error=None; }
+                    e.provider=provider; e.confirmed=true; e.editing=provider!=crate::model::web_search::SearchProvider::BuiltIn;
+                }
                 _ if s.picker.is_some() => { let p = s.picker.as_mut().unwrap(); p.sel = bounded(index, p.matches.len())?; }
                 _ if s.list_editing => { s.list_sel = bounded(index, if s.field == 4 {s.allowed_folders.len()} else {s.workdir.len()})?; }
                 _ if s.mm_role_picker_open() => { let p = s.model_modal.as_mut().unwrap().role_picker.as_mut().unwrap(); p.cursor = bounded(index, p.checked.len())?; }
-                _ if s.prov_modal.is_some() => { s.prov_modal.as_mut().unwrap().field = bounded(index, 5)?; }
-                _ if s.model_modal.is_some() => { let len = s.model_modal_fields().len(); s.model_modal.as_mut().unwrap().field = bounded(index, len)?; }
+                _ if s.prov_modal.is_some() => { s.prov_modal.as_mut().unwrap().field = bounded(index, 5)?; s.provider_editing=index<3; }
+                _ if s.model_modal.is_some() => {
+                    let len = s.model_modal_fields().len(); s.model_modal.as_mut().unwrap().field = bounded(index, len)?;
+                    s.model_editing=matches!(s.mm_current_field(),Some(settings::ModelField::Name | settings::ModelField::Model));
+                    s.model_provider_cursor=if s.mm_current_field()==Some(settings::ModelField::Provider) {
+                        Some(s.mm_provider_choices().iter().position(|p| p.index==s.model_modal.as_ref().unwrap().provider_idx).unwrap_or(0))
+                    } else {None};
+                }
                 _ if matches!(s.oauth_flow, OAuthFlowState::Pick(_)) => { s.oauth_flow = OAuthFlowState::Pick(bounded(index, 8)?); }
                 _ => match s.page {
                     SettingsPage::Quick | SettingsPage::Appearance | SettingsPage::General => {
@@ -175,10 +217,10 @@ fn select(state: &mut AppState, group: &str, index: usize, id: Option<&str>) -> 
         }
         Mode::Security(s) => { if s.health_view {s.health_selected = index;} else {s.selected = index;} }
         Mode::SessionPicker(s) => {s.selected = bounded(index, s.filtered_idx.len())?;}
-        Mode::SessionHub(s) => { if group == "cooking" {s.focus = HubPane::Cooking; s.cooking_selected = bounded(index, s.cooking.len())?;} else {s.focus = HubPane::History; s.history_selected = bounded(index, s.history.len())?;} }
+        Mode::SessionHub(s) => { if group == "cooking" {s.focus = HubPane::Cooking; s.cooking_selected = bounded(index, s.cooking.len())?;} else {s.focus = HubPane::History; s.history_selected = bounded(index, s.history_filtered.len())?;} }
         Mode::Onboard(s) => {s.cursor = bounded(index, 3)?;}
         Mode::OnboardProvider(s) => { if let settings::OAuthFlowState::Pick(cursor) = &mut s.oauth_flow { *cursor = bounded(index, 8)?; } else { s.result_sel = index; } }
-        Mode::KeyInput(s) => { if s.step == 0 {s.field = index;} else {s.result_sel = index;} }
+        Mode::KeyInput(s) => { if s.step == 0 {s.field = bounded(index,2)?; s.editing=true;} else {s.result_sel = index;} }
         _ => bail!("Direct selection is unavailable in this menu"),
     }
     Ok(())
@@ -210,6 +252,8 @@ fn replace(state: &mut AppState, field: &str, value: String) -> Result<()> {
         Mode::Remote(s) => {let e=s.editor.as_mut().ok_or_else(|| anyhow::anyhow!("Host form is closed"))?; match field {"name"=>e.name=value,"user"=>e.user=value,"host"=>e.host=value,"port"=>e.port=value,"key_path"=>e.key_path=value,_=>bail!("Unknown host field")}}
         Mode::OnboardProvider(s) => {if let settings::OAuthFlowState::CodexPaste { input, .. } = &mut s.oauth_flow { *input=value; } else {s.query=value;s.result_sel=0;}}
         Mode::KeyInput(s) => {match field {"endpoint"=>s.endpoint=value,"api_key"=>s.api_key=value,"query"=>{s.query=value;s.result_sel=0;},_=>bail!("Unknown credential field")}}
+        Mode::SessionPicker(s) => { ensure!(field=="query", "Unknown session search field"); s.query=value; s.refilter(); }
+        Mode::SessionHub(s) => { ensure!(field=="history_query", "Unknown history search field"); s.history_query=value; s.refilter_history(); }
         Mode::Help(s) => {s.query = value; s.refilter();}
         Mode::Notifications(s) => { s.query=value;s.cursor=0;}
         _ => bail!("This menu has no editable field"),
@@ -287,4 +331,45 @@ mod tests {
         let m=s.prov_modal.as_mut().unwrap();m.name="Renamed".into();m.api_key.clear();
         s.save_provider_modal();let p=&s.providers[s.prov_sel];assert_eq!(p.uuid,"provider");assert_eq!(p.api_key,"secret");assert_eq!(p.name,"Renamed");
     }
+    #[test]
+    fn provider_chooser_uses_canonical_indices_and_cancels_without_mutation() {
+        let mut state=state(); let mut client=None; let rt=tokio::runtime::Runtime::new().unwrap();
+        let Mode::Settings(s)=state.mode_mut() else {panic!()};
+        let provider=|id:&str,api_type| settings::ProviderDraft {uuid:id.into(),name:id.into(),endpoint:format!("http://127.0.0.1:9/{id}"),api_type,api_key:"fixture".into(),ext_id:None};
+        s.providers=vec![provider("first",Default::default()),provider("free",crate::model::app_config::ApiType::KomaFree),provider("last",Default::default())];
+        s.oauth_drafts=vec![settings::OAuthDraft {uuid:"oauth".into(),label:"OAuth connection".into(),provider:crate::model::app_config::OAuthProvider::Codex,key:String::new(),status:"active".into()}];
+        s.page=settings::SettingsPage::ModelForm; s.open_model_modal_add(false);
+        let choices=s.mm_provider_choices();
+        assert_eq!(choices.iter().map(|p|p.index).collect::<Vec<_>>(),vec![0,2,3]);
+        s.model_modal.as_mut().unwrap().field=1;
+        s.clean_fingerprint=s.fingerprint();
+        menu_action(&mut state,&mut client,rt.handle(),"Settings",key(KeyCodeWire::Enter)).unwrap();
+        menu_action(&mut state,&mut client,rt.handle(),"Settings",key(KeyCodeWire::Down)).unwrap();
+        assert!(matches!(state.mode(),Mode::Settings(s) if s.model_provider_cursor==Some(1) && s.model_modal.as_ref().unwrap().provider_idx==0));
+        menu_action(&mut state,&mut client,rt.handle(),"Settings",key(KeyCodeWire::Esc)).unwrap();
+        assert!(matches!(state.mode(),Mode::Settings(s) if s.model_provider_cursor.is_none() && s.model_modal.as_ref().unwrap().provider_idx==0));
+        menu_action(&mut state,&mut client,rt.handle(),"Settings",key(KeyCodeWire::Enter)).unwrap();
+        let Mode::Settings(s)=state.mode_mut() else {panic!()}; let m=s.model_modal.as_mut().unwrap();
+        m.query="old query".into();m.route=Some("old upstream".into());m.endpoints_for=Some("old-model".into());m.endpoints_loading=true;
+        let choose=|id:&str| MenuAction::Select {group:"model_providers".into(), index:2, id:Some(id.into())};
+        assert!(menu_action(&mut state,&mut client,rt.handle(),"Settings",choose("stale")).is_err());
+        assert!(matches!(state.mode(),Mode::Settings(s) if s.model_modal.as_ref().unwrap().query=="old query"));
+        menu_action(&mut state,&mut client,rt.handle(),"Settings",choose("last")).unwrap();
+        let Mode::Settings(s)=state.mode() else {panic!()};let m=s.model_modal.as_ref().unwrap();
+        assert_eq!(m.provider_idx,2);assert!(m.query.is_empty());assert!(m.route.is_none());assert!(m.endpoints_for.is_none());assert!(!m.endpoints_loading);
+    }
+    #[test]
+    fn search_pointer_switch_clears_unsaved_key_and_cancel_closes_form() {
+        let mut state=state();let mut client=None;let rt=tokio::runtime::Runtime::new().unwrap();
+        let Mode::Settings(s)=state.mode_mut() else {panic!()};
+        s.search_editor=Some(crate::model::web_search::SearchEditor::default());
+        select(&mut state,"active",2,None).unwrap();replace(&mut state,"search_key","draft secret".into()).unwrap();
+        select(&mut state,"search_back",0,None).unwrap();
+        assert!(matches!(state.mode(),Mode::Settings(s) if !s.search_editor.as_ref().unwrap().editing));
+        select(&mut state,"active",1,None).unwrap();
+        assert!(matches!(state.mode(),Mode::Settings(s) if s.search_editor.as_ref().unwrap().key.0.is_empty() && s.search_editor.as_ref().unwrap().editing));
+        menu_action(&mut state,&mut client,rt.handle(),"Settings",MenuAction::Discard).unwrap();
+        assert!(matches!(state.mode(),Mode::Settings(s) if s.search_editor.is_none()));
+    }
+
 }

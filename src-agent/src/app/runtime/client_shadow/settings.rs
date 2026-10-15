@@ -26,6 +26,11 @@ use crate::model::settings::{InternetMode, MouseCapture, Settings};
 pub(crate) fn shadow_settings(s: SettingsSnapshot) -> SettingsState {
     SettingsState {
         clean_fingerprint: 0,
+        model_editing: s.model_editing,
+        provider_editing: s.provider_editing,
+
+        model_provider_cursor: s.model_provider_cursor,
+
         edit_original: None,
         web_search: s.web_search,
         search_editor: s.search_editor,

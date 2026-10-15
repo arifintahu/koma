@@ -33,7 +33,7 @@ export function settingsView(
   send: (request: unknown) => void,
 ) {
   const page = str(body.page) || "quick"
-  if (body.search_editor) return pageOf(tabs(0, theme), "↑↓ choose provider · Paste API key · Esc cancel", searchEditor(body, theme, send))
+  if (body.search_editor) return pageOf(tabs(0, theme), "↑↓ browse · Enter choose / save · Esc back", searchEditor(body, theme, send))
   if (body.picker) return pageOf(tabs(tabIndex(page), theme), "type to filter · enter pick · esc cancel", pathPicker(rec(body.picker), theme, _onMove, send))
   if (page === "provider_form") return pageOf(tabs(1, theme), "type  ·  enter next  ·  esc back", providerForm(body, theme, _onMove, send))
   if (page === "model_form") return pageOf(tabs(3, theme), "tab next field · enter select · esc cancel", modelForm(body, theme, send))
@@ -123,7 +123,7 @@ function providerDash(body: Rec, theme: Theme, wide: boolean, send: (request: un
   }))
   return <box flexGrow={1} flexBasis={0} minHeight={0} flexDirection="column">
     <Panel title="Providers" hot theme={theme} actions={<Action label="+ Add (a)" primary={selected === list.length} theme={theme} onPress={() => sendKey(send, { Char: "a" })} />}>
-      <Lines rows={lines} selected={selected < list.length ? selected : -1} theme={theme} onPress={(index) => nudge(send, selected, index)} />
+      <Lines rows={lines} selected={selected < list.length ? selected : -1} theme={theme} onPress={(index) => select(send, index)} />
     </Panel>
     {body.prov_delete_armed ? <Note text="Ctrl+X again deletes this provider" theme={theme} color={theme.warn} /> : null}
     {str(body.prov_msg) ? <Note text={str(body.prov_msg)} theme={theme} /> : null}
@@ -141,7 +141,7 @@ function oauthDash(body: Rec, theme: Theme, wide: boolean, send: (request: unkno
   }))
   return <box flexGrow={1} flexBasis={0} minHeight={0} flexDirection="column">
     <Panel title="OAuth" hot theme={theme} actions={<Action label="+ Connect (a)" primary={selected === list.length} theme={theme} onPress={() => sendKey(send, { Char: "a" })} />}>
-      <Lines rows={lines} selected={selected < list.length ? selected : -1} theme={theme} onPress={(index) => nudge(send, selected, index)} />
+      <Lines rows={lines} selected={selected < list.length ? selected : -1} theme={theme} onPress={(index) => select(send, index)} />
     </Panel>
     {body.oauth_armed != null && body.oauth_armed !== false ? <Note text="Ctrl+X again deletes this connection" theme={theme} color={theme.warn} /> : null}
   </box>
@@ -258,12 +258,12 @@ function providerForm(body: Rec, theme: Theme, onMove: (index: number) => void, 
       <text fg={theme.fg}>{body.prov_replace != null ? "Edit this provider" : "Add a provider"}</text>
       <text fg={theme.dim}>Tab changes fields. Enter continues. Blank keys retain existing credentials.</text>
       {str(modal.api_type) ? <text fg={theme.dim}>{`Kind  ${str(modal.api_type)}`}</text> : null}
-      <scrollbox flexGrow={1} flexBasis={0} minHeight={0} scrollY focusable={false}>
-        {inputs.map((row, index) => <InputField key={row.label} field={row.label} secret={row.label === "API key"} label={row.label} value={row.value === "—" ? "" : row.value} placeholder={row.empty} active={field === index} theme={theme} onPress={() => onMove(index)} />)}
+      <scrollbox flexGrow={1} flexBasis={0} maxHeight={9} minHeight={0} scrollY focusable={false}>
+        {inputs.map((row, index) => <InputField key={row.label} field={row.label} secret={row.label === "API key"} label={row.label} value={row.value === "—" ? "" : row.value} placeholder={row.empty} active={field === index} editing={field === index && flag(body.provider_editing)} theme={theme} onPress={() => onMove(index)} />)}
       </scrollbox>
       <box flexDirection="row" flexShrink={0} gap={1}>
         <Action label="Save provider" primary={field === 3} theme={theme} onPress={() => { onMove(3); sendKey(send, "Enter") }} />
-        <Action label="Cancel" theme={theme} onPress={() => sendKey(send, "Esc")} />
+        <Action label="Cancel" theme={theme} onPress={() => send({MenuAction: "Discard"})} />
       </box>
     </box>
   )
@@ -317,17 +317,16 @@ function modelForm(body: Rec, theme: Theme, send: (request: unknown) => void) {
   // only outside those submodes. Move forward to the last field before going back.
   const move = (index: number) => select(send, index)
   const results = strings(body.model_results)
+  const providerOpen = active === "provider" && body.model_provider_cursor != null
   return <box flexDirection="column" flexGrow={1} flexBasis={0} minHeight={0} gap={1}>
-    {body.model_loading ? <Note text="Loading model catalogue…" color={theme.info} theme={theme} /> : null}
     {body.model_error ? <Note text={str(body.model_error)} color={theme.error} theme={theme} /> : null}
-    {modal.endpoints_loading ? <Note text="Loading provider routes…" color={theme.info} theme={theme} /> : null}
     <Note text={flag(modal.session_only) ? "Available in this session" : "Available in all sessions"} theme={theme} />
-    <FieldList rows={fields.filter((field) => field !== "save" && field !== "cancel").map((field) => ({ label: field === "role" ? "Roles" : field[0]!.toUpperCase() + field.slice(1), detail: values[field] }))} selected={selected} theme={theme} editing={active === "name" || active === "model"} onPress={move} />
-    {active === "provider" ? <box flexDirection="row" flexShrink={0}><Action label="Previous provider" theme={theme} onPress={() => sendKey(send, "Left")} /><Action label="Next provider" theme={theme} onPress={() => sendKey(send, "Right")} /></box> : null}
+    <FieldList rows={providerOpen ? [{label: "Provider", detail: values.provider}] : fields.filter((field) => field !== "save" && field !== "cancel").map((field) => ({ label: field === "role" ? "Roles" : field[0]!.toUpperCase() + field.slice(1), detail: values[field] }))} selected={providerOpen ? 0 : selected} theme={theme} editing={Boolean(body.model_editing) && (active === "name" || active === "model")} onPress={providerOpen ? () => move(fields.indexOf("provider")) : move} />
+    {providerOpen ? <Panel title="Choose provider" maxLines={Math.max(1, Math.min(4, rows(body.model_provider_choices).length))} hot theme={theme}><Lines rows={rows(body.model_provider_choices).map((p) => ({label: str(p.label), detail: num(p.index) === num(modal.provider_idx) ? "current" : ""}))} selected={num(body.model_provider_cursor)} theme={theme} onPress={(i) => { const p=rows(body.model_provider_choices)[i]; if(p) select(send, num(p.index), "model_providers", str(p.id)) }} /></Panel> : null}
     {active === "role" ? <Action label="Choose roles" theme={theme} onPress={() => sendKey(send, "Enter")} /> : null}
-    {active === "model" && str(modal.query) ? <Panel title={`Models · ${results.length}`} hot theme={theme}><Lines rows={results.map((label) => ({ label }))} selected={num(modal.result_sel)} theme={theme} onPress={(index) => select(send, index, "model_results")} /></Panel> : null}
-    {active === "route" ? <Panel title="Route" hot theme={theme}><Lines rows={[{ label: "Auto" }, ...rows(modal.endpoints).map((row) => ({ label: str(row.provider_name) || str(row.name) }))]} selected={num(modal.route_sel)} theme={theme} onPress={(index) => select(send, index, "routes")} /></Panel> : null}
-    <box flexDirection="row" flexShrink={0} gap={1}><Action label="Save model" primary={active === "save"} theme={theme} onPress={() => { move(fields.indexOf("save")); sendKey(send, "Enter") }} /><Action label="Cancel" theme={theme} onPress={() => sendKey(send, "Esc")} /></box>
+    {active === "model" && str(modal.query) ? <Panel title={`Models · ${results.length}`} hot theme={theme}><Lines rows={results.map((label) => ({ label }))} selected={num(modal.result_sel)} theme={theme} onPress={(index) => { select(send, index, "model_results"); sendKey(send, "Enter") }} /></Panel> : null}
+    {active === "route" ? <Panel title="Route" hot theme={theme}><Lines rows={[{ label: "Auto" }, ...rows(modal.endpoints).map((row) => ({ label: str(row.provider_name) || str(row.name) }))]} selected={num(modal.route_sel)} theme={theme} onPress={(index) => { select(send, index, "routes"); sendKey(send, "Enter") }} /></Panel> : null}
+    <box flexDirection="row" flexShrink={0} gap={1}><Action label="Save model" primary={active === "save"} theme={theme} onPress={() => { move(fields.indexOf("save")); sendKey(send, "Enter") }} /><Action label="Cancel" theme={theme} onPress={() => send({MenuAction: "Discard"})} /></box>
   </box>
 }
 
@@ -349,16 +348,14 @@ function searchEditor(body: Rec, theme: Theme, send: (request: unknown) => void)
   const providers = ["built_in", "firecrawl", "tavily", "exa"]
   const selected = Math.max(0, providers.indexOf(current))
   const saved = strings(rec(body.web_search).saved_keys).includes(current)
-  return <box flexDirection="column" flexGrow={1} flexBasis={0} minHeight={0} gap={1}>
-    <Panel title="Web search provider" maxLines={4} hot theme={theme}>
-      <Lines rows={providers.map((name) => ({ label: labelProvider(name), detail: name === searchName(body.web_search) ? "current" : "" }))} selected={selected} theme={theme} onPress={(index) => nudge(send, selected, index)} />
+  return <box flexDirection="column" minHeight={0} gap={1}>
+    <Panel title="Web search provider" maxLines={4} status={str(editor.error) || (saved && current !== "built_in" ? "Saved API key" : undefined)} hot theme={theme}>
+      <Lines rows={providers.map((name) => ({ label: labelProvider(name), detail: name === searchName(body.web_search) ? "current" : "" }))} selected={selected} theme={theme} onPress={(index) => select(send, index)} />
     </Panel>
     <box flexDirection="column" flexShrink={0}>
-      {current === "built_in" ? <Note text="DuckDuckGo is ready to use. No API key needed." theme={theme} /> : <InputField field="search_key" secret label={`${labelProvider(current)} API key`} value={str(editor.key)} placeholder={saved ? "Paste a replacement, or leave blank to keep saved key" : "Paste your API key"} active theme={theme} />}
-      {saved && current !== "built_in" ? <Note text="A saved API key is available." theme={theme} /> : null}
-      {str(editor.error) ? <Note text={str(editor.error)} theme={theme} color={theme.error} /> : null}
+      {current === "built_in" ? <Note text="DuckDuckGo is ready to use. No API key needed." theme={theme} /> : <InputField field="search_key" secret label={`${labelProvider(current)} API key`} value={str(editor.key)} placeholder={saved ? "Paste a replacement, or leave blank to keep saved key" : "Paste your API key"} active={Boolean(editor.editing)} editing={Boolean(editor.editing)} theme={theme} onPress={() => select(send, selected)} />}
     </box>
-    <box flexDirection="row" flexShrink={0} gap={1}><Action label="Save search provider" primary theme={theme} onPress={() => sendKey(send, "Enter")} /><Action label="Cancel" theme={theme} onPress={() => sendKey(send, "Esc")} /></box>
+    <box flexDirection="row" flexWrap="wrap" flexShrink={0} gap={1}><Action label="Save search provider" primary theme={theme} onPress={() => send({MenuAction: "Save"})} /><Action label="Return to providers" theme={theme} onPress={() => select(send, 0, "search_back")} /><Action label="Cancel" theme={theme} onPress={() => select(send, 0, "search_cancel")} /></box>
   </box>
 }
 

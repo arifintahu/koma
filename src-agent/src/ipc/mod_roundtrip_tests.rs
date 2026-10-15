@@ -126,6 +126,8 @@ fn sample_global_snapshot() -> GlobalSnapshot {
         // Use a populated stage-2 payload (KeyInput) so a full mode projection
         // gets round-trip coverage, not just the unit/struct-light variants.
         mode: ModeSnapshot::KeyInput(KeyInputSnapshot {
+            editing: false,
+
             results: Vec::new(),
             step: 1,
             field: 0,

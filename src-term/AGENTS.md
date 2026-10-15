@@ -182,3 +182,46 @@ settings persistence.
 - OpenTUI textarea `virtualLineCount` is viewport-limited in 0.6.5. Composer height
   must use `editorView.getTotalVirtualLineCount()` after a renderer frame, with
   `minWidth={0}` and `flexBasis={0}` so long content receives a bounded wrap width.
+
+## Form navigation and transient status (2026-10-15)
+
+- Highlighting a field is browsing. Mixed forms start without native input focus;
+  Enter or clicking an editable field activates its editor. Esc leaves editing
+  before leaving the form. Keep intentional autofocus for dedicated searches and
+  multiline editors; result-list arrows and editor arrows retain their own roles.
+- Web-search settings start in provider selection. Arrows browse; Enter/click
+  confirms. API providers then edit a masked key; DuckDuckGo needs no key.
+  Return to providers is visible, Esc returns there before cancelling, and changing
+  provider clears its unsaved key. Blank replacement keys retain saved credentials.
+- Model provider fields open a compact anchored chooser on Enter/click. Use the
+  daemon's eligible provider/OAuth choices, stable IDs and canonical indices.
+  Arrows only browse; Enter/click commits; Esc preserves the original binding.
+  Use the shared runtime provider helper for query, route and catalogue changes.
+- Native drafts, selections and caret offsets survive browsing/editing transitions.
+  Scope cached drafts to the form and provider; discard them with the form.
+  Flush changed native content before dependent actions, preserving exactly-once
+  bracketed paste. Keep Save/Cancel adjacent in short forms and protected in long ones.
+- Code blocks are the explicit square-border exception. Render parser code tokens,
+  with language labels, inner padding and width-aware wrapping. Never split message
+  contents with a fence regex. Preserve indentation, Unicode and literal backticks,
+  including streamed and incomplete fences. Python/Rust assets and source hashes
+  live in `assets/parsers`; JS/TS use OpenTUI's shipped assets. No runtime downloads.
+- Unselected queued follow-ups and attachment controls use neutral colors. Apply
+  the accent to follow-ups only while follow-up navigation actually owns focus.
+- Do not render images in the terminal yet. Show compact neutral attachment piles,
+  laid out horizontally and wrapping onto new rows. Preserve attachment metadata,
+  open/remove controls and native image paste support for future rendering work.
+- Transient Refreshing/Loading/Installing notices belong at the bottom-right of a
+  bordered panel or in a reserved footer status row. They must not insert/remove
+  content rows or shift lists and fields while toggling. Preserve useful errors.
+
+Verification: `scripts/verify-form-input.tsx` exercises actual OpenTUI keyboard,
+pointer and native selection/paste against an isolated daemon and local catalogue
+server. Build the daemon first, then run `.tools/bun scripts/verify-form-input.tsx`.
+It captures `/tmp/koma-form-frames.txt` at 50×24, 80×18, 100×40 and 160×45.
+`src/markdown.test.tsx` checks real parsers, aliases and captured native color spans
+for all four languages and ten themes; it exports `/tmp/koma-code-frames.txt`.
+`src/modes/focus-status.test.tsx` covers shared focus, exactly-once selection paste
+and stable loading positions. These checks use fixtures and local services; they
+are not verification of live provider accounts, OAuth flows, remote hosts or a
+future image renderer. Keep the existing daemon harness and Rust protocol checks.

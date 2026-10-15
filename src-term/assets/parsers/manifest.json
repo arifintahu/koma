@@ -1,0 +1,20 @@
+{
+  "wasm_source": {
+    "package": "tree-sitter-wasms",
+    "version": "0.1.13",
+    "archive": "https://registry.npmjs.org/tree-sitter-wasms/-/tree-sitter-wasms-0.1.13.tgz",
+    "archive_sha256": "66a54a9bbb2685e8f61b458cef1474db54e72979ee2de168e8b602b562350dd0"
+  },
+  "queries": {
+    "python": "tree-sitter/tree-sitter-python@v0.21.0",
+    "rust": "tree-sitter/tree-sitter-rust@v0.20.4"
+  },
+  "sha256": {
+    "python/LICENSE": "d724405ce238a22c0d35769c5a36b386ad5958192efe8bbb304fb2896254575f",
+    "python/highlights.scm": "9d225022706b9fe51d7e241be1f9e2f98accaa1a5dedb065fcd9b5e0d83f5eb0",
+    "python/tree-sitter-python.wasm": "9056d0fb0c337810d019fae350e8167786119da98f0f282aceae7ab89ee8253b",
+    "rust/LICENSE": "31d5b6f4243d5c7c6e1c4ebbbb9f6407bd1457a08bcc4f706521710341acba36",
+    "rust/highlights.scm": "1121094caebe76ff176fe567bae9de3b2bd37c88bf8ed81a62d156ff5ad747e8",
+    "rust/tree-sitter-rust.wasm": "4409921a70d0aa5bec7d1d7ce809a557a8ee1cf6ace901e3ac6a76e62cfea903"
+  }
+}

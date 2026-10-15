@@ -7,8 +7,10 @@ import type { Theme } from "../theme.ts"
 import { select, type ActionDescriptor } from "./actions.ts"
 
 export const InputSuspendedContext = createContext(false)
+type NativeDraft = { text: string; cursor: number; selection: {start: number; end: number} | null }
+export const NativeDraftContext = createContext<Map<string, NativeDraft> | null>(null)
 export const DraftContext = createContext<((field: string, value: string) => void) | null>(null)
-export const nativeMenuInput: { current: TextareaRenderable | null; multiline: boolean; listNavigation: boolean } = { current: null, multiline: false, listNavigation: false }
+export const nativeMenuInput: { current: TextareaRenderable | null; multiline: boolean; listNavigation: boolean; flush?: () => void } = { current: null, multiline: false, listNavigation: false }
 
 const FullscreenContext = createContext(false)
 
@@ -17,7 +19,11 @@ export function Fullscreen({
   hint,
   theme,
   children,
+  contentHeight,
+  status,
 }: {
+  status?: string
+  contentHeight?: number
   title: ReactNode
   hint: ReactNode
   theme: Theme
@@ -29,11 +35,12 @@ export function Fullscreen({
       <box flexShrink={0} minHeight={1}>
         {typeof title === "string" ? <text fg={theme.accent}>{` Koma / ${title}`}</text> : title}
       </box>
-      <box flexGrow={1} flexBasis={0} minHeight={0} flexDirection="column">
+      <box flexGrow={1} flexBasis={0} maxHeight={contentHeight} minHeight={0} flexDirection="column">
         {children}
       </box>
       <box flexShrink={0} flexDirection="column">
         {typeof hint === "string" ? <text fg={theme.dim}>{` ${hint}`}</text> : hint}
+        {status !== undefined ? <box height={1} flexDirection="row" justifyContent="flex-end"><text fg={theme.info} wrapMode="none">{status}</text></box> : null}
       </box>
     </box>
     </FullscreenContext.Provider>
@@ -206,7 +213,7 @@ export function FieldList({
   const { ref, height } = useBodyHeight(12)
   const start = paletteWindow(0, selected, rows.length, Math.max(1, Math.floor(height / 3)))
   return (
-    <box ref={ref} flexDirection="column" flexGrow={1} flexBasis={0} minHeight={0} overflow="hidden">
+    <box ref={ref} flexDirection="column" flexGrow={1} flexBasis={0} maxHeight={rows.length * 3} minHeight={0} overflow="hidden">
       {rows.slice(start, start + Math.max(1, Math.floor(height / 3))).map((row, offset) => row.toggle != null
         ? <box key={start + offset} height={3} flexShrink={0} paddingTop={1} paddingBottom={1}><LineRow row={row} on={start + offset === selected} theme={theme} full={full} onPress={() => onPress(start + offset)} /></box>
         : <InputField key={start + offset} field={row.label} label={row.label} value={row.detail ?? ""} active={start + offset === selected} editing={editing && start + offset === selected} theme={theme} onPress={() => onPress(start + offset)} />)}
@@ -248,6 +255,7 @@ export function Panel({
   mark,
   actions,
   maxLines,
+  status,
   hot,
   theme,
   children,
@@ -259,6 +267,7 @@ export function Panel({
   actions?: ReactNode
   /** Content rows. When set, the box does not grow past this. */
   maxLines?: number
+  status?: string
   hot: boolean
   theme: Theme
   children: ReactNode
@@ -274,7 +283,7 @@ export function Panel({
       overflow="hidden"
       flexDirection="column"
     >
-      <box border borderStyle="rounded" borderColor={hot ? theme.accent : theme.dim} title={` ${title} `} titleColor={mark != null ? hot ? theme.fg : theme.dim : hot ? theme.accent : theme.dim} flexGrow={1} flexBasis={0} minHeight={0} minWidth={0} overflow="hidden" flexDirection="column">
+      <box border borderStyle="rounded" borderColor={hot ? theme.accent : theme.dim} title={` ${title} `} bottomTitle={status ? ` ${status} ` : undefined} bottomTitleAlignment="right" titleColor={mark != null ? hot ? theme.fg : theme.dim : hot ? theme.accent : theme.dim} flexGrow={1} flexBasis={0} minHeight={0} minWidth={0} overflow="hidden" flexDirection="column">
         {children}
       </box>
       {mark != null && mark >= 0 && mark < title.length ? <text position="absolute" left={3 + mark} top={0} height={1} width={1} zIndex={1} fg={theme.accent} bg={theme.bg}>{title[mark]}</text> : null}
@@ -310,7 +319,7 @@ export function InputField({ label, value, placeholder = "Not set", active = fal
 }) {
   const update = useContext(DraftContext)
   const { ref, width } = useBodyHeight(3)
-  if ((onChange || update && field) && editing) return <EditableField label={label} value={value} placeholder={placeholder} theme={theme} secret={secret} listNavigation={["query", "Model", "directory"].includes(field ?? "")} onChange={onChange ?? ((next) => update!(field!, next))} />
+  if ((onChange || update && field) && editing) return <EditableField key={label} label={label} value={value} placeholder={placeholder} theme={theme} secret={secret} listNavigation={["query", "history_query", "Model", "directory"].includes(field ?? "")} onChange={onChange ?? ((next) => update!(field!, next))} />
   const chars = [...value]
   const capacity = Math.max(1, width - 5)
   const shown = editing && chars.length > capacity ? `…${chars.slice(-(capacity - 1)).join("")}` : value
@@ -340,22 +349,37 @@ export function Controls({ actions, theme, send }: { actions: ActionDescriptor[]
 }
 
 function EditableField({ label, value, placeholder, secret, theme, onChange, listNavigation }: { label: string; value: string; placeholder: string; secret: boolean; theme: Theme; onChange: (value: string) => void; listNavigation: boolean }) {
+  const contextDrafts = useContext(NativeDraftContext)
+  const localDrafts = useRef(new Map<string, NativeDraft>())
+  const drafts = contextDrafts ?? localDrafts.current
   const suspended = useContext(InputSuspendedContext)
   const ref = useRef<InputRenderable | null>(null)
-  const [length, setLength] = useState(0)
-  const initial = useRef(secret ? "" : value)
+  const saved = drafts.get(label)
+  const initial = useRef(saved?.text ?? (secret ? "" : value))
+  const [length, setLength] = useState([...initial.current].length)
+  const lastSent = useRef(initial.current)
+  const emit = (text: string) => { if (text !== lastSent.current) { lastSent.current = text; onChange(text) } }
+  const remember = () => {
+    const node = ref.current
+    if (node) drafts.set(label, {text: node.plainText, cursor: node.cursorOffset, selection: node.editorView.getSelection()})
+  }
   // Native buffer owns cursor, selection, paste and draft. Snapshot refreshes
   // cannot replace this input while the user is editing it.
   useEffect(() => {
     const node = ref.current
+    if (node && saved) {
+      node.cursorOffset = saved.cursor
+      if (saved.selection) node.setSelection(saved.selection.start, saved.selection.end)
+    }
     nativeMenuInput.current = node
+    nativeMenuInput.flush = () => { if (node) { remember(); emit(node.plainText) } }
     nativeMenuInput.multiline = false
     nativeMenuInput.listNavigation = listNavigation
-    return () => { if (nativeMenuInput.current === node) nativeMenuInput.current = null }
+    return () => { remember(); if (nativeMenuInput.current === node) { nativeMenuInput.current = null; nativeMenuInput.flush = undefined } }
   }, [])
   return <box height={3} flexShrink={0} border borderStyle="rounded" borderColor={theme.accent} title={` ${label} `} titleColor={theme.accent} flexDirection="column">
     <box height={1} paddingLeft={1} paddingRight={1}>
-      <input ref={ref} flexGrow={1} focused={!suspended} keyBindings={[{ name: "a", ctrl: true, action: "select-all" }]} value={initial.current} placeholder={placeholder} textColor={secret ? theme.bg : theme.fg} focusedTextColor={secret ? theme.bg : theme.fg} backgroundColor={theme.bg} focusedBackgroundColor={theme.bg} cursorColor={theme.accent} onInput={(next: string) => { setLength([...next].length); onChange(next) }} />
+      <input ref={ref} flexGrow={1} focused={!suspended} keyBindings={[{ name: "a", ctrl: true, action: "select-all" }]} value={initial.current} placeholder={placeholder} textColor={secret ? theme.bg : theme.fg} focusedTextColor={secret ? theme.bg : theme.fg} backgroundColor={theme.bg} focusedBackgroundColor={theme.bg} cursorColor={theme.accent} onCursorChange={remember} onInput={(next: string) => { remember(); setLength([...next].length); emit(next) }} />
       {secret ? <box position="absolute" left={0} top={0}><text fg={theme.fg}>{"•".repeat(Math.min(60, length))}</text></box> : null}
     </box>
   </box>

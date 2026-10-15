@@ -176,6 +176,8 @@ pub fn onboard_provider_snapshot(op: &OnboardProviderState) -> OnboardProviderSn
 
 pub fn key_input_snapshot(f: &KeyInputForm) -> KeyInputSnapshot {
     KeyInputSnapshot {
+        editing: f.editing,
+
         results: Vec::new(),
         step: f.step,
         field: f.field,
@@ -258,6 +260,12 @@ pub fn history_entry_snapshot(e: &HistoryEntry) -> HistoryEntrySnapshot {
 pub fn settings_snapshot(st: &SettingsState) -> SettingsSnapshot {
     SettingsSnapshot {
         model_loading: false,
+        model_editing: st.model_editing,
+        provider_editing: st.provider_editing,
+
+        model_provider_cursor: st.model_provider_cursor,
+        model_provider_choices: st.mm_provider_choices(),
+
         model_error: None,
         // Compatibility fields for older clients; there is no screen-level
         // save or theme preview state.

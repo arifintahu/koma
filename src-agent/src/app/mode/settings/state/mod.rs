@@ -37,6 +37,11 @@ use super::{
 #[derive(Debug, Clone)]
 pub struct SettingsState {
     pub clean_fingerprint: u64,
+    pub model_editing: bool,
+    pub provider_editing: bool,
+
+    pub model_provider_cursor: Option<usize>,
+
     /// Original text for cancelling only the current unconfirmed edit.
     pub edit_original: Option<String>,
     pub web_search: crate::model::web_search::SearchStatus,
@@ -276,6 +281,11 @@ impl SettingsState {
         );
         let mut state = Self {
             clean_fingerprint: 0,
+            model_editing: false,
+            provider_editing: false,
+
+            model_provider_cursor: None,
+
             edit_original: None,
             web_search: config.web_search.status(),
             search_editor: None,

@@ -141,6 +141,9 @@ pub struct OnboardProviderSnapshot {
 #[allow(dead_code)]
 pub struct KeyInputSnapshot {
     #[serde(default)]
+    pub editing: bool,
+
+    #[serde(default)]
     pub results: Vec<String>,
     pub step: usize,
     pub field: usize,

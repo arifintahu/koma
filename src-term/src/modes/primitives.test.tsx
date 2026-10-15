@@ -91,7 +91,7 @@ test("live snapshots preserve form drafts and detect only content changes", () =
 
 test("native secret input edits in the middle, selects, pastes, and remains masked", async () => {
   const requests: unknown[] = []
-  const view = await testRender(<ModeSurface mode={{ Settings: { page: "provider_form", prov_modal: { name: "Example", endpoint: "example", api_key: "existing-secret", field: 2 } } }} theme={themeFor("dark")} columns={80} onMove={() => {}} send={(r) => requests.push(r)} />, { width: 80, height: 24 })
+  const view = await testRender(<ModeSurface mode={{ Settings: { page: "provider_form", provider_editing: true, prov_modal: { name: "Example", endpoint: "example", api_key: "existing-secret", field: 2 } } }} theme={themeFor("dark")} columns={80} onMove={() => {}} send={(r) => requests.push(r)} />, { width: 80, height: 24 })
   try {
     await act(async () => { await view.waitForVisualIdle() })
     await act(async () => { await view.mockInput.typeText("abc"); view.mockInput.pressArrow("left"); await view.mockInput.typeText("X") })

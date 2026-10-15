@@ -156,7 +156,6 @@ export function storeView(body: MenuData["ExtStore"] & Rec, theme: Theme, wide: 
         <box flexDirection="column">
           <Note text={`install ${str(list[selected]?.name)}?`} theme={theme} />
           {str(body.install_error) ? <Note text={str(body.install_error)} theme={theme} color={theme.error} /> : null}
-          {body.installing ? <Note text="installing…" theme={theme} /> : null}
           <Note text={flag(body.komarun_connected) ? "signed in" : "sign in on koma.run first"} theme={theme} />
         </box>
       ),
@@ -171,14 +170,13 @@ export function storeView(body: MenuData["ExtStore"] & Rec, theme: Theme, wide: 
         `Versions  ${strings(detailBody.versions).join("  ") || "not available"}`,
         `Models ${num(detailBody.contributes_models)}  Agents ${num(detailBody.contributes_sub_agents)}`,
         flag(body.komarun_connected) ? "Signed in to koma.run" : "Sign in to koma.run to install authenticated products",
-        body.detail_loading ? "loading…" : "",
         str(body.detail_error),
       ].filter(Boolean)
     : [body.loading ? "loading the catalogue…" : "", str(body.error)].filter(Boolean)
   return {
     title: mode === "detail" ? "store · detail" : "store",
     hint: mode === "detail" ? "i install · esc back" : "↑↓ · enter detail · r refresh · esc close",
-    children: mode === "detail" ? <Document><text fg={theme.accent}>{str(list[selected]?.name)}</text>{detail.map((line, index) => <text key={index} fg={index === detail.length - 1 && body.detail_error ? theme.error : theme.fg}>{line}</text>)}</Document> : <box flexDirection="column" flexGrow={1} minHeight={0}>{body.loading ? <Note text="Loading catalogue…" color={theme.info} theme={theme} /> : null}{body.error ? <Note text={str(body.error)} color={theme.error} theme={theme} /> : null}<Lines rows={lines} selected={selected} theme={theme} onPress={onMove} /></box>,
+    children: mode === "detail" ? <Document><text fg={theme.accent}>{str(list[selected]?.name)}</text>{detail.map((line, index) => <text key={index} fg={index === detail.length - 1 && body.detail_error ? theme.error : theme.fg}>{line}</text>)}</Document> : <box flexDirection="column" flexGrow={1} minHeight={0}>{body.error ? <Note text={str(body.error)} color={theme.error} theme={theme} /> : null}<Lines rows={lines} selected={selected} theme={theme} onPress={onMove} /></box>,
   }
 }
 
@@ -289,7 +287,6 @@ export function extScreenView(body: MenuData["ExtScreen"] & Rec, theme: Theme, o
     hint: "↑↓ · enter select · esc back",
     children: (
       <box flexDirection="column" flexGrow={1} flexBasis={0} minHeight={0}>
-        {body.waiting ? <Note text="loading…" theme={theme} /> : null}
         {str(body.error) ? <Note text={str(body.error)} theme={theme} color={theme.error} /> : null}
         <Document target={`extension-menu-${cursor}`}>{nodes.map((node, index) => {
           const item = rec(node)

@@ -28,6 +28,8 @@ use crate::config::DEFAULT_BASE_URL;
 /// [`controller::input::handle_key_input`]).
 #[derive(Debug, Clone)]
 pub struct KeyInputForm {
+    pub editing: bool,
+
     /// Wizard page: `0` = connection (endpoint + key), `1` = model.
     pub step: usize,
     /// Active field within the current step. Step 0: `0` = endpoint, `1` = key.
@@ -72,6 +74,8 @@ impl KeyInputForm {
     pub fn new() -> Self {
         Self {
             step: 0,
+            editing: false,
+
             field: 0,
             endpoint: DEFAULT_BASE_URL.to_string(),
             api_key: String::new(),
@@ -94,6 +98,8 @@ impl KeyInputForm {
     pub fn prefilled(api_key: String, model: String, first_run: bool, from_picker: bool) -> Self {
         Self {
             step: 0,
+            editing: false,
+
             field: 0,
             endpoint: DEFAULT_BASE_URL.to_string(),
             api_key,

@@ -48,7 +48,7 @@ mod rewind;
 mod config_reload;
 pub(in crate::app::runtime) mod session;
 mod settings;
-pub(crate) use settings::commit_settings;
+pub(crate) use settings::{commit_settings, choose_model_provider};
 mod store;
 
 // Re-export the pwd-explicit fresh-session creator. Daemon-per-session no longer creates

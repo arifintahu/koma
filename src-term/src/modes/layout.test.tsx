@@ -116,9 +116,9 @@ for (const [width, height] of [[50, 24], [80, 18], [100, 40]]) {
   })
 }
 
-test("API-key input accepts paste and visible save sends Enter", async () => {
+test("active API-key input accepts paste and visible save submits", async () => {
   const requests: unknown[] = []
-  const view = await testRender(<ModeSurface mode={{ Settings: { page: "quick", search_editor: { provider: "tavily", key: "" } } }} theme={theme} columns={80} onMove={() => {}} send={(request) => requests.push(request)} />, { width: 80, height: 30 })
+  const view = await testRender(<ModeSurface mode={{ Settings: { page: "quick", search_editor: { provider: "tavily", key: "", editing: true, confirmed: true } } }} theme={theme} columns={80} onMove={() => {}} send={(request) => requests.push(request)} />, { width: 80, height: 30 })
   try {
     await act(async () => { await view.waitForVisualIdle() })
     await act(async () => { await view.mockInput.pasteBracketedText("pasted-test-key") })
@@ -127,7 +127,7 @@ test("API-key input accepts paste and visible save sends Enter", async () => {
     const y = lines.findIndex((line) => line.includes("Save search provider"))
     const x = lines[y]!.indexOf("Save search provider") + 3
     await act(async () => { await view.mockMouse.click(x, y) })
-    expect(requests).toContainEqual({ SendKey: { code: "Enter", mods: 0 } })
+    expect(requests).toContainEqual({ MenuAction: "Save" })
   } finally { await act(async () => { await view.dispose() }) }
 })
 

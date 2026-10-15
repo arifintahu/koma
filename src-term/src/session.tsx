@@ -72,6 +72,7 @@ export function SessionScreen({
       else if (r.MenuAction) action = r.MenuAction as MenuAction
       else if (r.SendKey) action = { Key: r.SendKey as import("./keys.ts").WireKey }
       if (action) {
+        if (!(typeof action === "object" && "Replace" in action)) nativeMenuInput.flush?.()
         if ("Key" in Object(action) && typeof action === "object" && "Key" in action && action.Key.code === "Esc" && formGuard.current.canLeave(current.global.mode) && formGuard.current.dirty(current.global.mode)) {
           setLeaveSelected(0)
           setLeavePrompt(true)

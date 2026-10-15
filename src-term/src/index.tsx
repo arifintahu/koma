@@ -1,7 +1,7 @@
 import { createCliRenderer, SyntaxStyle, type SyntaxStyle as SyntaxStyleHandle } from "@opentui/core"
 import { createRoot, useKeyboard, useRenderer, useSelectionHandler } from "@opentui/react"
 import { RemoteScreen } from "./remote-screen.tsx"
-import { useCallback, useEffect, useRef, useState } from "react"
+import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { useColumns } from "./columns.ts"
 import { copyText } from "./copy.ts"
 import { Hub } from "./hub.tsx"
@@ -10,6 +10,7 @@ import { nativeMenuInput } from "./modes/bits.tsx"
 import type { RemoteHandoff } from "./protocol.ts"
 import { QuitScreen, type QuitState } from "./quit.tsx"
 import { SessionScreen } from "./session.tsx"
+import { syntaxStyles } from "./syntax.ts"
 import { themeFor } from "./theme.ts"
 
 type Route = { kind: "hub" } | { kind: "session"; id: string } | { kind: "remote"; remote: RemoteHandoff }
@@ -28,7 +29,7 @@ function isCtrlC(key: { name?: string; ctrl?: boolean; sequence?: string }): boo
 
 let onInterrupt = () => {}
 
-function App({ syntaxStyle }: { syntaxStyle: SyntaxStyleHandle }) {
+function App({ syntaxStyle: baseSyntaxStyle }: { syntaxStyle: SyntaxStyleHandle }) {
   const renderer = useRenderer()
   const [route, setRoute] = useState<Route>(initialRoute)
   const [hubQuit, setHubQuit] = useState<QuitState | null>(null)
@@ -43,6 +44,8 @@ function App({ syntaxStyle }: { syntaxStyle: SyntaxStyleHandle }) {
   tooSmallRef.current = tooSmall
   const [palette, setPalette] = useState("dark")
   const theme = themeFor(palette)
+  const syntaxStyle = useMemo(() => palette === "dark" ? baseSyntaxStyle : SyntaxStyle.fromStyles(syntaxStyles(themeFor(palette)), renderer.nativeScene), [palette, renderer, baseSyntaxStyle])
+  useEffect(() => () => { if (syntaxStyle !== baseSyntaxStyle) syntaxStyle.destroy() }, [syntaxStyle, baseSyntaxStyle])
   useEffect(() => {
     renderer.setBackgroundColor(theme.bg)
   }, [renderer, theme.bg])
@@ -190,24 +193,7 @@ process.on("SIGINT", () => {
   onInterrupt()
 })
 const syntaxStyle = SyntaxStyle.fromStyles(
-  {
-    default: {},
-    conceal: { dim: true },
-    "markup.heading": { fg: "#39ff14", bold: true },
-    "markup.strong": { bold: true },
-    "markup.italic": { italic: true },
-    "markup.strikethrough": { dim: true },
-    "markup.raw": { fg: "#50c8ff" },
-    "markup.link": { fg: "#50c8ff", underline: true },
-    "markup.link.label": { fg: "#50c8ff", underline: true },
-    "markup.link.url": { fg: "#50c8ff", dim: true },
-    "markup.list": { fg: "#39ff14" },
-    "markup.quote": { dim: true, italic: true },
-    keyword: { fg: "#39ff14" },
-    string: { fg: "#00c853" },
-    comment: { fg: "#adadad", italic: true },
-    number: { fg: "#ffb43c" },
-  },
+  syntaxStyles(themeFor("dark")),
   renderer.nativeScene!,
 )
 

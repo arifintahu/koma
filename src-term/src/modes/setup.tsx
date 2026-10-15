@@ -48,8 +48,8 @@ export function keyInputView(body: MenuData["KeyInput"] & Rec, theme: Theme, onM
         <InputField field="query" label="Model" value={str(body.query) || str(body.model)} placeholder="Search or paste a model ID" active theme={theme} />
         <Panel title={`Models · ${results.length}`} hot={false} theme={theme}><Lines rows={results.map((label) => ({ label }))} selected={num(body.result_sel)} theme={theme} onPress={(index) => nudge(send, num(body.result_sel), index)} /></Panel>
       </> : <scrollbox flexGrow={1} flexBasis={0} minHeight={0} scrollY focusable={false}>
-        <InputField field="endpoint" label="API endpoint" value={str(body.endpoint)} placeholder="https://…/v1" active={num(body.field) === 0} theme={theme} onPress={() => onMove(0)} />
-        <InputField field="api_key" secret label="API key" value={"•".repeat(Math.min(24, str(body.api_key).length))} placeholder="Paste your API key" active={num(body.field) === 1} theme={theme} onPress={() => onMove(1)} />
+        <InputField field="endpoint" label="API endpoint" value={str(body.endpoint)} placeholder="https://…/v1" active={num(body.field) === 0} editing={num(body.field) === 0 && flag(body.editing)} theme={theme} onPress={() => onMove(0)} />
+        <InputField field="api_key" secret label="API key" value={"•".repeat(Math.min(24, str(body.api_key).length))} placeholder="Paste your API key" active={num(body.field) === 1} editing={num(body.field) === 1 && flag(body.editing)} theme={theme} onPress={() => onMove(1)} />
       </scrollbox>}
     </box>,
   }
@@ -66,7 +66,7 @@ export function sessionPickerView(body: MenuData["Picker"] & Rec, theme: Theme, 
     title: "Sessions",
     hint: "↑↓ select · enter open · esc back",
     children: <box flexDirection="column" flexGrow={1} flexBasis={0} minHeight={0} gap={1}>
-      <InputField label="Search sessions" value={str(body.query)} placeholder="Search by name" active theme={theme} />
+      <InputField field="query" label="Search sessions" value={str(body.query)} placeholder="Search by name" active theme={theme} />
       <Panel title={`Sessions · ${lines.length}`} hot={false} theme={theme}><Lines rows={lines} selected={num(body.selected)} theme={theme} onPress={onMove} /></Panel>
     </box>,
   }
@@ -93,7 +93,7 @@ export function sessionHubView(body: MenuData["SessionHub"] & Rec, theme: Theme,
       {focusCooking ? <Panel key="cooking" title={`Cooking · ${cooking.filter((row) => row.kind !== "new_session").length}`} hot theme={theme}>
         <Lines rows={cooking.map((row) => ({ label: row.kind === "new_session" ? "+ New session" : str(row.name), detail: row.kind === "new_session" ? "" : row.working ? "working" : "ready" }))} selected={num(body.cooking_selected)} theme={theme} onPress={(index) => select(true, index)} />
       </Panel> : <Panel key="history" title={`History · ${history.length}`} hot theme={theme}>
-        <InputField label="Search history" value={str(body.history_query)} placeholder="Search saved sessions" active={!armed} theme={theme} />
+        <InputField field="history_query" label="Search history" value={str(body.history_query)} placeholder="Search saved sessions" active={!armed} theme={theme} />
         <Lines rows={history.map((row) => ({ label: str(row.name) }))} selected={num(body.history_selected)} theme={theme} onPress={(index) => select(false, index)} />
       </Panel>}
     </box>,
