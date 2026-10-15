@@ -3,9 +3,24 @@ import { act, useMemo } from "react"
 import { SyntaxStyle } from "@opentui/core"
 import { useRenderer } from "@opentui/react"
 import { testRender } from "@opentui/react/test-utils"
-import { Chat } from "./chat.tsx"
+import { Chat, modelLabel, promptMark } from "./chat.tsx"
 import { fold } from "./protocol.ts"
 import { themeFor } from "./theme.ts"
+
+test("a selected effort sits beside the model name", () => {
+  expect(modelLabel("grok-4.7", "medium")).toBe("grok-4.7 · medium")
+  expect(modelLabel("grok-4.7", "")).toBe("grok-4.7")
+  expect(modelLabel("grok-4.7", "  ")).toBe("grok-4.7")
+})
+
+test("the prompt mark follows the first character and keeps it", () => {
+  expect(promptMark("")).toBe("[$]")
+  expect(promptMark("hello")).toBe("[$]")
+  expect(promptMark("!ls")).toBe("[>]")
+  expect(promptMark("/help")).toBe("[/]")
+  expect(promptMark("@file")).toBe("[@]")
+  expect(promptMark(" !ls")).toBe("[$]")
+})
 
 test("the prompt mark sits against the composer border", async () => {
   const theme = themeFor("dark")

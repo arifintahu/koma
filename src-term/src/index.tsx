@@ -23,6 +23,8 @@ function initialRoute(): Route {
 
 const MIN_COLUMNS = 50
 
+process.title = "koma"
+
 function isCtrlC(key: { name?: string; ctrl?: boolean; sequence?: string }): boolean {
   return (key.ctrl && key.name === "c") || key.sequence === "\u0003" || key.name === "ctrl+c"
 }
@@ -48,6 +50,7 @@ function App({ syntaxStyle: baseSyntaxStyle }: { syntaxStyle: SyntaxStyleHandle 
   useEffect(() => () => { if (syntaxStyle !== baseSyntaxStyle) syntaxStyle.destroy() }, [syntaxStyle, baseSyntaxStyle])
   useEffect(() => {
     renderer.setBackgroundColor(theme.bg)
+    renderer.setTerminalTitle("koma")
   }, [renderer, theme.bg])
   const returnSession = useRef<string | null>(null)
   const onHome = useCallback(() => setRoute((current) => { if (current.kind === "session") returnSession.current=current.id; return { kind: "hub" } }), [])

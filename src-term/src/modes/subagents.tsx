@@ -1,7 +1,7 @@
 import { useRef } from "react"
 import { useKeyboard } from "@opentui/react"
 import type { ScrollBoxRenderable } from "@opentui/core"
-import type { Theme } from "../theme.ts"
+import { scrollbars, type Theme } from "../theme.ts"
 import { Lines, Note, OVERLAY_BODY, OVERLAY_HEIGHT, Paragraphs, type Line } from "./bits.tsx"
 import { clip, flag, num, rec, rows, str, type Rec } from "./read.ts"
 
@@ -61,7 +61,7 @@ export function AgentViewer({ agent, theme }: { agent: Rec | null; theme: Theme 
       <text fg={theme.dim}>{` ${str(agent?.label) || str(agent?.name) || "sub-agent"}`}</text>
       <box height={1} border={["bottom"]} borderColor={theme.dim} />
       <box flexGrow={1} flexDirection="column" paddingLeft={1} paddingTop={1}>
-<scrollbox ref={scroll} flexGrow={1} minHeight={0} scrollY focusable={false}>{lines.map((line, i) => <text key={i} fg={theme.fg}>{line}</text>)}{live ? <text fg={theme.fg}>{live}</text> : null}</scrollbox>
+<scrollbox ref={scroll} flexGrow={1} minHeight={0} scrollY focusable={false} scrollbarOptions={scrollbars(theme)}>{lines.map((line, i) => <text key={i} fg={theme.fg}>{line}</text>)}{live ? <text fg={theme.fg}>{live}</text> : null}</scrollbox>
       </box>
       <text fg={theme.dim}> ↑↓ scroll · esc back</text>
     </box>

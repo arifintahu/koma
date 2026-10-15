@@ -127,22 +127,20 @@ export function Hub({ theme, onOpen, onBack, currentId, overlay }: { overlay?: R
       setQuery((value) => value.slice(0, -1))
       return
     }
-    if (key.name === "c") {setPane("cooking");return}
-    if (key.name === "h") {setPane("history");return}
     if (key.name === "q" || key.ctrl || key.meta) return
     if (key.name && key.name.length === 1 && key.name >= " ") {
       setQuery((value) => value + key.name)
     }
   })
 
-  const liveRows: Line[] = [{ label: "+ New session", color: "accent" }, ...live.map((row): Line => ({ label: row.name || row.session_id.slice(0, 8), detail: `${basename(row.pwd)} · ${row.session_id.slice(0,8)}`, badge: { text: row.session_id === currentId ? "current" : row.working ? `${glyph} working` : "ready", role: row.working ? "success" : "info" } }))]
-  const historyRows: Line[] = history.map((row) => ({label:row.name || row.session_id.slice(0,8), detail:`${row.dir_label || basename(row.pwd)} · ${age(row.updated_at)} · ${row.session_id.slice(0,8)}`}))
+  const liveRows: Line[] = [{ label: "+ New session", color: "accent", split: true }, ...live.map((row): Line => ({ split: true, label: row.name || row.session_id.slice(0, 8), detail: `${basename(row.pwd)} · ${row.session_id.slice(0,8)}`, badge: { text: row.session_id === currentId ? "current" : row.working ? `${glyph} working` : "ready", role: row.working ? "success" : "info" } }))]
+  const historyRows: Line[] = history.map((row) => ({ split: true, label: row.name || row.session_id.slice(0, 8), detail: `${row.dir_label || basename(row.pwd)} · ${age(row.updated_at)} · ${row.session_id.slice(0, 8)}` }))
   const target = [...live,...history].find((s)=>s.session_id===armed)
   return <box flexDirection="column" flexGrow={1} minHeight={0}><Fullscreen title="Sessions" theme={theme} hint={<box flexDirection="column" flexShrink={0}>
     {armed ? <Note text={`${pane === "cooking" ? "Stop" : "Delete"} ${target?.name || armed} (${armed})?`} color={theme.warn} theme={theme} /> : null}
-    <box flexDirection="row" flexWrap="wrap"><Action disabled={disabled} label={armed ? "Confirm (enter)" : "Open (enter)"} theme={theme} onPress={() => {if(armed)remove();else if(pane === "cooking")openCooking();else openHistory()}} /><Action disabled={disabled} label="New session" theme={theme} onPress={() => onOpen(crypto.randomUUID())} /><Action disabled={disabled} label={pane === "cooking" ? "Stop (ctrl+x)" : "Delete (ctrl+x)"} theme={theme} onPress={remove} />{onBack ? <Action disabled={disabled} label="Back (esc)" theme={theme} onPress={onBack} /> : null}</box>
+    <box flexDirection="row" flexWrap="wrap"><Action disabled={disabled} label="Switch (tab)" theme={theme} onPress={() => { setPane((current) => current === "cooking" ? "history" : "cooking"); setArmed(null) }} /><Action disabled={disabled} label={armed ? "Confirm (enter)" : "Open (enter)"} theme={theme} onPress={() => {if(armed)remove();else if(pane === "cooking")openCooking();else openHistory()}} /><Action disabled={disabled} label="New session" theme={theme} onPress={() => onOpen(crypto.randomUUID())} /><Action disabled={disabled} label={pane === "cooking" ? "Stop (ctrl+x)" : "Delete (ctrl+x)"} theme={theme} onPress={remove} />{onBack ? <Action disabled={disabled} label="Back (esc)" theme={theme} onPress={onBack} /> : null}</box>
   </box>}>
-    <box flexDirection="row" flexShrink={0}><Action disabled={disabled} label="Cooking (c)" primary={pane==="cooking"} theme={theme} onPress={()=>{setPane("cooking");setArmed(null)}} /><Action disabled={disabled} label="History (h)" primary={pane==="history"} theme={theme} onPress={()=>{setPane("history");setArmed(null)}} /></box>
+    <box flexDirection="row" flexShrink={0}><Action disabled={disabled} label="Cooking" primary={pane==="cooking"} theme={theme} onPress={()=>{setPane("cooking");setArmed(null)}} /><Action disabled={disabled} label="History" primary={pane==="history"} theme={theme} onPress={()=>{setPane("history");setArmed(null)}} /></box>
     {error ? <Note text={error} color={theme.error} theme={theme} /> : null}
     <box flexDirection="column" flexGrow={1} flexBasis={0} minHeight={0}>
       {pane === "cooking" ? <Panel key="cooking" title={`cooking · ${live.length}`} mark={0} hot theme={theme}><Lines rows={liveRows} selected={cookingIndex} theme={theme} onPress={(i)=>{if(!disabled){setCookingSel(i);setArmed(null)}}} /></Panel> :

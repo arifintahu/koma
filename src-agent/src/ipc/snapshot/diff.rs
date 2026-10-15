@@ -244,6 +244,7 @@ pub fn diff(
             // A model change (settings override or global catalogue edit) has no
             // incremental delta; resync so the header updates immediately.
             || p.resolved_model_id != n.resolved_model_id
+            || p.effort != n.effort
             // Loaded names are session-scoped structural context.
             || p.loaded_skill_names != n.loaded_skill_names
             || p.model_routes != n.model_routes

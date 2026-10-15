@@ -45,6 +45,7 @@ export interface SessionSnap {
   pending_tool_calls: ToolCall[]
   tool_idx: number
   resolved_model_id: string
+  effort: string
   pending_steer: string[]
   pending_steer_attachments: Attachment[][]
   subagents: Record<string, unknown>[]
@@ -379,6 +380,7 @@ function normalizeSession(raw: unknown): SessionSnap {
     pending_tool_calls: Array.isArray(body.pending_tool_calls) ? (body.pending_tool_calls as ToolCall[]) : [],
     tool_idx: numberOr(body.tool_idx, 0),
     resolved_model_id: String(body.resolved_model_id ?? ""),
+    effort: String(body.effort ?? ""),
     pending_steer_attachments: Array.isArray(body.pending_steer_attachments) ? body.pending_steer_attachments.map((items) => Array.isArray(items) ? items as Attachment[] : []) : [],
     pending_steer: Array.isArray(body.pending_steer) ? body.pending_steer.map((row) => String(row)) : [],
     subagents: Array.isArray(body.subagents) ? body.subagents.filter((row) => row && typeof row === "object") as Record<string, unknown>[] : [],

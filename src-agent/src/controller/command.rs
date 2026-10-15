@@ -93,10 +93,6 @@ pub const KEYBINDINGS: &[(&str, &str)] = &[
     ("Esc", "interrupt while busy (kills still-blocking FG bash)"),
     ("Esc Esc", "edit a previous message (rewind)"),
     ("Up/Down/wheel", "scroll the transcript"),
-    (
-        "$",
-        "open the sub-agents panel — Ctrl+B backgrounds, Ctrl+X kills",
-    ),
 ];
 
 /// True while the user is still typing a command NAME: input starts with `/`

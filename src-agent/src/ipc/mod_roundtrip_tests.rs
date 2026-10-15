@@ -77,6 +77,7 @@ fn sample_session_snapshot() -> SessionSnapshot {
         // serialize -> deserialize (an empty string would alias the default).
         model_routes: Vec::new(),
         resolved_model_id: "anthropic/claude-sonnet-4-5".to_string(),
+        effort: "medium".to_string(),
         loaded_skill_names: vec!["review".to_string()],
         pending_steer: Vec::new(),
         pending_steer_attachments: Vec::new(),

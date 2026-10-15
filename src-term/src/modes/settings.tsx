@@ -1,7 +1,7 @@
 import type { MenuData } from "./data.ts"
 import { button, select } from "./actions.ts"
 import type { ReactNode } from "react"
-import { PALETTE_NAMES, type Theme } from "../theme.ts"
+import { PALETTE_NAMES, scrollbars, type Theme } from "../theme.ts"
 import { Action, Controls, FieldList, InputField, Lines, Note, Panel, Paragraphs, nudge, sendKey, useBodyHeight, type Line } from "./bits.tsx"
 import { flag, join, num, onOff, rec, rows, str, strings, type Rec } from "./read.ts"
 
@@ -41,7 +41,7 @@ export function settingsView(
     const flow = rec(body.oauth_flow)
     return pageOf(tabs(2, theme), oauthHint(flow), oauthFlow(flow, theme, (index) => nudge(send, num(flow.cursor), index), send))
   }
-  if (page === "appearance") return pageOf("Appearance", "↑↓ select · enter apply · esc back", <Panel title="Theme" hot theme={theme}><Lines rows={PALETTE_NAMES.map((label) => ({ label, detail: label === body.palette ? "current" : undefined }))} selected={num(body.palette_sel)} theme={theme} onPress={_onMove} /></Panel>)
+  if (page === "appearance") return pageOf("Appearance", "↑↓ select · enter apply · esc back", <Panel title="Theme" hot theme={theme}><Lines rows={PALETTE_NAMES.map((label) => ({ label, toggle: label === body.palette }))} selected={num(body.palette_sel)} theme={theme} onPress={_onMove} /></Panel>)
   if (page === "general") return pageOf("General", quickFooter(body, theme, send), <Panel title="General" hot theme={theme}><GeneralFields body={body} theme={theme} focused send={send} /></Panel>)
   if (page === "menu") return pageOf("Settings", "↑↓ select · enter open · esc back", <Lines rows={["Appearance", "General", "Providers", "OAuth", "Models"].map((label) => ({ label }))} selected={num(body.menu_sel)} theme={theme} onPress={_onMove} />)
   if (page === "providers" || page === "oauth" || page === "models") {
@@ -79,7 +79,7 @@ function QuickDash({ body, theme, wide, send }: { body: Rec; theme: Theme; wide:
   const appearanceBox = (
     <Panel title="Appearance" mark={0} hot={focus === "appearance"} theme={theme}>
       <Lines
-        rows={PALETTE_NAMES.map((name) => ({ label: name, detail: name === (str(body.palette) || "dark") ? "current" : undefined }))}
+        rows={PALETTE_NAMES.map((name) => ({ label: name, toggle: name === (str(body.palette) || "dark") }))}
         selected={focus === "appearance" ? num(body.palette_sel) : -1}
         theme={theme}
         onPress={(index) => {
@@ -258,7 +258,7 @@ function providerForm(body: Rec, theme: Theme, onMove: (index: number) => void, 
       <text fg={theme.fg}>{body.prov_replace != null ? "Edit this provider" : "Add a provider"}</text>
       <text fg={theme.dim}>Tab changes fields. Enter continues. Blank keys retain existing credentials.</text>
       {str(modal.api_type) ? <text fg={theme.dim}>{`Kind  ${str(modal.api_type)}`}</text> : null}
-      <scrollbox flexGrow={1} flexBasis={0} maxHeight={9} minHeight={0} scrollY focusable={false}>
+      <scrollbox flexGrow={1} flexBasis={0} maxHeight={9} minHeight={0} scrollY focusable={false} scrollbarOptions={scrollbars(theme)}>
         {inputs.map((row, index) => <InputField key={row.label} field={row.label} secret={row.label === "API key"} label={row.label} value={row.value === "—" ? "" : row.value} placeholder={row.empty} active={field === index} editing={field === index && flag(body.provider_editing)} theme={theme} onPress={() => onMove(index)} />)}
       </scrollbox>
       <box flexDirection="row" flexShrink={0} gap={1}>

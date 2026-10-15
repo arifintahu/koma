@@ -55,7 +55,7 @@ export function menuControls(name: string, b: Record<string, unknown>): ActionDe
   }
   if (name === "Notifications") return b.confirm_clear ? [char("Clear permanently", "y"), back] : [button("Scope (tab)", "Tab"), button("Severity (ctrl+f)", { Char: "f" }, 2), enter("Details / read"), button("Read all (ctrl+r)", { Char: "r" }, 2), button("Clear (ctrl+x)", { Char: "x" }, 2), back]
   if (name === "Usage") return [button("Scope (tab)", "Tab"), char("Today", "1"), char("Week", "2"), char("Year", "3"), char("Metric", "m"), back]
-  if (name === "SessionHub") return b.armed ? [enter("Confirm"), back] : [button("Group (tab)", "Tab"), enter("Open"), button("Remove (ctrl+x)", { Char: "x" }, 2), back]
+  if (name === "SessionHub") return b.armed ? [enter("Confirm"), back] : [button("Switch (tab)", "Tab"), enter("Open"), button("Remove (ctrl+x)", { Char: "x" }, 2), back]
   if (name === "Help") return [enter("Run command"), back]
   if (name === "Effort") return [enter("Set effort"), back]
   if (name === "Attachments" && b.editor) return [button("Done (esc)", "Esc")]

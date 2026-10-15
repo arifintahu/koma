@@ -43,6 +43,10 @@ pub struct SessionSnapshot {
     pub subagents: Vec<SubAgentSnapshot>,
     pub pending_subagents: Vec<PendingSubagentSnapshot>,
     pub resolved_model_id: String,
+    /// The session's `/effort` value. Empty means the model default, so the
+    /// composer omits it. Skipped on the wire when unset.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub effort: String,
     /// Session-scoped skill names loaded into the current chat context.
     /// Body-free and version-tolerant; sorted by the BTree map/set source.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]

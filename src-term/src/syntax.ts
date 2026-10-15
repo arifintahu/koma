@@ -34,7 +34,7 @@ export function syntaxStyles(theme: Theme) {
     attribute: { fg: theme.warn }, label: { fg: theme.info }, embedded: { fg: theme.fg },
     "markup.heading": { fg: theme.accent, bold: true }, "markup.strong": { bold: true },
     "markup.italic": { italic: true }, "markup.strikethrough": { dim: true },
-    "markup.raw": { fg: theme.info }, "markup.link": { fg: theme.info, underline: true },
+    "markup.raw": { fg: theme.info, bg: theme.panel }, "markup.link": { fg: theme.info, underline: true },
     "markup.link.label": { fg: theme.info, underline: true }, "markup.link.url": { fg: theme.info },
     "markup.list": { fg: theme.accent }, "markup.quote": { fg: theme.dim, italic: true },
   }

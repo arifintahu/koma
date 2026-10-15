@@ -20,6 +20,7 @@ test("Sessions tabs show one pane and retain selection and History search", asyn
       }
       try {
         await settle()
+        expect(view.captureCharFrame()).toContain("Switch (tab)")
         expect(view.captureCharFrame()).toContain("Active fixture")
         expect(view.captureCharFrame()).not.toContain("Saved fixture")
         expect(view.captureCharFrame()).not.toContain("Search sessions")
@@ -29,8 +30,8 @@ test("Sessions tabs show one pane and retain selection and History search", asyn
         expect(view.captureCharFrame()).toContain("Search sessions")
         expect(view.captureCharFrame()).not.toContain("Active fixture")
         const lines = view.captureCharFrame().split("\n")
-        const y = lines.findIndex((line) => line.includes("Cooking (c)"))
-        await act(async () => { await view.mockMouse.click(lines[y]!.indexOf("Cooking (c)") + 2, y) })
+        const y = lines.findIndex((line) => line.includes("Cooking"))
+        await act(async () => { await view.mockMouse.click(lines[y]!.indexOf("Cooking") + 2, y) })
         await settle()
         expect(view.captureCharFrame()).toContain("› Active fixture")
         expect(view.captureCharFrame()).not.toContain("Saved fixture")

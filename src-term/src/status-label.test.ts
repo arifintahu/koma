@@ -1,9 +1,15 @@
 import { expect, test } from "bun:test"
-import { statusLabel } from "./chat.tsx"
+import { statusLabel, statusLooksLive } from "./chat.tsx"
 
 test("a turn error stays off the status line", () => {
   expect(statusLabel("error: stream ended incompletely (connection closed before terminal marker)")).toBe("ready")
   expect(statusLabel("  Error: save failed")).toBe("ready")
+})
+
+test("an interrupted turn is not still running", () => {
+  expect(statusLooksLive("interrupted")).toBe(false)
+  expect(statusLooksLive("thinking")).toBe(true)
+  expect(statusLabel("interrupted")).toBe("interrupted")
 })
 
 test("phase words and slash notices stay on the status line", () => {

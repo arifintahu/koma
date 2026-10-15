@@ -29,3 +29,26 @@ test("shift+tab cycles the mode from the composer", async () => {
     await act(async () => { await view.dispose() })
   }
 })
+
+test("ctrl+b from the composer asks the daemon to background work", async () => {
+  const requests: unknown[] = []
+  const theme = themeFor("dark")
+  const snapshot = fold(null, { Snapshot: {
+    foreground_id: "s",
+    sessions: [{ id: "s", name: "S", messages: [] }],
+    global: { mode: "Chat", palette: "dark", input: "" },
+  } })!
+  function Harness() {
+    const renderer = useRenderer()
+    const style = useMemo(() => SyntaxStyle.fromStyles({}, renderer.nativeScene), [renderer])
+    return <Chat snap={snapshot} theme={theme} syntaxStyle={style} focused send={(request) => requests.push(request)} sendTracked={async () => "ack"} onFlushError={() => {}} />
+  }
+  const view = await testRender(<Harness />, { width: 80, height: 24, kittyKeyboard: true })
+  try {
+    await act(async () => { await view.waitForVisualIdle() })
+    await act(async () => { view.mockInput.pressKey("b", { ctrl: true }); await new Promise((resolve) => setTimeout(resolve, 30)) })
+    expect(requests).toContainEqual({ SendKey: { code: { Char: "b" }, mods: 2 } })
+  } finally {
+    await act(async () => { await view.dispose() })
+  }
+})

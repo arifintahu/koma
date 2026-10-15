@@ -133,7 +133,7 @@ export function extensionsView(body: MenuData["Extensions"] & Rec, theme: Theme,
     children: (
       <box flexDirection="column" flexGrow={1} flexBasis={0} minHeight={0}>
         {str(body.error) ? <Note text={str(body.error)} theme={theme} color={theme.error} /> : null}
-        {mode === "detail" ? <Document target={`extension-screen-${num(body.screen_sel)}`}><text fg={theme.accent}>{str(current?.name)}</text>{detail.slice(0, detail.length - screens.length).map((line, index) => <text key={index} fg={theme.fg}>{line}</text>)}<text fg={theme.info}>Extension screens</text>{screens.length ? screens.map((screen, index) => <box id={`extension-screen-${index}`} key={str(screen.id)} height={1} onMouseDown={() => { onMove(index); sendKey(send, "Enter") }}><text fg={index === num(body.screen_sel) ? theme.accent : theme.fg}>{`${index === num(body.screen_sel) ? "›" : " "} ${str(screen.title)}`}</text></box>) : <text fg={theme.dim}>No terminal screens contributed.</text>}</Document> : <Lines rows={lines} selected={selected} theme={theme} onPress={onMove} />}
+        {mode === "detail" ? <Document theme={theme} target={`extension-screen-${num(body.screen_sel)}`}><text fg={theme.accent}>{str(current?.name)}</text>{detail.slice(0, detail.length - screens.length).map((line, index) => <text key={index} fg={theme.fg}>{line}</text>)}<text fg={theme.info}>Extension screens</text>{screens.length ? screens.map((screen, index) => <box id={`extension-screen-${index}`} key={str(screen.id)} height={1} onMouseDown={() => { onMove(index); sendKey(send, "Enter") }}><text fg={index === num(body.screen_sel) ? theme.accent : theme.fg}>{`${index === num(body.screen_sel) ? "›" : " "} ${str(screen.title)}`}</text></box>) : <text fg={theme.dim}>No terminal screens contributed.</text>}</Document> : <Lines rows={lines} selected={selected} theme={theme} onPress={onMove} />}
       </box>
     ),
   }
@@ -176,7 +176,7 @@ export function storeView(body: MenuData["ExtStore"] & Rec, theme: Theme, wide: 
   return {
     title: mode === "detail" ? "store · detail" : "store",
     hint: mode === "detail" ? "i install · esc back" : "↑↓ · enter detail · r refresh · esc close",
-    children: mode === "detail" ? <Document><text fg={theme.accent}>{str(list[selected]?.name)}</text>{detail.map((line, index) => <text key={index} fg={index === detail.length - 1 && body.detail_error ? theme.error : theme.fg}>{line}</text>)}</Document> : <box flexDirection="column" flexGrow={1} minHeight={0}>{body.error ? <Note text={str(body.error)} color={theme.error} theme={theme} /> : null}<Lines rows={lines} selected={selected} theme={theme} onPress={onMove} /></box>,
+    children: mode === "detail" ? <Document theme={theme}><text fg={theme.accent}>{str(list[selected]?.name)}</text>{detail.map((line, index) => <text key={index} fg={index === detail.length - 1 && body.detail_error ? theme.error : theme.fg}>{line}</text>)}</Document> : <box flexDirection="column" flexGrow={1} minHeight={0}>{body.error ? <Note text={str(body.error)} color={theme.error} theme={theme} /> : null}<Lines rows={lines} selected={selected} theme={theme} onPress={onMove} /></box>,
   }
 }
 
@@ -281,7 +281,7 @@ export function extScreenView(body: MenuData["ExtScreen"] & Rec, theme: Theme, o
     children: (
       <box flexDirection="column" flexGrow={1} flexBasis={0} minHeight={0}>
         {str(body.error) ? <Note text={str(body.error)} theme={theme} color={theme.error} /> : null}
-        <Document target={`extension-menu-${cursor}`}>{nodes.map((node, index) => {
+        <Document theme={theme} target={`extension-menu-${cursor}`}>{nodes.map((node, index) => {
           const item = rec(node)
           const kind = str(item.t)
           if (kind === "text") return <text key={index} fg={theme.fg}>{str(item.text)}</text>

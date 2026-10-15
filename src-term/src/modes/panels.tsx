@@ -179,7 +179,7 @@ export function notificationsView(body: MenuData["Notifications"] & Rec, theme: 
           <Action label={`Severity: ${str(body.severity) || "all"} (ctrl+f)`} theme={theme} onPress={()=>send({SendKey:{code:{Char:"f"},mods:2}})} />
         </box>
         <Panel title={`Notifications · ${lines.length} · ${all.filter((row) => !flag(row.read)).length} unread`} hot={false} status={body.loading ? "Refreshing…" : undefined} theme={theme}>{!lines.length ? <Note text={body.loading ? "" : "No notifications match."} theme={theme} /> : <Lines rows={lines} selected={selected} theme={theme} onPress={onMove} />}</Panel>
-        {current && str(body.expanded) === str(current.id) ? <Panel title={str(current.source) || "Details"} hot={false} theme={theme}><Document><text fg={theme.dim}>{notificationTime(current.timestamp)}</text><text fg={theme.fg} selectable>{str(current.message)}</text></Document></Panel> : null}
+        {current && str(body.expanded) === str(current.id) ? <Panel title={str(current.source) || "Details"} hot={false} theme={theme}><Document theme={theme}><text fg={theme.dim}>{notificationTime(current.timestamp)}</text><text fg={theme.fg} selectable>{str(current.message)}</text></Document></Panel> : null}
       </box>
     ),
   }

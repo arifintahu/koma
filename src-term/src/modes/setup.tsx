@@ -1,6 +1,6 @@
 import type { MenuData } from "./data.ts"
 import { select as selectControl } from "./actions.ts"
-import type { Theme } from "../theme.ts"
+import { scrollbars, type Theme } from "../theme.ts"
 import { Action, InputField, Lines, Note, Panel, nudge, sendKey, type Line } from "./bits.tsx"
 import { flag, num, rec, rows, str, strings, type Rec } from "./read.ts"
 import { oauthFlow, oauthHint } from "./settings.tsx"
@@ -47,7 +47,7 @@ export function keyInputView(body: MenuData["KeyInput"] & Rec, theme: Theme, onM
       {modelStep ? <>
         <InputField field="query" label="Model" value={str(body.query) || str(body.model)} placeholder="Search or paste a model ID" active theme={theme} />
         <Panel title={`Models · ${results.length}`} hot={false} theme={theme}><Lines rows={results.map((label) => ({ label }))} selected={num(body.result_sel)} theme={theme} onPress={(index) => nudge(send, num(body.result_sel), index)} /></Panel>
-      </> : <scrollbox flexGrow={1} flexBasis={0} minHeight={0} scrollY focusable={false}>
+      </> : <scrollbox flexGrow={1} flexBasis={0} minHeight={0} scrollY focusable={false} scrollbarOptions={scrollbars(theme)}>
         <InputField field="endpoint" label="API endpoint" value={str(body.endpoint)} placeholder="https://…/v1" active={num(body.field) === 0} editing={num(body.field) === 0 && flag(body.editing)} theme={theme} onPress={() => onMove(0)} />
         <InputField field="api_key" secret label="API key" value={"•".repeat(Math.min(24, str(body.api_key).length))} placeholder="Paste your API key" active={num(body.field) === 1} editing={num(body.field) === 1 && flag(body.editing)} theme={theme} onPress={() => onMove(1)} />
       </scrollbox>}

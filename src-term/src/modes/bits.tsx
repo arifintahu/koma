@@ -2,7 +2,7 @@ import { createContext, useContext, useEffect, useRef, useState, type ReactNode 
 import type { BoxRenderable, ScrollBoxRenderable, InputRenderable, TextareaRenderable } from "@opentui/core"
 import { useKeyboard, useRenderer } from "@opentui/react"
 import { paletteWindow } from "../palette.ts"
-import type { Theme } from "../theme.ts"
+import { scrollbars, type Theme } from "../theme.ts"
 
 import { select, type ActionDescriptor } from "./actions.ts"
 
@@ -83,7 +83,16 @@ export function Overlay({
   )
 }
 
-export type Line = { label: string; detail?: string; dim?: boolean; color?: keyof Theme; badge?: { text: string; role: "success" | "warn" | "error" | "info" | "dim" }; toggle?: boolean; toggleLayout?: "before" | "right" }
+export type Line = { label: string; detail?: string; dim?: boolean; color?: keyof Theme; badge?: { text: string; role: "success" | "warn" | "error" | "info" | "dim" }; toggle?: boolean; toggleLayout?: "before" | "right"; split?: boolean }
+
+/** Title stays on the left. Cut it before it reaches the right-hand info. */
+export function fitAside(label: string, aside: string, width: number): string {
+  const room = Math.max(1, width - [...aside].length - (aside ? 1 : 0))
+  const chars = [...label]
+  if (chars.length <= room) return label
+  if (room <= 1) return "…"
+  return `${chars.slice(0, room - 1).join("")}…`
+}
 
 /** Shared on/off glyph for both toggle layouts; focus never changes its state color. */
 export function Toggle({ checked, theme }: { checked: boolean; theme: Theme }) {
@@ -128,7 +137,7 @@ export function Lines({
   onPress: (index: number) => void
 }) {
   const full = useContext(FullscreenContext)
-  const { ref: boxRef, height: fitted } = useBodyHeight(visible ?? Math.max(1, rows.length))
+  const { ref: boxRef, height: fitted, width } = useBodyHeight(visible ?? Math.max(1, rows.length))
   const indicator = full && rows.length > fitted && fitted > 2
   const slots = Math.max(1, fitted - (indicator ? 1 : 0))
   const startRef = useRef(0)
@@ -147,6 +156,7 @@ export function Lines({
             on={selected >= 0 && absolute === selected}
             theme={theme}
             full={full}
+            width={width}
             onPress={() => onPress(absolute)}
           />
         )
@@ -164,28 +174,35 @@ function LineRow({
   theme,
   onPress,
   full,
+  width,
 }: {
   row: Line
   on: boolean
   theme: Theme
   onPress: () => void
   full: boolean
+  width: number
 }) {
   const [hot, setHot] = useState(false)
   const labelColor = on || hot ? theme.accent : row.dim ? theme.dim : theme.fg
   const detailColor = row.color ? theme[row.color] as string : !full && on ? theme.success : theme.dim
   const marker = on ? full ? "› " : "● " : "  "
-  const content = <><span fg={labelColor}>{row.label}</span>
-    {row.badge ? <span fg={theme[row.badge.role]}>{`  ${row.badge.text}`}</span> : null}
-    {row.detail ? <span fg={detailColor}>{`  ${row.detail}`}</span> : null}
+  const aside = [row.detail, row.badge?.text].filter(Boolean).join("  ")
+  const content = <><span fg={labelColor}>{row.split ? fitAside(row.label, aside, Math.max(1, width - 4)) : row.label}</span>
+    {row.split ? null : row.badge ? <span fg={theme[row.badge.role]}>{`  ${row.badge.text}`}</span> : null}
+    {row.split ? null : row.detail ? <span fg={detailColor}>{`  ${row.detail}`}</span> : null}
   </>
   return (
-    <box width="100%" height={1} flexShrink={0} flexDirection={row.toggle != null ? "row" : "column"} backgroundColor={full ? on || hot ? theme.panel : theme.bg : undefined} paddingLeft={1} paddingRight={1} onMouseOver={() => setHot(true)} onMouseOut={() => setHot(false)} onMouseDown={onPress}>
+    <box width="100%" height={1} flexShrink={0} flexDirection={row.toggle != null || row.split ? "row" : "column"} backgroundColor={full ? on || hot ? theme.panel : theme.bg : undefined} paddingLeft={1} paddingRight={1} onMouseOver={() => setHot(true)} onMouseOut={() => setHot(false)} onMouseDown={onPress}>
       {row.toggle != null ? <>
         <text width={2} height={1} flexShrink={0} fg={on ? theme.accent : theme.dim}>{marker}</text>
         {row.toggleLayout === "before" ? <box width={5} height={1} flexShrink={0}><Toggle checked={row.toggle} theme={theme} /></box> : null}
         <box flexGrow={1} flexBasis={0} minWidth={0} overflow="hidden"><text wrapMode="none">{content}</text></box>
         {row.toggleLayout !== "before" ? <box width={5} height={1} flexShrink={0} paddingLeft={1}><Toggle checked={row.toggle} theme={theme} /></box> : null}
+      </> : row.split ? <>
+        <text width={2} height={1} flexShrink={0} fg={on ? theme.accent : theme.dim}>{marker}</text>
+        <box flexGrow={1} flexBasis={0} minWidth={0} overflow="hidden"><text wrapMode="none" fg={labelColor}>{fitAside(row.label, aside, Math.max(1, width - 4))}</text></box>
+        {aside ? <text height={1} flexShrink={0} wrapMode="none"><span fg={detailColor}>{row.detail ?? ""}</span>{row.detail && row.badge ? <span fg={theme.dim}>{"  "}</span> : null}{row.badge ? <span fg={theme[row.badge.role]}>{row.badge.text}</span> : null}</text> : null}
       </> : <text wrapMode="none"><span fg={on ? theme.accent : theme.dim}>{marker}</span>{content}</text>}
     </box>
   )
@@ -210,12 +227,12 @@ export function FieldList({
   onPress: (index: number) => void
 }) {
   const full = useContext(FullscreenContext)
-  const { ref, height } = useBodyHeight(12)
+  const { ref, height, width } = useBodyHeight(12)
   const start = paletteWindow(0, selected, rows.length, Math.max(1, Math.floor(height / 3)))
   return (
     <box ref={ref} flexDirection="column" flexGrow={1} flexBasis={0} maxHeight={rows.length * 3} minHeight={0} overflow="hidden">
       {rows.slice(start, start + Math.max(1, Math.floor(height / 3))).map((row, offset) => row.toggle != null
-        ? <box key={start + offset} height={3} flexShrink={0} paddingTop={1} paddingBottom={1}><LineRow row={row} on={start + offset === selected} theme={theme} full={full} onPress={() => onPress(start + offset)} /></box>
+        ? <box key={start + offset} height={3} flexShrink={0} paddingTop={1} paddingBottom={1}><LineRow row={row} on={start + offset === selected} theme={theme} full={full} width={width} onPress={() => onPress(start + offset)} /></box>
         : <InputField key={start + offset} field={row.label} label={row.label} value={row.detail ?? ""} active={start + offset === selected} editing={editing && start + offset === selected} theme={theme} onPress={() => onPress(start + offset)} />)}
     </box>
   )
@@ -303,7 +320,7 @@ export function nudge(send: (request: unknown) => void, _from: number, to: numbe
 
 export function Paragraphs({ lines, theme }: { lines: string[]; theme: Theme }) {
   return (
-    <scrollbox flexGrow={1} flexBasis={0} minHeight={0} scrollY focusable={false} contentOptions={{ paddingLeft: 0, paddingRight: 0 }}>
+    <scrollbox flexGrow={1} flexBasis={0} minHeight={0} scrollY focusable={false} scrollbarOptions={scrollbars(theme)} contentOptions={{ paddingLeft: 0, paddingRight: 0 }}>
       {lines.map((line, index) => (
         <text key={index} fg={theme.fg}>
           {line || " "}
@@ -385,7 +402,41 @@ function EditableField({ label, value, placeholder, secret, theme, onChange, lis
   </box>
 }
 
-export function Document({ children, target }: { children: ReactNode; target?: string }) {
+/** Solid thumb over OpenTUI's half-block slider, which otherwise reads as a dashed rail. */
+export function SolidScrollBar({ source, theme }: { source: { current: ScrollBoxRenderable | null }; theme: Theme }) {
+  const renderer = useRenderer()
+  const [rail, setRail] = useState<{ height: number; thumb: number; offset: number } | null>(null)
+  useEffect(() => {
+    const read = () => {
+      const box = source.current
+      if (!box) return
+      const view = box.viewport?.height ?? 0
+      const size = box.scrollHeight
+      const height = box.height
+      const top = box.scrollTop
+      if (height < 2 || size <= view + 0.5) {
+        setRail((current) => current === null ? current : null)
+        return
+      }
+      const thumb = Math.max(1, Math.min(height, Math.round((view / size) * height)))
+      const offset = Math.round((top / Math.max(1, size - view)) * Math.max(0, height - thumb))
+      setRail((current) => current && current.height === height && current.thumb === thumb && current.offset === offset ? current : { height, thumb, offset })
+    }
+    renderer.on("frame", read)
+    return () => { renderer.off("frame", read) }
+  }, [renderer, source])
+  if (!rail) return null
+  return (
+    <box position="absolute" right={0} top={0} width={1} height={rail.height} flexDirection="column" zIndex={3} backgroundColor={theme.panel}>
+      {Array.from({ length: rail.height }, (_, index) => {
+        const on = index >= rail.offset && index < rail.offset + rail.thumb
+        return <text key={index} height={1} fg={on ? theme.dim : theme.panel} bg={theme.panel}>{on ? "█" : " "}</text>
+      })}
+    </box>
+  )
+}
+
+export function Document({ children, target, theme }: { children: ReactNode; target?: string; theme?: Theme }) {
   const ref = useRef<ScrollBoxRenderable | null>(null)
   useKeyboard((key) => {
     if (key.eventType === "release" || nativeMenuInput.current) return
@@ -411,5 +462,8 @@ export function Document({ children, target }: { children: ReactNode; target?: s
     renderer.on("frame", follow)
     return () => { renderer.off("frame", follow) }
   }, [renderer, target])
-  return <scrollbox ref={ref} flexGrow={1} flexBasis={0} minHeight={0} scrollY focusable={false} contentOptions={{ paddingLeft: 0, paddingRight: 0 }}>{children}</scrollbox>
+  return <box flexGrow={1} flexBasis={0} minHeight={0}>
+    <scrollbox ref={ref} flexGrow={1} flexBasis={0} minHeight={0} scrollY focusable={false} scrollbarOptions={theme ? scrollbars(theme) : undefined} contentOptions={{ paddingLeft: 0, paddingRight: 0 }}>{children}</scrollbox>
+    {theme ? <SolidScrollBar source={ref} theme={theme} /> : null}
+  </box>
 }

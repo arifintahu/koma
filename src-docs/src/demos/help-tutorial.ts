@@ -77,7 +77,7 @@ const ALL_ENTRIES: HelpEntry[] = [
   { key: 'Esc',            desc: 'interrupt while busy (kills still-blocking FG bash)',       isCommand: false },
   { key: 'Esc Esc',        desc: 'edit a previous message (rewind)',                          isCommand: false },
   { key: 'Up/Down/wheel',  desc: 'scroll the transcript',                                     isCommand: false },
-  { key: '$',              desc: 'open the sub-agents panel \u2014 Ctrl+B backgrounds, Ctrl+X kills', isCommand: false },
+
 ]
 
 // ─── Screen Builder ───────────────────────────────────────────────────

@@ -16,6 +16,16 @@ export interface Theme {
   heat: [string, string, string, string, string]
 }
 
+/** Scrollbar track follows the panel, and the thumb follows dim text. */
+export function scrollbars(theme: Theme) {
+  return {
+    trackOptions: {
+      backgroundColor: theme.panel,
+      foregroundColor: theme.dim,
+    },
+  }
+}
+
 type Paint = Omit<Theme, "name">
 
 const PALETTES: Record<string, Paint> = {

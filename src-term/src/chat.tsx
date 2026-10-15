@@ -22,7 +22,8 @@ import {
   type Snapshot,
   type ToolCall,
 } from "./protocol.ts"
-import type { Theme } from "./theme.ts"
+import { SolidScrollBar } from "./modes/bits.tsx"
+import { scrollbars, type Theme } from "./theme.ts"
 import { Toast, type LocalNotice } from "./toast.tsx"
 
 function useTerminalSize() {
@@ -262,25 +263,29 @@ function HistoryPane({
           <UserBand message={sticky} session={session} theme={theme} syntaxStyle={syntaxStyle} muted />
         </box>
       ) : null}
-      <scrollbox
-        ref={scrollRef}
-        flexGrow={1}
-        stickyScroll={following}
-        stickyStart="bottom"
-        scrollY
-        focusable={false}
-        onMouseScroll={() => queueMicrotask(syncScroll)}
-        onMouseUp={() => queueMicrotask(syncScroll)}
-      >
-        <Transcript
-          session={mounted}
-          theme={theme}
-          syntaxStyle={syntaxStyle}
-          onTurns={(messages) => {
-            stickyMessages.current = messages
-          }}
-        />
-      </scrollbox>
+      <box flexGrow={1} flexBasis={0} minHeight={0}>
+        <scrollbox
+          ref={scrollRef}
+          flexGrow={1}
+          stickyScroll={following}
+          stickyStart="bottom"
+          scrollY
+          focusable={false}
+          onMouseScroll={() => queueMicrotask(syncScroll)}
+          onMouseUp={() => queueMicrotask(syncScroll)}
+          scrollbarOptions={scrollbars(theme)}
+        >
+          <Transcript
+            session={mounted}
+            theme={theme}
+            syntaxStyle={syntaxStyle}
+            onTurns={(messages) => {
+              stickyMessages.current = messages
+            }}
+          />
+        </scrollbox>
+        <SolidScrollBar source={scrollRef} theme={theme} />
+      </box>
     </box>
   )
 }
@@ -360,7 +365,7 @@ function Transcript({
             <Reasoning text={session.stream_reasoning} theme={theme} syntaxStyle={syntaxStyle} defaultOpen streaming />
           ) : null}
           {session.streaming ? (
-            <MarkdownBody content={session.streaming} syntaxStyle={syntaxStyle} fg={theme.fg} streaming />
+            <MarkdownBody content={session.streaming} syntaxStyle={syntaxStyle} fg={theme.fg} bg={theme.bg} streaming />
           ) : null}
           {pending.length > 0 ? (
             <box flexDirection="column" gap={0}>
@@ -423,7 +428,7 @@ function HistoryTurn({
       {message.reasoning ? (
         <Reasoning text={message.reasoning} theme={theme} syntaxStyle={syntaxStyle} defaultOpen={false} />
       ) : null}
-      {message.content ? <MarkdownBody content={message.content} syntaxStyle={syntaxStyle} fg={theme.fg} /> : null}
+      {message.content ? <MarkdownBody content={message.content} syntaxStyle={syntaxStyle} fg={theme.fg} bg={theme.bg} /> : null}
       {message.tool_calls && message.tool_calls.length > 0 ? (
         <box flexDirection="column" gap={0}>
           {message.tool_calls.map((call) => (
@@ -512,7 +517,7 @@ function UserBand({
             )) : pieces.map((piece, index) => piece.kind === "mark" ? (
               <text key={index} fg={ink}>{piece.text}</text>
             ) : piece.text.trim() ? (
-              <MarkdownBody key={index} content={piece.text.trim()} syntaxStyle={syntaxStyle} fg={ink} />
+              <MarkdownBody key={index} content={piece.text.trim()} syntaxStyle={syntaxStyle} fg={ink} bg={theme.panel} />
             ) : null)}
           </box>
         </box>
@@ -551,11 +556,13 @@ export function MarkdownBody({
   content,
   syntaxStyle,
   fg,
+  bg,
   streaming,
 }: {
   content: string
   syntaxStyle: SyntaxStyle
   fg: string
+  bg?: string
   streaming?: boolean
 }) {
   return (
@@ -564,6 +571,7 @@ export function MarkdownBody({
       syntaxStyle={syntaxStyle}
       treeSitterClient={syntaxClient}
       fg={fg}
+      bg={bg}
       conceal
       {...{ selectable: true }}
       streaming={streaming}
@@ -585,15 +593,18 @@ function renderMarkdownNode(token: { type?: string; lang?: string }, context: Re
   if (token.type === "code") {
     const code = context.defaultRender()
     if (!code) return null
+    const codeBg = context.syntaxStyle.getStyle("markup.raw")?.bg
     if (code instanceof CodeRenderable) {
       code.conceal = false
       code.drawUnstyledText = true
       code.wrapMode = "word"
+      if (codeBg) code.bg = codeBg
     }
     code.marginTop = 0
     code.marginBottom = 0
     const frame = new BoxRenderable(code.ctx, {
       flexDirection: "column", width: "100%", minWidth: 0, flexShrink: 0,
+      backgroundColor: codeBg,
       border: true, borderStyle: "single", borderColor: context.syntaxStyle.getStyle("conceal")?.fg ?? "#888888",
       titleColor: context.syntaxStyle.getStyle("default")?.fg,
       title: token.lang ? ` ${token.lang} ` : undefined,
@@ -653,7 +664,7 @@ function Reasoning({
       </box>
       {open ? (
         <box border={["left"]} borderColor={theme.dim} paddingLeft={1}>
-          <MarkdownBody content={text} syntaxStyle={syntaxStyle} fg={theme.dim} streaming={streaming} />
+          <MarkdownBody content={text} syntaxStyle={syntaxStyle} fg={theme.dim} bg={theme.bg} streaming={streaming} />
         </box>
       ) : null}
     </box>
@@ -713,7 +724,7 @@ function ToolCard({
       {open ? (
         <box border={["top"]} borderColor={theme.dim} paddingLeft={1} paddingRight={1} flexDirection="column">
           {digest ? (
-            <MarkdownBody content={digest} syntaxStyle={syntaxStyle} fg={theme.fg} />
+            <MarkdownBody content={digest} syntaxStyle={syntaxStyle} fg={theme.fg} bg={theme.bg} />
           ) : (
             <>
               <text fg={theme.dim}>payload</text>
@@ -766,7 +777,7 @@ export function Approval({
   const detail = plan ? planDigest(call?.function.arguments ?? "") ?? call?.function.arguments ?? "" : payloadPreview(call?.function.arguments ?? "")
   return (
     <box border borderStyle="rounded" borderColor={theme.warn} paddingLeft={1} paddingRight={1} flexDirection="column" flexShrink={0} height={Math.min(12, Math.max(6, height - 11))}>
-      <scrollbox flexGrow={1} flexBasis={0} minHeight={0} scrollY focusable={false}>
+      <scrollbox flexGrow={1} flexBasis={0} minHeight={0} scrollY focusable={false} scrollbarOptions={scrollbars(theme)}>
         <text fg={theme.warn}>{name}</text>
         {!plan && call ? <text fg={theme.fg}>{toolHint(call.function.arguments)}</text> : null}
         {session.approval_reason ? <text fg={theme.dim}>{session.approval_reason}</text> : null}
@@ -954,6 +965,7 @@ function Composer({
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const flushToken = useRef(0)
   const [lines, setLines] = useState(Math.max(1, snap.global.input.split("\n").length))
+  const [draft, setDraft] = useState(snap.global.input)
   const innerCap = session.awaiting_approval || compact ? 1 : Math.max(1, Math.floor(height / 2) - 2)
   const boxHeight = Math.min(innerCap, Math.max(1, lines)) + 2
   const paletteOpen = commandSuggestions(snap.global.command_palette, snap.global.palette_sel).rows.length > 0 || (snap.global.file_palette?.length ?? 0) > 0
@@ -976,7 +988,7 @@ function Composer({
       keyQueue.current = keyQueue.current.then(async () => { if (wire && await flush()) send({ SendKey: wire }) })
       return
     }
-    if (key.ctrl && ["p", "r", "v", "x"].includes(key.name) || key.meta && key.name === "e") {
+    if (key.ctrl && ["b", "p", "r", "v", "x"].includes(key.name) || key.meta && key.name === "e") {
       key.preventDefault()
       keyQueue.current = keyQueue.current.then(async () => {
         const request = { SendKey: { code: { Char: key.name }, mods: key.ctrl ? 2 : 4 } }
@@ -1042,6 +1054,7 @@ function Composer({
     const local = current.plainText
     // The echo is an older prefix. Putting it back deletes the letters typed since.
     if (composerIsAhead(local, text)) {
+      setDraft(local)
       if (local !== lastSent.current) schedule()
       return
     }
@@ -1057,6 +1070,7 @@ function Composer({
     applying.current = true
     if (local !== text) {
       current.setText(text)
+      setDraft(text)
       setLines(Math.max(1, text.split("\n").length))
     }
     current.cursorOffset = utf16Offset(text, cursor)
@@ -1123,6 +1137,7 @@ function Composer({
   function schedule() {
     if (applying.current || pendingPaste.current) return
     const text = area.current?.plainText ?? ""
+    setDraft(text)
     setLines(Math.max(1, text.split("\n").length))
     if (timer.current) clearTimeout(timer.current)
     timer.current = setTimeout(() => {
@@ -1136,7 +1151,7 @@ function Composer({
   const modeColor = mode.color === "success" ? theme.success : mode.color === "warn" ? theme.warn : mode.color === "error" ? theme.error : theme.info
   return (
     <box flexDirection="column" flexShrink={0}>
-      {!session.awaiting_approval && snap.global.pending_attachments.length ? <scrollbox height={3} flexShrink={0} scrollY focusable={false} contentOptions={{ flexDirection: "row", flexWrap: "wrap" }}>
+      {!session.awaiting_approval && snap.global.pending_attachments.length ? <scrollbox height={3} flexShrink={0} scrollY focusable={false} scrollbarOptions={scrollbars(theme)} contentOptions={{ flexDirection: "row", flexWrap: "wrap" }}>
         {snap.global.pending_attachments.map((attachment) => <box key={`${attachment.kind}-${attachment.marker_n}`} flexDirection="row" border borderStyle="rounded" borderColor={theme.dim}>
           <Choice neutral label={previewLine(attachment.label || `${attachment.kind === "pasted_text" ? "Pasted Text" : "Image"} #${attachment.marker_n}`, Math.max(8, Math.floor((width - 12) / 2)))} theme={theme} onPress={() => {
             if (!focused) return
@@ -1165,7 +1180,7 @@ function Composer({
           <span fg={theme.dim}> | </span>
           <span fg={modeColor}>{mode.label}</span>
         </text>
-        <text fg={theme.dim}>{session.resolved_model_id}</text>
+        <text fg={theme.dim}>{modelLabel(session.resolved_model_id, session.effort)}</text>
       </box>
       <box height={1} />
       <box flexDirection="column" flexShrink={0}>{interaction}</box>
@@ -1181,7 +1196,7 @@ function Composer({
         paddingLeft={0}
         paddingRight={2}
       >
-      <text fg={theme.accent}>[$] </text>
+      <text fg={theme.accent}>{`${promptMark(draft)} `}</text>
       <textarea
         ref={area}
         flexGrow={1}
@@ -1219,7 +1234,95 @@ function Composer({
         }}
       />
       </box>
-      <box height={1} />
+      {compact ? <box height={1} /> : <Tips theme={theme} width={width} />}
+    </box>
+  )
+}
+
+export const COMPOSER_TIPS = [
+  "/help lists commands and shortcuts",
+  "Shift+Tab cycles Auto, Normal, Plan, and SDLC",
+  "Tab completes a slash command or an @ file",
+  "Shift+Enter or Ctrl+J starts a new line",
+  "Esc stops a running turn",
+  "Esc Esc edits a previous message",
+  "/usage opens the spend ledger",
+  "/notification keeps notices after the toast fades",
+  "Ctrl+C asks before quitting",
+  "/new starts a session and keeps this one running",
+  "/new kill starts a session and closes this one",
+  "/resume opens the session hub",
+  "/remote adds a host. /new remote only picks one",
+  "/mode sets Auto, Normal, Plan, or SDLC",
+  "/effort sets how hard the model thinks",
+  "/free switches this session to koma-free",
+  "/settings changes theme, model, and provider",
+  "/model switches the model for a role",
+  "/compact summarizes the conversation",
+  "/clear clears the chat and keeps the archive",
+  "Ctrl+R resends the last message",
+  "Ctrl+V pastes an image from the clipboard",
+  "Ctrl+E toggles internet simple or full",
+  "/bash lists foreground and background jobs",
+  "/todo shows the session task list",
+  "/skill loads or unloads a skill",
+  "/cd changes the session working directory",
+]
+
+/** Model name, plus the selected effort when `/effort` is not the model default. */
+export function modelLabel(model: string, effort: string): string {
+  const level = effort.trim()
+  if (!level) return model
+  if (!model) return level
+  return `${model} · ${level}`
+}
+
+/** Composer glyph. The typed character stays in the draft. */
+export function promptMark(input: string): string {
+  const head = input[0]
+  if (head === "!") return "[>]"
+  if (head === "/") return "[/]"
+  if (head === "@") return "[@]"
+  return "[$]"
+}
+
+/** Characters revealed so far, clipped to the row. */
+export function tipReveal(tip: string, count: number, width: number): string {
+  const room = Math.max(0, width)
+  const text = [...tip].slice(0, room).join("")
+  return [...text].slice(0, Math.max(0, count)).join("")
+}
+
+function Tips({ theme, width }: { theme: Theme; width: number }) {
+  const [index, setIndex] = useState(0)
+  const [count, setCount] = useState(0)
+  const tip = COMPOSER_TIPS[index] ?? ""
+  const room = Math.max(0, width - 12)
+  const full = [...tip].slice(0, room).join("")
+  const visible = tipReveal(tip, count, room)
+  const length = [...full].length
+  const typing = count < length
+  useEffect(() => {
+    // Depend on count, not the typing flag. The flag stays true for the whole
+    // line, so a timer keyed only to it reveals one character and then stops.
+    if (count < length) {
+      const timer = setTimeout(() => setCount((value) => value + 1), 18)
+      return () => clearTimeout(timer)
+    }
+    const timer = setTimeout(() => {
+      setIndex((value) => (value + 1) % COMPOSER_TIPS.length)
+      setCount(0)
+    }, 3000)
+    return () => clearTimeout(timer)
+  }, [count, length, index])
+  return (
+    <box height={1} flexDirection="row" paddingRight={2}>
+      <text width={2} height={1} flexShrink={0} wrapMode="none" fg={typing ? theme.accent : theme.warn}>💡</text>
+      <text flexGrow={1} height={1} wrapMode="none">
+        <span fg={theme.dim}>Tips: </span>
+        <span fg={theme.fg}>{visible}</span>
+        {typing ? <span fg={theme.accent}>▍</span> : null}
+      </text>
     </box>
   )
 }
@@ -1255,11 +1358,15 @@ export function statusLabel(status: string): string {
 
 function isThinking(status: string, session: SessionSnap): boolean {
   if (session.awaiting_approval) return false
+  if (status.trim().toLowerCase() === "interrupted") return false
   if (session.working || session.waiting || session.streaming || session.stream_reasoning) return true
+  return statusLooksLive(status)
+}
+
+/** A live phase is one word, like "thinking". A stop, a slash notice, or an approval stays still. */
+export function statusLooksLive(status: string): boolean {
   const word = status.trim().toLowerCase()
-  if (!word || word === "ready" || word.includes("approve")) return false
-  // A live phase is one word, like "thinking". Slash usage and other notices
-  // are sentences, and they stay a still gray line.
+  if (!word || word === "ready" || word === "interrupted" || word.includes("approve")) return false
   if (/[\s:<]/.test(word)) return false
   return true
 }
