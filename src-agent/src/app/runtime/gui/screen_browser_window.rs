@@ -579,13 +579,12 @@ fn linux_apply_window_shape(window: &Window, width: i32, height: i32, scale: f64
 fn windows_apply_window_shape(window: &Window, width: i32, height: i32, scale: f64) {
     use tao::platform::windows::WindowExtWindows;
     use windows_sys::Win32::Foundation::HWND;
-    use windows_sys::Win32::Graphics::Gdi::{CreateRoundRectRgn, DeleteObject};
-    use windows_sys::Win32::UI::WindowsAndMessaging::SetWindowRgn;
+    use windows_sys::Win32::Graphics::Gdi::{CreateRoundRectRgn, DeleteObject, SetWindowRgn};
     let w = width.max(1);
     let h = height.max(1);
     let r = ((window_radius_px() as f64) * scale).round().max(1.0) as i32;
     let rgn = unsafe { CreateRoundRectRgn(0, 0, w + 1, h + 1, r * 2, r * 2) };
-    if rgn == 0 {
+    if rgn.is_null() {
         return;
     }
     let hwnd = window.hwnd() as HWND;
