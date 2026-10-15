@@ -93,13 +93,15 @@ mod tests {
         .unwrap();
         let before = crate::model::msglog::max_message_id(&path);
         assert!(before >= 1);
-        let mut settings = Settings::default();
-        settings.session_charter = "investigate the repo for vulnerabilities".into();
-        settings.session_goal = "survey the structure".into();
-        settings.session_goal_source = "user".into();
-        settings.session_goal_msg_id = 1;
-        settings.session_objective_fp = "user:survey the structure".into();
-        settings.session_system_extra = "keep this suffix".into();
+        let settings = Settings {
+            session_charter: "investigate the repo for vulnerabilities".into(),
+            session_goal: "survey the structure".into(),
+            session_goal_source: "user".into(),
+            session_goal_msg_id: 1,
+            session_objective_fp: "user:survey the structure".into(),
+            session_system_extra: "keep this suffix".into(),
+            ..Settings::default()
+        };
         let mut state = AppState::new(Mode::Chat);
         state.rest.fg_mut().session = Some(Session::new(
             "clear-test".into(),
