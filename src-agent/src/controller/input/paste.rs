@@ -169,6 +169,11 @@ pub fn handle_paste(state: &mut AppState, text: &str) {
             paste_single_line(text, |c| p.query.push(c));
             p.refilter();
         }
+        Mode::Model(m) => {
+            if m.searchable() {
+                let mut query=m.query.clone(); paste_single_line(text, |c| query.push(c)); m.set_query(query);
+            }
+        }
         Mode::Help(h) => {
             // The `/help` reference has a live search field: paste feeds the
             // query and re-runs the filter, exactly as a typed char does
@@ -232,7 +237,6 @@ pub fn handle_paste(state: &mut AppState, text: &str) {
         Mode::KeyInput(_)
         | Mode::Onboard(_)
         | Mode::Effort(_)
-        | Mode::Model(_)
         | Mode::Loading(_)
         | Mode::Usage(_)
         | Mode::MessageRewind(_)

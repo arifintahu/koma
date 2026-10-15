@@ -198,7 +198,14 @@ pub struct EffortSnapshot {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[allow(dead_code)]
 pub struct ModelCmdSnapshot {
-    /// Submode discriminant: "help", "role_pick", "agent_list", "agent_pick".
+    /// Additive search state; options retain their canonical indices and IDs.
+    #[serde(default)]
+    pub query: String,
+    #[serde(default)]
+    pub filtered_indices: Vec<usize>,
+    #[serde(default)]
+    pub from_roles: bool,
+    /// Submode discriminant: "roles", "help", "role_pick", "agent_list", "agent_pick".
     pub sub: String,
     /// Role token (only meaningful for role_pick submode).
     pub role: Option<String>,

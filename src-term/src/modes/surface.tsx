@@ -100,7 +100,7 @@ function viewOf(name: string, body: Rec, theme: Theme, wide: boolean, onMove: (i
     case "Effort":
       return effortView(body as MenuData["Effort"] & Rec, theme, onMove)
     case "Model":
-      return modelView(body, theme, onMove)
+      return modelView(body, theme, onMove, send)
     case "Todo":
       return todoView(body, theme, wide, onMove)
     case "Bash":

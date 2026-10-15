@@ -271,6 +271,11 @@ pub(in crate::app::runtime) fn apply_action(
             model_cmd::handle_model_agent_swap(agent_name, model_uuid, state)?;
         }
 
+        Action::ModelOpenRolePick { role } => {
+            super::commands::model_cmd::open_role_pick(role, state);
+            if let crate::app::mode::Mode::Model(m)=state.mode_mut() { m.from_roles=true; }
+        }
+        Action::ModelBackToRoles => { super::commands::model_cmd::open_roles(state); }
         Action::ModelCancel => {
             *state.mode_mut() = crate::app::mode::Mode::Chat;
         }

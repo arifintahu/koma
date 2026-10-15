@@ -1,7 +1,7 @@
 //! Model command: `/model` — session model switcher + agent model picker.
 //!
 //! Subcommand dispatch:
-//! - `/model` or `/model help` or `/model ?` → open help submode
+//! - `/model` → open the role picker; `/model help` or `/model ?` → help
 //! - `/model <role>` → open RolePick picker for that role
 //! - `/model agent` → open AgentList picker
 //! - `/model agent <name>` → open AgentPick for named agent
@@ -31,7 +31,11 @@ pub(crate) fn parse_role(s: &str) -> Option<ModelRole> {
 pub(super) fn handle_model(args: String, state: &mut AppState) -> Result<()> {
     let rest = args.trim().to_string();
 
-    if rest.is_empty() || rest.eq_ignore_ascii_case("help") || rest == "?" {
+    if rest.is_empty() {
+        open_roles(state);
+        return Ok(());
+    }
+    if rest.eq_ignore_ascii_case("help") || rest == "?" {
         open_help(state);
         return Ok(());
     }
@@ -60,6 +64,8 @@ pub(super) fn handle_model(args: String, state: &mut AppState) -> Result<()> {
     lines.insert(0, String::new());
     lines.insert(0, format!("unknown subcommand: {first_token}"));
     *state.mode_mut() = crate::app::mode::Mode::Model(Box::new(ModelCmdState {
+        query: String::new(),
+        from_roles: false,
         sub: ModelCmdSub::Help { lines },
         options: Vec::new(),
         cursor: 0,
@@ -68,10 +74,35 @@ pub(super) fn handle_model(args: String, state: &mut AppState) -> Result<()> {
     Ok(())
 }
 
+/// Bare `/model` opens all supported roles without changing any binding.
+pub(crate) fn open_roles(state: &mut AppState) {
+    let roles = [
+        (ModelRole::Main, "main"),
+        (ModelRole::Awareness, "awareness"),
+        (ModelRole::Planner, "planner"),
+        (ModelRole::Compactor, "compactor"),
+        (ModelRole::Safeguard, "safeguard"),
+    ];
+    let options = roles
+        .iter()
+        .map(|(_, token)| (Some((*token).to_string()), (*token).to_string()))
+        .collect();
+    *state.mode_mut() = crate::app::mode::Mode::Model(Box::new(ModelCmdState {
+        sub: ModelCmdSub::RoleList,
+        query: String::new(),
+        from_roles: false,
+        options,
+        cursor: 0,
+        note: "choose a role".into(),
+    }));
+}
+
 /// Open the Help submode with live role bindings.
 fn open_help(state: &mut AppState) {
     let lines = help_lines(state);
     *state.mode_mut() = crate::app::mode::Mode::Model(Box::new(ModelCmdState {
+        query: String::new(),
+        from_roles: false,
         sub: ModelCmdSub::Help { lines },
         options: Vec::new(),
         cursor: 0,
@@ -132,7 +163,7 @@ fn help_lines(state: &AppState) -> Vec<String> {
 }
 
 /// Open the RolePick picker for a session role.
-fn open_role_pick(role: ModelRole, state: &mut AppState) {
+pub(crate) fn open_role_pick(role: ModelRole, state: &mut AppState) {
     let mut options: Vec<(Option<String>, String)> = Vec::new();
 
     // Row 0: inherit (drop the local override for this role).
@@ -184,6 +215,8 @@ fn open_role_pick(role: ModelRole, state: &mut AppState) {
         };
 
         *state.mode_mut() = crate::app::mode::Mode::Model(Box::new(ModelCmdState {
+            query: String::new(),
+            from_roles: false,
             sub: ModelCmdSub::RolePick { role },
             options,
             cursor,
@@ -229,6 +262,8 @@ fn open_agent_list(state: &mut AppState) {
         .collect();
 
     *state.mode_mut() = crate::app::mode::Mode::Model(Box::new(ModelCmdState {
+        query: String::new(),
+        from_roles: false,
         sub: ModelCmdSub::AgentList,
         options,
         cursor: 0,

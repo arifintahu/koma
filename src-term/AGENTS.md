@@ -233,3 +233,15 @@ for all four languages and ten themes; it exports `/tmp/koma-code-frames.txt`.
 and stable loading positions. These checks use fixtures and local services; they
 are not verification of live provider accounts, OAuth flows, remote hosts or a
 future image renderer. Keep the existing daemon harness and Rust protocol checks.
+
+- Bare `/model` opens the five-role picker (main, awareness, planner, compactor,
+  safeguard). `/model <role>` remains a direct shortcut; `/model help` and `?`
+  retain documentation. Role/agent model lists have an active native search
+  input, daemon filtering by name/model/provider, arrow navigation, and Enter
+  or direct stable-ID pointer confirmation. Empty results never inherit or
+  modify a binding. Esc from a role chosen in the role picker returns there;
+  directly opened role pickers still close. Preserve the composer draft.
+  `scripts/verify-model-picker.tsx` exercises the flow against an isolated daemon,
+  including a persisted role swap, empty results, stable filtered pointer targets,
+  native paste, direct shortcuts/help and the four terminal sizes. Fixture startup
+  notices are dismissed before the short-terminal geometry captures.

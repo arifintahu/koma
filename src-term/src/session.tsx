@@ -74,7 +74,7 @@ export function SessionScreen({
       if (decision.current === identity) return
       decision.current = identity
     }
-    if (link && current && placeOf(current.global.mode) === "full" && request && typeof request === "object") {
+    if (link && current && (placeOf(current.global.mode) === "full" || modeName(current.global.mode) === "Model") && request && typeof request === "object") {
       const r = request as Record<string, unknown>
       let action: MenuAction | null = null
       if (r.MenuSelect) action = { Select: r.MenuSelect as Extract<MenuAction, { Select: unknown }>["Select"] }

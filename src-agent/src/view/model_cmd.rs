@@ -25,6 +25,7 @@ pub fn render_overlay(
     transcript_chunk: ratatui::layout::Rect,
 ) {
     let title_str = match &state.sub {
+        ModelCmdSub::RoleList => " model — roles ".to_string(),
         ModelCmdSub::Help { .. } => " model — help ".to_string(),
         ModelCmdSub::RolePick { role } => match role {
             ModelRole::Main => " model — main ".to_string(),
@@ -43,10 +44,10 @@ pub fn render_overlay(
     let content_rows = match &state.sub {
         ModelCmdSub::Help { lines } => lines.len(),
         _ => {
-            if state.options.is_empty() {
+            if state.filtered_indices().is_empty() {
                 1 // empty placeholder
             } else {
-                state.options.len()
+                state.filtered_indices().len()
             }
         }
     };
@@ -54,7 +55,8 @@ pub fn render_overlay(
 
     // Desired height: list + 2 (bordered block top/bottom) + 1 note + 1 hint.
     let has_note = !state.note.is_empty();
-    let desired = list_rows + 2 + if has_note { 1 } else { 0 } + 1; // hint always
+    let desired =
+        list_rows + 2 + if has_note { 1 } else { 0 } + if state.searchable() { 1 } else { 0 } + 1; // hint always
 
     // Anchor above the input bar, growing upward into transcript space.
     let avail = input_chunk.y.saturating_sub(transcript_chunk.y);
@@ -79,7 +81,11 @@ pub fn render_overlay(
     }
 
     // Layout: list (fills remaining), optional note (1), hint (1).
-    let mut constraints = vec![Constraint::Min(1)]; // option/help list
+    let mut constraints = vec![];
+    if state.searchable() {
+        constraints.push(Constraint::Length(1));
+    }
+    constraints.push(Constraint::Min(1)); // option/help list
     if has_note && h > list_rows + 2 + 1 {
         // room for at least: list + border + hint + note
         constraints.push(Constraint::Length(1)); // note
@@ -92,7 +98,15 @@ pub fn render_overlay(
         .split(inner);
 
     // --- Content area (option list / help) ---
-    let content_area = chunks[0].inner(Margin {
+    let list_index = usize::from(state.searchable());
+    if state.searchable() {
+        frame.render_widget(
+            Paragraph::new(format!("Search: {}▮", state.query))
+                .style(Style::default().fg(palette.fg)),
+            chunks[0],
+        );
+    }
+    let content_area = chunks[list_index].inner(Margin {
         horizontal: 1,
         vertical: 0,
     });
@@ -111,7 +125,7 @@ pub fn render_overlay(
             frame.render_widget(Paragraph::new(styled_lines), content_area);
         }
         _ => {
-            if state.options.is_empty() {
+            if state.filtered_indices().is_empty() {
                 frame.render_widget(
                     Paragraph::new(Span::styled(
                         " (no options available) ",
@@ -120,11 +134,12 @@ pub fn render_overlay(
                     content_area,
                 );
             } else {
-                let lines: Vec<Line> = state
-                    .options
+                let filtered = state.filtered_indices();
+                let lines: Vec<Line> = filtered
                     .iter()
                     .enumerate()
-                    .map(|(i, (uuid, label))| {
+                    .map(|(i, index)| {
+                        let (uuid, label) = &state.options[*index];
                         let display = format!(" {label} ");
                         if i == state.cursor {
                             // Pad selected row to full inner width to avoid
@@ -167,7 +182,11 @@ pub fn render_overlay(
     }
 
     // --- Note (dim) — offset index shifts when note is present ---
-    let note_idx = if has_note && chunks.len() > 2 { 1 } else { 0 };
+    let note_idx = if has_note && chunks.len() > list_index + 2 {
+        list_index + 1
+    } else {
+        list_index
+    };
     if has_note {
         let note_area = chunks[note_idx].inner(Margin {
             horizontal: 1,
@@ -187,6 +206,7 @@ pub fn render_overlay(
     });
     let hint = match &state.sub {
         ModelCmdSub::Help { .. } => "Esc close",
+        ModelCmdSub::RoleList => "↑↓ role · Enter choose · Esc cancel",
         ModelCmdSub::AgentList => "↑↓ select · Enter pick model · Esc cancel",
         _ => "↑↓ select · Enter apply · Esc cancel",
     };

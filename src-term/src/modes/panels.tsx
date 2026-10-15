@@ -1,3 +1,4 @@
+import { select, replaceField } from "./actions.ts"
 import type { MenuData } from "./data.ts"
 import type { Theme } from "../theme.ts"
 import { Action, Document, InputField, Lines, Note, OVERLAY_BODY, Panel, Paragraphs, type Line } from "./bits.tsx"
@@ -41,7 +42,7 @@ export function effortView(body: MenuData["Effort"] & Rec, theme: Theme, onMove:
   }
 }
 
-export function modelView(body: Rec, theme: Theme, onMove: (index: number) => void) {
+export function modelView(body: Rec, theme: Theme, onMove: (index: number) => void, send: (request: unknown) => void) {
   const sub = str(body.sub) || "model"
   if (sub === "help") {
     return {
@@ -51,14 +52,26 @@ export function modelView(body: Rec, theme: Theme, onMove: (index: number) => vo
     }
   }
   const options = Array.isArray(body.options) ? body.options : []
-  const lines: Line[] = options.map((row) => {
+  const indices = Array.isArray(body.filtered_indices) ? body.filtered_indices.map(num) : options.map((_, index) => index)
+  const searchable = sub === "role_pick" || sub === "agent_pick"
+  const lines: Line[] = indices.map(index => options[index]).map((row) => {
     if (Array.isArray(row)) return { label: str(row[1] ?? row[0]) }
     return { label: str(row) }
   })
   return {
-    title: sub.replaceAll("_", " "),
-    hint: `${str(body.note)} · enter set · esc back`.replace(/^ · /, ""),
-    children: <Lines rows={lines} selected={num(body.cursor)} theme={theme} visible={OVERLAY_BODY} onPress={onMove} />,
+    title: sub === "roles" ? "model · roles" : sub === "role_pick" ? `model · ${str(body.role)}` : sub === "agent_pick" ? `model · ${str(body.agent_name)}` : sub.replaceAll("_", " "),
+    hint: sub === "roles" ? "↑↓ choose role · enter open · esc close" : searchable ? "type search · ↑↓ · enter set · esc back" : `${str(body.note)} · enter set · esc back`.replace(/^ · /, ""),
+    children: <box flexGrow={1} flexBasis={0} minHeight={0} flexDirection="column">
+      {searchable ? <InputField key={`${sub}:${str(body.role) || str(body.agent_name)}`} field="query" label="Search models" value={str(body.query)} placeholder="Name, model ID, or provider" active theme={theme} onChange={value => replaceField(send, "query", value)} /> : null}
+      <Lines rows={lines} selected={num(body.cursor)} theme={theme} visible={OVERLAY_BODY - (searchable ? 3 : 0)} onPress={visibleIndex => {
+        const index=indices[visibleIndex]
+        if(index == null) return
+        const row=options[index]
+        const id=Array.isArray(row) ? row[0] == null ? "__inherit__" : str(row[0]) : undefined
+        select(send, index, "models", id)
+        send({SendKey:{code:"Enter",mods:0}})
+      }} />
+    </box>,
   }
 }
 

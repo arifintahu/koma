@@ -11,7 +11,7 @@ test("bash stays over the chat and help takes the screen", () => {
   expect(placeOf({ Bash: { jobs: [] } })).toBe("overlay")
   expect(placeOf({ Help: { query: "" } })).toBe("full")
   expect(placeOf({ Skill: {} })).toBe("overlay")
-  expect(placeOf({ Effort: {} })).toBe("full")
+  expect(placeOf({ Effort: {} })).toBe("overlay")
 })
 
 test("the extension use picker floats and browse does not", () => {

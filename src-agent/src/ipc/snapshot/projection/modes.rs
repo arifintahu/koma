@@ -537,6 +537,7 @@ pub fn effort_snapshot(e: &EffortPickerState) -> EffortSnapshot {
 pub fn model_cmd_snapshot(m: &crate::app::mode::ModelCmdState) -> ModelCmdSnapshot {
     use crate::app::mode::ModelCmdSub;
     let (sub, role, agent_name, lines) = match &m.sub {
+        ModelCmdSub::RoleList => ("roles".to_string(), None, None, vec![]),
         ModelCmdSub::Help { lines } => ("help".to_string(), None, None, lines.clone()),
         ModelCmdSub::RolePick { role } => {
             let r = match role {
@@ -560,6 +561,9 @@ pub fn model_cmd_snapshot(m: &crate::app::mode::ModelCmdState) -> ModelCmdSnapsh
         ),
     };
     ModelCmdSnapshot {
+        query: m.query.clone(),
+        filtered_indices: m.filtered_indices(),
+        from_roles: m.from_roles,
         sub,
         role,
         agent_name,

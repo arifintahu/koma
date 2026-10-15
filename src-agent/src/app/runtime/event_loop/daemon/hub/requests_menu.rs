@@ -207,6 +207,11 @@ fn select(state: &mut AppState, group: &str, index: usize, id: Option<&str>) -> 
         Mode::Extensions(s) => { if group == "screens" { let len=s.rows.get(s.list_sel).map_or(0, |r| r.tui_screens.len()); s.screen_sel = bounded(index,len)?; } else { identity(id, &s.rows[bounded(index, s.rows.len())?].id)?; s.list_sel = index; } }
         Mode::ExtStore(s) => { identity(id, &s.rows[bounded(index, s.rows.len())?].id)?; s.list_sel = index; }
         Mode::ExtScreen(s) => { let entries=s.menu_entries(); let entry=&entries[bounded(index, entries.len())?]; identity(id, &entry.0)?; s.menu_cursor = index; }
+        Mode::Model(s) => {
+            let option=s.options.get(index).ok_or_else(|| anyhow::anyhow!("Model option unavailable"))?;
+            identity(id,option.0.as_deref().unwrap_or("__inherit__"))?;
+            s.cursor=s.filtered_indices().iter().position(|i| *i==index).ok_or_else(|| anyhow::anyhow!("Search results changed; choose again"))?;
+        }
         Mode::Help(s) => { s.selected = bounded(index, s.filtered_idx.len())?; }
         Mode::Effort(s) => { s.selected = bounded(index, s.options.len())?; }
         Mode::Notifications(s) => { if let Some(e) = s.filtered().get(index) { identity(id, &e.id)?; } s.cursor = bounded(index, s.filtered().len())?; }
@@ -254,6 +259,7 @@ fn replace(state: &mut AppState, field: &str, value: String) -> Result<()> {
         Mode::KeyInput(s) => {match field {"endpoint"=>s.endpoint=value,"api_key"=>s.api_key=value,"query"=>{s.query=value;s.result_sel=0;},_=>bail!("Unknown credential field")}}
         Mode::SessionPicker(s) => { ensure!(field=="query", "Unknown session search field"); s.query=value; s.refilter(); }
         Mode::SessionHub(s) => { ensure!(field=="history_query", "Unknown history search field"); s.history_query=value; s.refilter_history(); }
+        Mode::Model(s) => { ensure!(field=="query" && s.searchable(), "This model picker has no search field"); s.set_query(value); }
         Mode::Help(s) => {s.query = value; s.refilter();}
         Mode::Notifications(s) => { s.query=value;s.cursor=0;}
         _ => bail!("This menu has no editable field"),
@@ -370,6 +376,19 @@ mod tests {
         assert!(matches!(state.mode(),Mode::Settings(s) if s.search_editor.as_ref().unwrap().key.0.is_empty() && s.search_editor.as_ref().unwrap().editing));
         menu_action(&mut state,&mut client,rt.handle(),"Settings",MenuAction::Discard).unwrap();
         assert!(matches!(state.mode(),Mode::Settings(s) if s.search_editor.is_none()));
+    }
+
+    #[test]
+    fn model_pointer_selection_uses_canonical_identity_with_filtered_results() {
+        let mut state=state();
+        state.set_mode(Mode::Model(Box::new(ModelCmdState {sub:ModelCmdSub::RolePick {role:crate::model::app_config::ModelRole::Planner},query:"beta".into(),from_roles:false,
+            options:vec![(None,"inherit".into()),(Some("alpha".into()),"Alpha".into()),(Some("beta".into()),"Beta".into())],cursor:0,note:String::new()})));
+        select(&mut state,"models",2,Some("beta")).unwrap();
+        assert!(matches!(state.mode(),Mode::Model(m) if m.selected_uuid().as_deref()==Some("beta") && m.cursor==0));
+        assert!(select(&mut state,"models",2,Some("stale")).is_err());
+        replace(&mut state,"query","alpha".into()).unwrap();
+        assert!(select(&mut state,"models",2,Some("beta")).is_err());
+        assert!(matches!(state.mode(),Mode::Model(m) if m.selected_uuid().as_deref()==Some("alpha")));
     }
 
 }
