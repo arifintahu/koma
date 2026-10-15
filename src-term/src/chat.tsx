@@ -1160,6 +1160,7 @@ function Composer({
 }
 
 function Status({ snap, session, theme }: { snap: Snapshot; session: SessionSnap; theme: Theme }) {
+  const label = statusLabel(snap.global.status)
   const live = isThinking(snap.global.status, session)
   const elapsed = useWorkElapsed(snap.global.work_elapsed_ms, live)
   const readout = usageReadout(session)
@@ -1167,11 +1168,11 @@ function Status({ snap, session, theme }: { snap: Snapshot; session: SessionSnap
     <box height={1} flexDirection="row" justifyContent="space-between" paddingLeft={2} paddingRight={2}>
       <text>
         {elapsed == null ? (
-          <span fg={theme.dim}>{snap.global.status}</span>
+          <span fg={theme.dim}>{label}</span>
         ) : (
           [
             <span key="spin" fg={theme.accent}>{`${SPINNER[Math.floor(elapsed / 80) % SPINNER.length] ?? "⠋"} `}</span>,
-            <span key="status" fg={theme.fg}>{snap.global.status}</span>,
+            <span key="status" fg={theme.fg}>{label}</span>,
             <span key="time" fg={theme.dim}>{`  ${(elapsed / 1000).toFixed(1)}s`}</span>,
           ]
         )}
@@ -1179,6 +1180,12 @@ function Status({ snap, session, theme }: { snap: Snapshot; session: SessionSnap
       {readout ? <text fg={theme.accent}>{readout}</text> : null}
     </box>
   )
+}
+
+/** Turn failures are already a toast and stay in /notification. */
+export function statusLabel(status: string): string {
+  if (/^\s*error:/i.test(status)) return "ready"
+  return status
 }
 
 function isThinking(status: string, session: SessionSnap): boolean {
