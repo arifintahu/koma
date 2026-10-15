@@ -608,7 +608,11 @@ pub(super) fn handle_fetch_model_endpoints(
 }
 
 /// One binding transition for keyboard and direct provider chooser activation.
-pub(crate) fn choose_model_provider(s: &mut crate::app::mode::SettingsState, rest: &mut crate::app::state::AppStateRest, index: usize) {
+pub(crate) fn choose_model_provider(
+    s: &mut crate::app::mode::SettingsState,
+    rest: &mut crate::app::state::AppStateRest,
+    index: usize,
+) {
     s.mm_choose_provider(index);
     if let Some((ep, key)) = s.mm_provider_conn() {
         rest.request_catalogue(&ep, &key, &s.mm_provider_oauth_uuid());

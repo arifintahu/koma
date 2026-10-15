@@ -17,7 +17,12 @@ const BUN_NAME: &str = "bun";
 pub enum TermStart {
     /// Resume hub. No daemon until a row is opened.
     Hub,
-    Remote { target: String, key: Option<String>, port: Option<u16>, session: Option<String> },
+    Remote {
+        target: String,
+        key: Option<String>,
+        port: Option<u16>,
+        session: Option<String>,
+    },
     /// A session. `None` means the client mints a fresh id.
     Session(Option<String>),
 }
@@ -58,10 +63,20 @@ pub fn run_term_preview(start: TermStart) -> Result<()> {
     cmd.env("KOMA_BUILD", crate::model::store::build_fingerprint());
     cmd.env("KOMA_VERSION", crate::model::store::current_version());
     match start {
-        TermStart::Remote {target,key,port,session} => {
-            let mut parsed=crate::remote::parse_target(&target)?;
-            if let Some(port)=port {parsed.port=Some(port);}
-            let target=match parsed.port {Some(port)=>format!("{}@{}:{}",parsed.user,parsed.host,port),None=>format!("{}@{}",parsed.user,parsed.host)};
+        TermStart::Remote {
+            target,
+            key,
+            port,
+            session,
+        } => {
+            let mut parsed = crate::remote::parse_target(&target)?;
+            if let Some(port) = port {
+                parsed.port = Some(port);
+            }
+            let target = match parsed.port {
+                Some(port) => format!("{}@{}:{}", parsed.user, parsed.host, port),
+                None => format!("{}@{}", parsed.user, parsed.host),
+            };
             cmd.env("KOMA_REMOTE",serde_json::to_string(&serde_json::json!({"target":target,"key":key,"newSession":false,"sessionId":session,"hostId":null}))?);
         }
         TermStart::Hub => {
@@ -178,7 +193,10 @@ impl WinchGuard {
     fn forward(pid: u32) -> Self {
         TERM_CHILD.store(pid as i32, std::sync::atomic::Ordering::Relaxed);
         unsafe {
-            libc::signal(libc::SIGWINCH, forward_winch as *const () as libc::sighandler_t);
+            libc::signal(
+                libc::SIGWINCH,
+                forward_winch as *const () as libc::sighandler_t,
+            );
         }
         Self
     }

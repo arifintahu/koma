@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test"
-import { barLine, chartCells, fitSeries, money, pct } from "./usage.tsx"
+import { barLine, calendarColumns, chartCells, heatLevels, fitSeries, money, pct } from "./usage.tsx"
 
 test("a usage series keeps order when it is folded to the screen", () => {
   const fitted = fitSeries([1, 2, 3, 4], [10, 20, 30, 40], 2)
@@ -40,4 +40,25 @@ test("partial rolling days and non-hour UTC offsets include every zero period", 
   expect(folded.reduce((s, p) => s + p.tokens, 0)).toBe(40)
   expect(folded[0]!.start).toBe(start)
   expect(folded.at(-1)!.end).toBe(end)
+})
+
+
+test("bars use the legacy percentile heat levels independent of height", () => {
+  expect(heatLevels([0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10])).toEqual([0, 1, 1, 1, 2, 2, 2, 3, 3, 3, 4])
+  expect(heatLevels([0, 5, 5])).toEqual([0, 2, 2])
+  expect(heatLevels([0, 0])).toEqual([0, 0])
+})
+
+
+test("calendar weeks fill every width and keep selection visible through resizing", () => {
+  for (const width of [8, 46, 76, 96, 116, 156, 296]) {
+    for (const selected of [0, 20, 52]) {
+      const layout = calendarColumns(53, width, selected)
+      expect(layout.widths.reduce((sum, n) => sum + n, 0)).toBe(width - 4)
+      expect(layout.widths.every(n => n >= 1)).toBe(true)
+      expect(selected).toBeGreaterThanOrEqual(layout.from)
+      expect(selected).toBeLessThan(layout.from + layout.visible)
+      expect(Math.max(...layout.widths) - Math.min(...layout.widths)).toBeLessThanOrEqual(1)
+    }
+  }
 })

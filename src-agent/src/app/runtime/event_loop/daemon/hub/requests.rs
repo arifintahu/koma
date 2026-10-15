@@ -189,13 +189,36 @@ impl DaemonHub {
         handle: &tokio::runtime::Handle,
     ) {
         match req {
-            ClientRequest::SetUsageReader { enabled } => { self.clients[idx].usage_reader = enabled; self.clients[idx].mode_snapshot_cache = None; },
-            ClientRequest::GetMenuCapabilities => self.send_to(idx, DaemonEvent::MenuCapabilities { version: 1, usage_reader: true }),
-            ClientRequest::ReplaceInputTracked { request_id, text, cursor } => {
-                self.replace_input(idx, state, text, cursor);
-                self.send_to(idx, DaemonEvent::MenuResult { request_id, error: None });
+            ClientRequest::SetUsageReader { enabled } => {
+                self.clients[idx].usage_reader = enabled;
+                self.clients[idx].mode_snapshot_cache = None;
             }
-            ClientRequest::Menu { request_id, mode, action } => {
+            ClientRequest::GetMenuCapabilities => self.send_to(
+                idx,
+                DaemonEvent::MenuCapabilities {
+                    version: 1,
+                    usage_reader: true,
+                },
+            ),
+            ClientRequest::ReplaceInputTracked {
+                request_id,
+                text,
+                cursor,
+            } => {
+                self.replace_input(idx, state, text, cursor);
+                self.send_to(
+                    idx,
+                    DaemonEvent::MenuResult {
+                        request_id,
+                        error: None,
+                    },
+                );
+            }
+            ClientRequest::Menu {
+                request_id,
+                mode,
+                action,
+            } => {
                 self.menu(idx, state, client, handle, request_id, mode, action);
             }
             ClientRequest::Computer(control) => self.computer(idx, state, control),
@@ -203,7 +226,6 @@ impl DaemonHub {
             // --- read-only / control (honoured for everyone) ---
             ClientRequest::Attach { .. } => {
                 self.attach(idx, state);
-
             }
             ClientRequest::Resync | ClientRequest::ListSessions => {
                 self.resync_or_list_sessions(idx, state);

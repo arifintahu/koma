@@ -47,7 +47,12 @@ pub struct FollowUp {
     pub attachments: Vec<crate::dto::chat::Attachment>,
 }
 impl From<String> for FollowUp {
-    fn from(text: String) -> Self { Self { text, attachments: Vec::new() } }
+    fn from(text: String) -> Self {
+        Self {
+            text,
+            attachments: Vec::new(),
+        }
+    }
 }
 
 /// Typed one-shot arm for the mission-approval compact seed. Carries enough

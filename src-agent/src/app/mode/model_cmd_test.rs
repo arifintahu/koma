@@ -104,11 +104,29 @@ fn model_cmd_state_empty_options() {
 
 #[test]
 fn search_preserves_canonical_options_and_selects_the_filtered_uuid() {
-    let mut state=ModelCmdState { sub:ModelCmdSub::RolePick {role:ModelRole::Planner},query:String::new(),from_roles:false,
-        options:vec![(None,"(inherit global)".into()),(Some("one".into()),"Small — alpha @ Local".into()),(Some("two".into()),"Large — beta @ Remote".into())],cursor:2,note:String::new() };
+    let mut state = ModelCmdState {
+        sub: ModelCmdSub::RolePick {
+            role: ModelRole::Planner,
+        },
+        query: String::new(),
+        from_roles: false,
+        options: vec![
+            (None, "(inherit global)".into()),
+            (Some("one".into()), "Small — alpha @ Local".into()),
+            (Some("two".into()), "Large — beta @ Remote".into()),
+        ],
+        cursor: 2,
+        note: String::new(),
+    };
     state.set_query("REMOTE beta".into());
-    assert_eq!(state.filtered_indices(),vec![2]);assert_eq!(state.selected_uuid().as_deref(),Some("two"));
-    state.down();assert_eq!(state.cursor,0);assert_eq!(state.options.len(),3);
-    state.set_query("no matching model".into());assert!(state.selected().is_none());
-    state.set_query(String::new());state.down();assert_eq!(state.selected_uuid().as_deref(),Some("one"));
+    assert_eq!(state.filtered_indices(), vec![2]);
+    assert_eq!(state.selected_uuid().as_deref(), Some("two"));
+    state.down();
+    assert_eq!(state.cursor, 0);
+    assert_eq!(state.options.len(), 3);
+    state.set_query("no matching model".into());
+    assert!(state.selected().is_none());
+    state.set_query(String::new());
+    state.down();
+    assert_eq!(state.selected_uuid().as_deref(), Some("one"));
 }

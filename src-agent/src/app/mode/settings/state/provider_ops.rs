@@ -74,7 +74,7 @@ impl SettingsState {
 
     /// Open the add-provider modal with a blank draft.
     pub fn open_provider_modal(&mut self) {
-        self.provider_editing=false;
+        self.provider_editing = false;
         self.prov_replace = None;
         self.prov_modal = Some(ProviderModal::new());
     }
@@ -104,7 +104,7 @@ impl SettingsState {
 
     /// Close the add-provider modal without saving.
     pub fn close_provider_modal(&mut self) {
-        self.provider_editing=false;
+        self.provider_editing = false;
         self.prov_modal = None;
         self.prov_replace = None;
     }
@@ -112,21 +112,33 @@ impl SettingsState {
     /// Save the modal draft as a new provider and close the modal. Mints a fresh
     /// uuid for the new entry (the add-provider modal only ever creates).
     pub fn save_provider_modal(&mut self) {
-        let Some(m) = self.prov_modal.take() else { return };
+        let Some(m) = self.prov_modal.take() else {
+            return;
+        };
         if let Some(index) = self.prov_replace.take() {
             if let Some(existing) = self.providers.get_mut(index) {
-                if existing.ext_id.is_some() { return; }
+                if existing.ext_id.is_some() {
+                    return;
+                }
                 existing.name = m.name.trim().into();
                 existing.endpoint = m.endpoint.trim().into();
                 existing.api_type = m.api_type;
-                if !m.api_key.trim().is_empty() { existing.api_key = m.api_key.trim().into(); }
+                if !m.api_key.trim().is_empty() {
+                    existing.api_key = m.api_key.trim().into();
+                }
                 self.prov_sel = index;
                 return;
             }
         }
-        self.providers.push(ProviderDraft { uuid: super::super::new_uuid(), name: m.name.trim().into(),
-            endpoint: m.endpoint.trim().into(), api_type: m.api_type, api_key: m.api_key.trim().into(), ext_id: None });
-        self.prov_sel = self.providers.len()-1;
+        self.providers.push(ProviderDraft {
+            uuid: super::super::new_uuid(),
+            name: m.name.trim().into(),
+            endpoint: m.endpoint.trim().into(),
+            api_type: m.api_type,
+            api_key: m.api_key.trim().into(),
+            ext_id: None,
+        });
+        self.prov_sel = self.providers.len() - 1;
     }
 
     /// Move focus up in the modal (clamp 0..=4).

@@ -392,7 +392,7 @@ fn footer_hint(st: &SettingsState) -> String {
         return "↑↓ field · ←→ move/type · enter select · esc cancel".to_string();
     }
     if st.picker.is_some() {
-        return "type path · @rel or /abs · ↑/↓ select · Tab descend · Enter pick · Esc cancel"
+        return "type path · ./ ~/ or /abs · ↑/↓ select · Tab enter dir · Enter pick · Esc cancel"
             .to_string();
     }
     if st.list_editing {

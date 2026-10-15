@@ -10,4 +10,4 @@ pub use core::{build_snapshot, build_snapshot_with_mode};
 // `bash_job_views` is re-exported (not just `mode_snapshot`) so the `/bash` command
 // + its input handler can read the LIVE background-job registry to seed/refresh the
 // panel, the same way the projection itself does.
-pub use modes::{mode_snapshot_for_reader, bash_job_views, mode_snapshot};
+pub use modes::{bash_job_views, mode_snapshot, mode_snapshot_for_reader};

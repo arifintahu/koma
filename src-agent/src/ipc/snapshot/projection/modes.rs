@@ -67,9 +67,19 @@ pub fn mode_snapshot(state: &AppState) -> ModeSnapshot {
         Mode::Settings(s) => {
             let mut snap = settings_snapshot(s);
             if let Some(modal) = &s.model_modal {
-                if let Some((endpoint,_))=s.mm_provider_conn() {
-                    snap.model_loading=state.rest.catalogue_fetching.as_deref()==Some(endpoint.as_str()) || state.rest.catalogue_pending.as_ref().is_some_and(|p|p.endpoint==endpoint);
-                    snap.model_error=(state.rest.models_cache_failed.as_deref()==Some(endpoint.as_str())).then(||"Model catalogue fetch failed. Re-select the provider to retry.".into());
+                if let Some((endpoint, _)) = s.mm_provider_conn() {
+                    snap.model_loading = state.rest.catalogue_fetching.as_deref()
+                        == Some(endpoint.as_str())
+                        || state
+                            .rest
+                            .catalogue_pending
+                            .as_ref()
+                            .is_some_and(|p| p.endpoint == endpoint);
+                    snap.model_error = (state.rest.models_cache_failed.as_deref()
+                        == Some(endpoint.as_str()))
+                    .then(|| {
+                        "Model catalogue fetch failed. Re-select the provider to retry.".into()
+                    });
                 }
                 let overlay = s.mm_static_overlay_catalogue();
                 let cache = if s.mm_selected_is_static_overlay() {
@@ -395,7 +405,10 @@ pub fn oauth_flow_snapshot(
             ..Default::default()
         },
         OAuthFlowState::Pick(cursor) => OAuthFlowSnapshot {
-            options: crate::app::mode::settings::OAUTH_OPTIONS.iter().map(|s| s.to_string()).collect(),
+            options: crate::app::mode::settings::OAUTH_OPTIONS
+                .iter()
+                .map(|s| s.to_string())
+                .collect(),
             kind: "pick".to_string(),
             cursor: *cursor,
             ..Default::default()
@@ -504,7 +517,15 @@ pub fn path_picker_snapshot(p: &PathPicker) -> PathPickerSnapshot {
 
 pub fn usage_snapshot(nav: &UsageNavState, state: &AppState) -> UsageSnapshot {
     UsageSnapshot {
-        session_totals: Some(crate::model::usage::RangeTotals { cost: state.rest.fg().cost, tokens_in: state.rest.fg().tokens_in as i64, tokens_out: state.rest.fg().tokens_out as i64, tokens_cached: state.rest.fg().tokens_cached as i64, calls: state.rest.fg().session.as_ref().map_or(0, |_| crate::view::usage::collect_usage_data(nav, &state.rest).session_calls) }),
+        session_totals: Some(crate::model::usage::RangeTotals {
+            cost: state.rest.fg().cost,
+            tokens_in: state.rest.fg().tokens_in as i64,
+            tokens_out: state.rest.fg().tokens_out as i64,
+            tokens_cached: state.rest.fg().tokens_cached as i64,
+            calls: state.rest.fg().session.as_ref().map_or(0, |_| {
+                crate::view::usage::collect_usage_data(nav, &state.rest).session_calls
+            }),
+        }),
         view: usage_view_token(nav.view).to_string(),
         range: nav.range.label().to_string(),
         metric: usage_metric_token(nav.metric).to_string(),
@@ -808,7 +829,12 @@ pub fn attachments_snapshot(a: &crate::app::mode::AttachmentsState) -> Attachmen
 
 pub fn mcp_snapshot(m: &McpState, state: &AppState) -> McpSnapshot {
     McpSnapshot {
-        errors: state.rest.mcp_manager.as_ref().map(|m| m.server_errors()).unwrap_or_default(),
+        errors: state
+            .rest
+            .mcp_manager
+            .as_ref()
+            .map(|m| m.server_errors())
+            .unwrap_or_default(),
         available: Some(state.rest.mcp_manager.is_some()),
         // `McpServerEntry` is serde-able pure data (no secrets), so the server list
         // rides verbatim — the lightest projection that round-trips.
@@ -1153,10 +1179,15 @@ pub fn mode_snapshot_for_reader(state: &AppState) -> ModeSnapshot {
             range: nav.range.label().into(),
             metric: usage_metric_token(nav.metric).into(),
             session_totals: Some(crate::model::usage::RangeTotals {
-                cost: rt.cost, tokens_in: rt.tokens_in as i64, tokens_cached: rt.tokens_cached as i64,
-                tokens_out: rt.tokens_out as i64, calls: 0,
+                cost: rt.cost,
+                tokens_in: rt.tokens_in as i64,
+                tokens_cached: rt.tokens_cached as i64,
+                tokens_out: rt.tokens_out as i64,
+                calls: 0,
             }),
             data: Default::default(),
         }))
-    } else { mode_snapshot(state) }
+    } else {
+        mode_snapshot(state)
+    }
 }

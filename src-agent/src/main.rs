@@ -65,8 +65,13 @@ mod view;
 fn open_client(opts: cli::Opts) -> anyhow::Result<()> {
     if opts.legacy_tui {
         app::client_run(opts)
-    } else if let Some(target)=opts.remote_target.clone() {
-        app::run_term_preview(app::TermStart::Remote { target, key: opts.remote_key.clone(), port: opts.remote_port, session: opts.session.clone() })
+    } else if let Some(target) = opts.remote_target.clone() {
+        app::run_term_preview(app::TermStart::Remote {
+            target,
+            key: opts.remote_key.clone(),
+            port: opts.remote_port,
+            session: opts.session.clone(),
+        })
     } else if opts.resume {
         app::run_term_preview(app::TermStart::Hub)
     } else {

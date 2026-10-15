@@ -232,18 +232,37 @@ impl SettingsState {
         idx < self.providers.len() && self.providers[idx].api_type == ApiType::KomaFree
     }
 
-    pub fn mm_provider_choices(&self) -> Vec<crate::ipc::proto::snapshot::settings::ModelProviderChoice> {
+    pub fn mm_provider_choices(
+        &self,
+    ) -> Vec<crate::ipc::proto::snapshot::settings::ModelProviderChoice> {
         use crate::ipc::proto::snapshot::settings::ModelProviderChoice;
-        self.providers.iter().enumerate().filter(|(i, _)| !self.is_koma_free_at(*i))
-            .map(|(index, p)| ModelProviderChoice { index, id: p.uuid.clone(), label: p.name.clone() })
-            .chain(self.oauth_drafts.iter().enumerate().map(|(i, p)| ModelProviderChoice {
-                index: self.providers.len()+i, id: p.uuid.clone(), label: p.label.clone(),
-            })).collect()
+        self.providers
+            .iter()
+            .enumerate()
+            .filter(|(i, _)| !self.is_koma_free_at(*i))
+            .map(|(index, p)| ModelProviderChoice {
+                index,
+                id: p.uuid.clone(),
+                label: p.name.clone(),
+            })
+            .chain(
+                self.oauth_drafts
+                    .iter()
+                    .enumerate()
+                    .map(|(i, p)| ModelProviderChoice {
+                        index: self.providers.len() + i,
+                        id: p.uuid.clone(),
+                        label: p.label.clone(),
+                    }),
+            )
+            .collect()
     }
 
     /// Shared binding mutation for direct chooser selection and legacy cycling.
     pub fn mm_choose_provider(&mut self, index: usize) {
-        if !self.mm_provider_choices().iter().any(|p| p.index == index) { return; }
+        if !self.mm_provider_choices().iter().any(|p| p.index == index) {
+            return;
+        }
         if let Some(m) = self.model_modal.as_mut() {
             if m.provider_idx != index {
                 m.provider_idx = index;

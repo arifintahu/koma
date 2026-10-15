@@ -696,8 +696,12 @@ mod outage_tests {
             let mut state = AppState::new(crate::app::mode::Mode::Chat);
             state.rest.fg_mut().agent_mode = mode;
             state.rest.fg_mut().pending_tool_calls.push(ToolCall {
-                id: "risky-call".into(), kind: "function".into(),
-                function: FunctionCall { name: "delete".into(), arguments: "{}".into() },
+                id: "risky-call".into(),
+                kind: "function".into(),
+                function: FunctionCall {
+                    name: "delete".into(),
+                    arguments: "{}".into(),
+                },
             });
             process_tools(&mut state, 0, &None, runtime.handle());
             assert_eq!(state.rest.fg().awaiting_approval, mode == AgentMode::Normal);

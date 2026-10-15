@@ -144,7 +144,19 @@ pub(crate) fn shadow_session_runtime(s: &SessionSnapshot) -> SessionRuntime {
         .collect();
     // Mirror the projected steer previews so the pending panel (and the Ctrl+X gate
     // in `handle_chat`) can read them from the shadow without a daemon round-trip.
-    rt.pending_steer = s.pending_steer.iter().enumerate().map(|(i, text)| crate::app::state::FollowUp { text: text.clone(), attachments: s.pending_steer_attachments.get(i).cloned().unwrap_or_default() }).collect();
+    rt.pending_steer = s
+        .pending_steer
+        .iter()
+        .enumerate()
+        .map(|(i, text)| crate::app::state::FollowUp {
+            text: text.clone(),
+            attachments: s
+                .pending_steer_attachments
+                .get(i)
+                .cloned()
+                .unwrap_or_default(),
+        })
+        .collect();
     // Mirror SDLC fields from the snapshot so the TUI thin-client shadow can
     // reconstruct the foreground state for mode-isolation rendering.
     // Carries ALL projected SDLC fields — including goal/open/sealed that were

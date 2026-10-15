@@ -161,22 +161,43 @@ pub struct SettingsState {
 }
 
 impl SettingsState {
-
     /// Draft content only; navigation and live status never dirty a form.
     pub fn fingerprint(&self) -> u64 {
         use std::hash::{Hash, Hasher};
         let mut hash = std::collections::hash_map::DefaultHasher::new();
-        format!("{:?}{:?}{:?}{:?}{:?}{:?}{:?}{:?}{:?}{:?}{:?}{:?}",
-            self.name, self.palette, self.workdir, self.allowed_folders,
-            (self.awareness_enabled, self.classifier_enabled, self.short_send_enabled,
-             self.bash_saving, self.coding_autosave),
-            self.internet_mode, self.mouse_capture, self.subagent_max_turns,
-            self.max_output_tokens, self.providers, self.models,
-            (&self.api_key, &self.model, &self.provider, &self.accent, &self.theme)
-        ).hash(&mut hash);
+        format!(
+            "{:?}{:?}{:?}{:?}{:?}{:?}{:?}{:?}{:?}{:?}{:?}{:?}",
+            self.name,
+            self.palette,
+            self.workdir,
+            self.allowed_folders,
+            (
+                self.awareness_enabled,
+                self.classifier_enabled,
+                self.short_send_enabled,
+                self.bash_saving,
+                self.coding_autosave
+            ),
+            self.internet_mode,
+            self.mouse_capture,
+            self.subagent_max_turns,
+            self.max_output_tokens,
+            self.providers,
+            self.models,
+            (
+                &self.api_key,
+                &self.model,
+                &self.provider,
+                &self.accent,
+                &self.theme
+            )
+        )
+        .hash(&mut hash);
         hash.finish()
     }
-    pub fn dirty(&self) -> bool { self.clean_fingerprint != 0 && self.fingerprint() != self.clean_fingerprint }
+    pub fn dirty(&self) -> bool {
+        self.clean_fingerprint != 0 && self.fingerprint() != self.clean_fingerprint
+    }
 
     /// Build a dashboard pre-populated from the active session and global config.
     ///

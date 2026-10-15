@@ -179,8 +179,13 @@ pub(super) fn build_messages(
                                 }));
                             }
                         }
-                        if let Some(note) = crate::dto::openrouter::request::attached_image_note(&sent) {
-                            if let Some(text) = content_parts.first_mut().and_then(|part| part.get_mut("text")) {
+                        if let Some(note) =
+                            crate::dto::openrouter::request::attached_image_note(&sent)
+                        {
+                            if let Some(text) = content_parts
+                                .first_mut()
+                                .and_then(|part| part.get_mut("text"))
+                            {
                                 if let Some(value) = text.as_str() {
                                     *text = json!(format!("{value}{note}"));
                                 }

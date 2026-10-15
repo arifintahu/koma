@@ -409,7 +409,9 @@ impl DaemonHub {
         }
         let snap = if self.clients[idx].usage_reader {
             crate::ipc::snapshot::projection::mode_snapshot_for_reader(state)
-        } else { crate::ipc::snapshot::mode_snapshot(state) };
+        } else {
+            crate::ipc::snapshot::mode_snapshot(state)
+        };
         self.clients[idx].mode_snapshot_cache = Some((disc, Instant::now(), snap.clone()));
         snap
     }

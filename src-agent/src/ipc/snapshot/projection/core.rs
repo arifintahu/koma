@@ -136,7 +136,11 @@ pub fn session_snapshot(
         // Full text (not truncated): clients need it for select/edit. TUI/GUI still
         // ellipsize at render time for the row width.
         pending_steer: rt.pending_steer.iter().map(|s| s.text.clone()).collect(),
-        pending_steer_attachments: rt.pending_steer.iter().map(|s| s.attachments.clone()).collect(),
+        pending_steer_attachments: rt
+            .pending_steer
+            .iter()
+            .map(|s| s.attachments.clone())
+            .collect(),
         // Background-bash jobs (identity + raw status; no output) so the GUI sidepanel's
         // `bash[]` shows them. Reads the LIVE registry the jobs actually land in — the
         // same `bash_jobs` vec `bash_output`/`bash_kill` mutate — so finished/failed jobs

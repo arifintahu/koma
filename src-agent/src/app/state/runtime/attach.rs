@@ -164,12 +164,18 @@ impl SessionRuntime {
             .flat_map(|s| s.attachments)
             .collect::<Vec<_>>();
         let text = crate::model::attachment::expand_paste_markers(&text, &attachments, &sess.path);
-        let _ = crate::model::msglog::append(&sess.path, crate::dto::chat::Role::User, &text, None, None);
-        sess.conversation.push_user_with_attachments(text, attachments);
+        let _ = crate::model::msglog::append(
+            &sess.path,
+            crate::dto::chat::Role::User,
+            &text,
+            None,
+            None,
+        );
+        sess.conversation
+            .push_user_with_attachments(text, attachments);
         let _ = sess.save();
     }
 }
-
 
 /// One user-turn entry for bash-style Up/Down composer recall.
 ///

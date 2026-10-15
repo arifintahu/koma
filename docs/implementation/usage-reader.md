@@ -40,11 +40,14 @@ offset, matching the existing ledger aggregation convention; this does not add a
 historical timezone/DST database.
 
 Year uses Sunday–Saturday rows, chronological week columns, five theme heat
-colors, month labels, and a Less–More legend. Wide calendars use two columns per
-cell; medium calendars use one. Narrow calendars follow selection horizontally
+colors, month labels, and a Less–More legend. Calendar week columns expand to fill the available width, distributing spare
+columns evenly rather than stopping at fixed one/two-column cells. Narrow
+calendars follow selection horizontally
 and show the visible week range. Arrows browse intervals (Left/Right move a week
 in Year); Home/End choose the first/latest elapsed period. Clicks select periods.
-The selected timestamp survives refresh, metric changes, and resizing. Page keys
+Bar colors use the legacy 33rd/66th/90th-percentile heat palette. A separate
+`^^^` marker below the bars identifies selection without altering bar height or
+color. The selected timestamp survives refresh, metric changes, and resizing. Page keys
 and wheel scrolling affect the content area; header, summary, details and refresh
 status stay protected. Narrow interval details use two rows so values fit.
 Models have no top-eight limit, show all token columns and selected-metric shares,

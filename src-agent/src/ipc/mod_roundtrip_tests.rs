@@ -571,7 +571,9 @@ fn mode_snapshot_stage3_variants_roundtrip() {
 
     // Model command: role_pick submode + options + cursor + note.
     roundtrip(&ModeSnapshot::Model(Box::new(ModelCmdSnapshot {
-        query:String::new(), filtered_indices:Vec::new(), from_roles:false,
+        query: String::new(),
+        filtered_indices: Vec::new(),
+        from_roles: false,
         sub: "role_pick".to_string(),
         role: Some("main".to_string()),
         agent_name: None,
@@ -589,7 +591,9 @@ fn mode_snapshot_stage3_variants_roundtrip() {
 
     // Model command: help submode.
     roundtrip(&ModeSnapshot::Model(Box::new(ModelCmdSnapshot {
-        query:String::new(), filtered_indices:Vec::new(), from_roles:false,
+        query: String::new(),
+        filtered_indices: Vec::new(),
+        from_roles: false,
         sub: "help".to_string(),
         role: None,
         agent_name: None,
@@ -605,7 +609,9 @@ fn mode_snapshot_stage3_variants_roundtrip() {
 
     // Model command: agent_pick submode.
     roundtrip(&ModeSnapshot::Model(Box::new(ModelCmdSnapshot {
-        query:String::new(), filtered_indices:Vec::new(), from_roles:false,
+        query: String::new(),
+        filtered_indices: Vec::new(),
+        from_roles: false,
         sub: "agent_pick".to_string(),
         role: None,
         agent_name: Some("explore".to_string()),

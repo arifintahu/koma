@@ -1,6 +1,7 @@
 import { createContext, useContext, useEffect, useRef, useState, type ReactNode } from "react"
 import type { BoxRenderable, ScrollBoxRenderable, InputRenderable, TextareaRenderable } from "@opentui/core"
 import { useKeyboard, useRenderer } from "@opentui/react"
+import { composerIsAhead } from "../caret.ts"
 import { paletteWindow } from "../palette.ts"
 import { scrollbars, type Theme } from "../theme.ts"
 
@@ -336,7 +337,7 @@ export function InputField({ label, value, placeholder = "Not set", active = fal
 }) {
   const update = useContext(DraftContext)
   const { ref, width } = useBodyHeight(3)
-  if ((onChange || update && field) && editing) return <EditableField key={label} label={label} value={value} placeholder={placeholder} theme={theme} secret={secret} listNavigation={["query", "history_query", "Model", "directory"].includes(field ?? "")} onChange={onChange ?? ((next) => update!(field!, next))} />
+  if ((onChange || update && field) && editing) return <EditableField key={label} label={label} value={value} placeholder={placeholder} theme={theme} secret={secret} listNavigation={["query", "history_query", "Model", "directory"].includes(field ?? "")} syncExternal={field === "directory"} onChange={onChange ?? ((next) => update!(field!, next))} />
   const chars = [...value]
   const capacity = Math.max(1, width - 5)
   const shown = editing && chars.length > capacity ? `…${chars.slice(-(capacity - 1)).join("")}` : value
@@ -365,7 +366,7 @@ export function Controls({ actions, theme, send }: { actions: ActionDescriptor[]
   </box>
 }
 
-function EditableField({ label, value, placeholder, secret, theme, onChange, listNavigation }: { label: string; value: string; placeholder: string; secret: boolean; theme: Theme; onChange: (value: string) => void; listNavigation: boolean }) {
+function EditableField({ label, value, placeholder, secret, theme, onChange, listNavigation, syncExternal = false }: { label: string; value: string; placeholder: string; secret: boolean; theme: Theme; onChange: (value: string) => void; listNavigation: boolean; syncExternal?: boolean }) {
   const contextDrafts = useContext(NativeDraftContext)
   const localDrafts = useRef(new Map<string, NativeDraft>())
   const drafts = contextDrafts ?? localDrafts.current
@@ -375,6 +376,10 @@ function EditableField({ label, value, placeholder, secret, theme, onChange, lis
   const initial = useRef(saved?.text ?? (secret ? "" : value))
   const [length, setLength] = useState([...initial.current].length)
   const lastSent = useRef(initial.current)
+  const remote = useRef(value)
+  const acceptRemote = useRef(syncExternal)
+  remote.current = value
+  acceptRemote.current = syncExternal
   const emit = (text: string) => { if (text !== lastSent.current) { lastSent.current = text; onChange(text) } }
   const remember = () => {
     const node = ref.current
@@ -389,11 +394,38 @@ function EditableField({ label, value, placeholder, secret, theme, onChange, lis
       if (saved.selection) node.setSelection(saved.selection.start, saved.selection.end)
     }
     nativeMenuInput.current = node
-    nativeMenuInput.flush = () => { if (node) { remember(); emit(node.plainText) } }
+    nativeMenuInput.flush = () => {
+      if (!node) return
+      remember()
+      const text = node.plainText
+      const next = remote.current
+      // Tab already entered this directory. Flushing the old prefix would undo it.
+      if (acceptRemote.current && text.length > 0 && next.length > text.length && next.startsWith(text)) return
+      emit(text)
+    }
     nativeMenuInput.multiline = false
     nativeMenuInput.listNavigation = listNavigation
     return () => { remember(); if (nativeMenuInput.current === node) { nativeMenuInput.current = null; nativeMenuInput.flush = undefined } }
   }, [])
+  // Tab writes the entered directory back into the query. Put that path in the
+  // box, caret at the end, so the next Tab enters the next directory. A shorter
+  // echo of what the user already typed is left alone.
+  useEffect(() => {
+    if (!syncExternal) return
+    const node = ref.current
+    if (!node) return
+    const local = node.plainText
+    if (local === value) {
+      lastSent.current = value
+      return
+    }
+    if (composerIsAhead(local, value)) return
+    lastSent.current = value
+    node.setText(value)
+    node.cursorOffset = value.length
+    drafts.set(label, { text: value, cursor: value.length, selection: null })
+    setLength([...value].length)
+  }, [syncExternal, value, label])
   return <box height={3} flexShrink={0} border borderStyle="rounded" borderColor={theme.accent} title={` ${label} `} titleColor={theme.accent} flexDirection="column">
     <box height={1} paddingLeft={1} paddingRight={1}>
       <input ref={ref} flexGrow={1} focused={!suspended} keyBindings={[{ name: "a", ctrl: true, action: "select-all" }]} value={initial.current} placeholder={placeholder} textColor={secret ? theme.bg : theme.fg} focusedTextColor={secret ? theme.bg : theme.fg} backgroundColor={theme.bg} focusedBackgroundColor={theme.bg} cursorColor={theme.accent} onCursorChange={remember} onInput={(next: string) => { remember(); setLength([...next].length); emit(next) }} />

@@ -1,6 +1,6 @@
 import { spawn } from "node:child_process"
 import { createHash } from "node:crypto"
-import { existsSync, realpathSync } from "node:fs"
+import { existsSync, readFileSync, realpathSync } from "node:fs"
 import { homedir } from "node:os"
 import { join } from "node:path"
 import { fileURLToPath } from "node:url"
@@ -26,6 +26,22 @@ export interface HistorySession {
 export interface SessionsFile {
   live: LiveSession[]
   history: HistorySession[]
+}
+
+/** Palette saved in the data directory. The hub stays dark; a session uses this before its snapshot arrives. */
+export function savedPalette(): string {
+  const override = process.env.KOMA_TEST_DATA_DIR
+  const dir = override && override.length > 0 ? override : join(homedir(), ".koma")
+  try {
+    const raw = JSON.parse(readFileSync(join(dir, "config.json"), "utf8")) as { palette?: unknown }
+    return typeof raw.palette === "string" && raw.palette.trim() ? raw.palette : "dark"
+  } catch {
+    return "dark"
+  }
+}
+
+export function launchPalette(kind: "hub" | "session" | "remote", saved: string): string {
+  return kind === "hub" ? "dark" : saved || "dark"
 }
 
 export function komaBin(): string {

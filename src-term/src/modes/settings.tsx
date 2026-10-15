@@ -34,7 +34,7 @@ export function settingsView(
 ) {
   const page = str(body.page) || "quick"
   if (body.search_editor) return pageOf(tabs(0, theme), "↑↓ browse · Enter choose / save · Esc back", searchEditor(body, theme, send))
-  if (body.picker) return pageOf(tabs(tabIndex(page), theme), "type to filter · enter pick · esc cancel", pathPicker(rec(body.picker), theme, _onMove, send))
+  if (body.picker) return pageOf(tabs(tabIndex(page), theme), "tab enter dir · ./ ~/ /abs · enter pick · esc cancel", pathPicker(rec(body.picker), theme, _onMove, send))
   if (page === "provider_form") return pageOf(tabs(1, theme), "type  ·  enter next  ·  esc back", providerForm(body, theme, _onMove, send))
   if (page === "model_form") return pageOf(tabs(3, theme), "tab next field · enter select · esc cancel", modelForm(body, theme, send))
   if (page === "oauth" && str(rec(body.oauth_flow).kind) && str(rec(body.oauth_flow).kind) !== "idle") {
@@ -335,7 +335,7 @@ function pathPicker(picker: Rec, theme: Theme, onMove: (index: number) => void, 
   const lines: Line[] = matches.map((item) => ({ label: item }))
   return (
     <box flexDirection="column" flexGrow={1} flexBasis={0} minHeight={0}>
-      <InputField field="directory" label="Directory" value={str(picker.query)} placeholder="Search or paste a directory path" active theme={theme} />
+      <InputField field="directory" label="Directory" value={str(picker.query)} placeholder="Search, paste, ./ or ~/" active theme={theme} />
       <Panel title={`Directories · ${matches.length}`} hot={false} theme={theme}><Lines rows={lines} selected={num(picker.sel)} theme={theme} onPress={onMove} /></Panel>
       <box flexDirection="row" flexShrink={0} gap={1}><Action label="Use directory" primary theme={theme} onPress={() => sendKey(send, "Enter")} /><Action label="Cancel" theme={theme} onPress={() => sendKey(send, "Esc")} /></box>
     </box>

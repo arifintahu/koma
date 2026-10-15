@@ -11,6 +11,7 @@ import {
   pageFromTurn,
   visibleFromTurn,
 } from "./history.ts"
+import { FolderGuide } from "./dirs.tsx"
 import { PALETTE_VISIBLE, commandSuggestions, commandSuggestionOffset, paletteWindow } from "./palette.ts"
 import { forwardKey } from "./keys.ts"
 import {
@@ -1183,7 +1184,7 @@ function Composer({
         <text fg={theme.dim}>{modelLabel(session.resolved_model_id, session.effort)}</text>
       </box>
       <box height={1} />
-      <box flexDirection="column" flexShrink={0}>{interaction}</box>
+      <box flexDirection="column" flexShrink={0}>{interaction}<FolderGuide draft={draft} cwd={session.cwd} theme={theme} /></box>
       <box
         border
         borderStyle="rounded"

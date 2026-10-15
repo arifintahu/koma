@@ -90,7 +90,9 @@ pub fn handle_paste(state: &mut AppState, text: &str) {
             //   role picker (no text field) > model modal > provider modal >
             //   FS path picker > plain text field.
             if let Some(editor) = s.search_editor.as_mut() {
-                if editor.editing && editor.provider != crate::model::web_search::SearchProvider::BuiltIn {
+                if editor.editing
+                    && editor.provider != crate::model::web_search::SearchProvider::BuiltIn
+                {
                     paste_single_line(text, |c| editor.key.0.push(c));
                     editor.error = None;
                 }
@@ -171,7 +173,9 @@ pub fn handle_paste(state: &mut AppState, text: &str) {
         }
         Mode::Model(m) => {
             if m.searchable() {
-                let mut query=m.query.clone(); paste_single_line(text, |c| query.push(c)); m.set_query(query);
+                let mut query = m.query.clone();
+                paste_single_line(text, |c| query.push(c));
+                m.set_query(query);
             }
         }
         Mode::Help(h) => {

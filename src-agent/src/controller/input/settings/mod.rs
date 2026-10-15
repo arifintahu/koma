@@ -68,8 +68,12 @@ pub fn handle_settings(s: &mut SettingsState, rest: &mut AppStateRest, key: KeyE
         match key.code {
             KeyCode::Enter | KeyCode::Esc | KeyCode::Tab | KeyCode::BackTab => {
                 s.finish_edit(key.code != KeyCode::Esc);
-                if key.code == KeyCode::Tab { s.down(); }
-                if key.code == KeyCode::BackTab { s.up(); }
+                if key.code == KeyCode::Tab {
+                    s.down();
+                }
+                if key.code == KeyCode::BackTab {
+                    s.up();
+                }
                 Action::None
             }
             KeyCode::Backspace => {
@@ -86,7 +90,10 @@ pub fn handle_settings(s: &mut SettingsState, rest: &mut AppStateRest, key: KeyE
         // Page-specific navigation.
         if matches!(
             s.page,
-            SettingsPage::Quick | SettingsPage::Providers | SettingsPage::OAuth | SettingsPage::Models
+            SettingsPage::Quick
+                | SettingsPage::Providers
+                | SettingsPage::OAuth
+                | SettingsPage::Models
         ) {
             match key.code {
                 KeyCode::Char('1') => {
@@ -454,7 +461,8 @@ fn handle_search_editor_with(
         }
         KeyCode::Char(c)
             if !key.modifiers.contains(KeyModifiers::CONTROL)
-                && editor.editing && editor.provider != SearchProvider::BuiltIn =>
+                && editor.editing
+                && editor.provider != SearchProvider::BuiltIn =>
         {
             editor.key.0.push(c);
             editor.error = None;

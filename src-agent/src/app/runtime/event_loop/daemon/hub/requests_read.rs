@@ -48,8 +48,13 @@ impl DaemonHub {
         // already-attached client still owes; that client diffs against its
         // own untouched baseline. Reflects the daemon's single owned session.
         let snap = if self.clients[idx].usage_reader {
-            crate::ipc::snapshot::build_snapshot_with_mode(state, crate::ipc::snapshot::projection::mode_snapshot_for_reader(state))
-        } else { build_snapshot(state) };
+            crate::ipc::snapshot::build_snapshot_with_mode(
+                state,
+                crate::ipc::snapshot::projection::mode_snapshot_for_reader(state),
+            )
+        } else {
+            build_snapshot(state)
+        };
         self.send_to(idx, DaemonEvent::Snapshot(Box::new(snap.clone())));
         self.clients[idx].attached = true;
         self.clients[idx].last_snapshot = Some(snap);
@@ -63,8 +68,13 @@ impl DaemonHub {
     // delta stream.
     pub(super) fn resync_or_list_sessions(&mut self, idx: usize, state: &mut AppState) {
         let snap = if self.clients[idx].usage_reader {
-            crate::ipc::snapshot::build_snapshot_with_mode(state, crate::ipc::snapshot::projection::mode_snapshot_for_reader(state))
-        } else { build_snapshot(state) };
+            crate::ipc::snapshot::build_snapshot_with_mode(
+                state,
+                crate::ipc::snapshot::projection::mode_snapshot_for_reader(state),
+            )
+        } else {
+            build_snapshot(state)
+        };
         self.send_to(idx, DaemonEvent::Snapshot(Box::new(snap.clone())));
         self.clients[idx].attached = true;
         self.clients[idx].last_snapshot = Some(snap);

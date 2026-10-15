@@ -28,10 +28,23 @@ use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 pub fn handle_key_input(form: &mut KeyInputForm, rest: &mut AppStateRest, key: KeyEvent) -> Action {
     use crate::app::mode::filter_models;
     if form.step == 0 {
-        if key.code == KeyCode::Enter && !form.editing { form.editing=true; return Action::None; }
-        if key.code == KeyCode::Esc && form.editing { form.editing=false; return Action::None; }
-        if !form.editing && matches!(key.code,KeyCode::Char(_) | KeyCode::Backspace) { return Action::None; }
-        if matches!(key.code,KeyCode::Enter | KeyCode::Tab | KeyCode::BackTab | KeyCode::Up | KeyCode::Down) { form.editing=false; }
+        if key.code == KeyCode::Enter && !form.editing {
+            form.editing = true;
+            return Action::None;
+        }
+        if key.code == KeyCode::Esc && form.editing {
+            form.editing = false;
+            return Action::None;
+        }
+        if !form.editing && matches!(key.code, KeyCode::Char(_) | KeyCode::Backspace) {
+            return Action::None;
+        }
+        if matches!(
+            key.code,
+            KeyCode::Enter | KeyCode::Tab | KeyCode::BackTab | KeyCode::Up | KeyCode::Down
+        ) {
+            form.editing = false;
+        }
     }
 
     // --- Step 1 (model) on a fetchable endpoint: live catalogue omnisearch ---

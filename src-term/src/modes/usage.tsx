@@ -143,10 +143,23 @@ export function UsageBoard({ body, theme, send = () => {} }: { body: Rec; theme:
   </box>
   return <box ref={ref} flexDirection="column" flexGrow={1} flexBasis={0} minHeight={0} minWidth={0}>
     <box flexDirection="row" flexWrap="wrap" flexShrink={0}>
-      {[false, true].map(s => <box key={String(s)} backgroundColor={s === session ? theme.selBg : undefined}><Action label={`${s ? "Session" : "Global"}${s === session ? " ●" : ""}`} theme={theme} onPress={() => { if (s !== session) key("Tab") }} /></box>)}
-      {!session ? ["today", "week", "year"].map((r, i) => <box key={r} backgroundColor={r === range ? theme.selBg : undefined}><Action label={`${r}${r === range ? " ●" : ""}`} theme={theme} onPress={() => key({ Char: String(i + 1) })} /></box>) : null}
-      <Action label={metric === "cost" ? "Cost ● / Tokens" : "Cost / Tokens ●"} theme={theme} onPress={() => key({ Char: "m" })} />
-      <Action label="Back (esc)" theme={theme} onPress={() => key("Esc")} />
+      <box flexDirection="row" flexShrink={0}>
+        <Action label="Global" primary={!session} disabled={suspended} theme={theme} onPress={() => { if (session) key("Tab") }} />
+        <text fg={theme.dim}>·</text>
+        <Action label="Session (tab)" primary={session} disabled={suspended} theme={theme} onPress={() => { if (!session) key("Tab") }} />
+        <text fg={theme.dim}>|</text>
+      </box>
+      {!session ? ["today", "week", "year"].map((r, i) => <box key={r} flexDirection="row" flexShrink={0}>
+        <Action label={`${r[0]!.toUpperCase() + r.slice(1)} (${i + 1})`} primary={r === range} disabled={suspended} theme={theme} onPress={() => { if (r !== range) key({ Char: String(i + 1) }) }} />
+        <text fg={theme.dim}>|</text>
+      </box>) : null}
+      <box flexDirection="row" flexShrink={0}>
+        <Action label="Cost" primary={metric === "cost"} disabled={suspended} theme={theme} onPress={() => { if (metric !== "cost") key({ Char: "m" }) }} />
+        <text fg={theme.dim}>·</text>
+        <Action label="Tokens (m)" primary={metric === "tokens"} disabled={suspended} theme={theme} onPress={() => { if (metric !== "tokens") key({ Char: "m" }) }} />
+        <text fg={theme.dim}>|</text>
+      </box>
+      <Action label="Back (esc)" disabled={suspended} theme={theme} onPress={() => key("Esc")} />
     </box>
     <box flexShrink={0} flexDirection="column">
       <text fg={theme.accent}>{`Summary · recorded ${money(cost)} · ${groupInt(calls)} calls`}</text>
@@ -166,34 +179,71 @@ export function UsageBoard({ body, theme, send = () => {} }: { body: Rec; theme:
     </box>
   </box>
 }
+/** Match the legacy chart's 33rd/66th/90th-percentile heat colors. */
+export function heatLevels(values: number[]): number[] {
+  const positive = values.filter(value => value > 0).sort((a, b) => a - b)
+  const percentile = (percent: number) => positive[Math.floor((positive.length - 1) * percent / 100)] ?? 0
+  const low = percentile(33), middle = percentile(66), high = percentile(90)
+  return values.map(value => value <= 0 ? 0 : low >= high ? 2 : value <= low ? 1 : value <= middle ? 2 : value <= high ? 3 : 4)
+}
 function Bars({ points, selected, width, offset, metric, theme, onSelect }: { points: Period[]; selected: number; width: number; offset: number; metric: "cost" | "tokens"; theme: Theme; onSelect: (i: number) => void }) {
-  const cells = chartCells(points.map(p => p[metric]), 5)
+  const values = points.map(p => p[metric]), cells = chartCells(values, 5), levels = heatLevels(values)
+  const start = Math.floor(selected * width / Math.max(1, points.length))
+  const end = Math.floor((selected + 1) * width / Math.max(1, points.length))
+  const markerWidth = Math.min(3, Math.max(1, width))
+  const markerStart = Math.max(0, Math.min(width - markerWidth, Math.floor((start + end - markerWidth) / 2)))
   return <box flexDirection="column" flexShrink={0}>
-    <box flexDirection="row" height={5} flexShrink={0}>{points.map((p, i) => { const cellWidth = Math.max(1, Math.floor((i + 1) * width / points.length) - Math.floor(i * width / points.length)); return <box key={p.start} width={cellWidth} height={5} onMouseDown={() => onSelect(i)} backgroundColor={i === selected ? theme.selBg : undefined}><text fg={i === selected ? theme.selFg : p.future ? theme.dim : theme.accent}>{cells[i]!.map((c, row) => (p.future ? row === 4 ? "·" : " " : c === " " && row === 4 ? "▁" : c).repeat(cellWidth)).join("\n")}</text></box> })}</box>
+    <box flexDirection="row" height={5} flexShrink={0}>{points.map((p, i) => {
+      const cellWidth = Math.max(1, Math.floor((i + 1) * width / points.length) - Math.floor(i * width / points.length))
+      const color = p.future ? theme.dim : theme.heat[levels[i]!]!
+      return <box key={p.start} width={cellWidth} height={5} flexDirection="column" onMouseDown={() => onSelect(i)}>
+        {cells[i]!.map((cell, row) => {
+          const filled = !p.future && cell === "█"
+          const glyph = p.future ? row === 4 ? "·" : " " : cell === " " && row === 4 ? "▁" : cell
+          return <box key={row} height={1} flexShrink={0} backgroundColor={filled ? color : undefined}><text height={1} fg={color} bg={filled ? color : undefined}>{glyph.repeat(cellWidth)}</text></box>
+        })}
+      </box>
+    })}</box>
+    <text height={1} fg={theme.accent} wrapMode="none">{points.length ? " ".repeat(markerStart) + "^".repeat(markerWidth) : ""}</text>
     <box flexDirection="row" justifyContent="space-between"><text fg={theme.dim}>{points[0] ? stamp(points[0].start, offset, false) : "Empty"}</text><text fg={theme.dim}>{points.at(-1) ? stamp(points.at(-1)!.end, offset, false) : ""}</text></box>
   </box>
 }
+/** Fill every available calendar column; narrow views follow the selected week. */
+export function calendarColumns(weeks: number, width: number, selectedWeek: number) {
+  const available = Math.max(1, Math.floor(width) - 4)
+  const visible = Math.max(1, Math.min(weeks, available))
+  const from = Math.min(Math.max(0, selectedWeek - visible + 1), Math.max(0, weeks - visible))
+  const starts = Array.from({ length: visible }, (_, i) => Math.floor(i * available / visible))
+  const widths = starts.map((start, i) => Math.floor((i + 1) * available / visible) - start)
+  return { from, visible, starts, widths, available }
+}
 function Calendar({ points, selected, width, offset, metric, theme, onSelect }: { points: Period[]; selected: number; width: number; offset: number; metric: "cost" | "tokens"; theme: Theme; onSelect: (i: number) => void }) {
   const first = points[0]?.start ?? 0, weekday = new Date((first + offset) * 1000).getUTCDay(), weeks = Math.ceil((points.length + weekday) / 7)
-  const cellWidth = width >= weeks * 2 + 4 ? 2 : 1, visible = Math.max(1, Math.min(weeks, Math.floor((width - 4) / cellWidth)))
-  const from = Math.min(Math.max(0, Math.floor((selected + weekday) / 7) - visible + 1), weeks - visible)
+  const { from, visible, starts, widths, available } = calendarColumns(weeks, width, Math.floor((selected + weekday) / 7))
   const max = Math.max(0, ...points.map(p => p[metric]))
-  const labels = Array.from({ length: visible * cellWidth }, () => " ")
+  const labels = Array.from({ length: available }, () => " ")
+  const months: { position: number; label: string }[] = []
   for (let i = 0; i < visible; i++) {
     const index = (from + i) * 7 - weekday
     const d = new Date(((points[index]?.start ?? first + index * 86400) + offset + 6 * 86400) * 1000)
     if (i === 0 && d.getUTCDate() <= 21 || d.getUTCDate() <= 7) {
       const month = d.toLocaleString("en", { month: "short", timeZone: "UTC" })
-      const position = Math.max(0, Math.min(i * cellWidth, labels.length - 3))
-      for (let j = 0; j < 3 && position + j < labels.length; j++) labels[position + j] = month[j]!
+      const position = Math.max(0, Math.min(starts[i]!, labels.length - 3))
+      months.push({ position, label: month })
     }
+  }
+  for (let i = 0; i < months.length; i++) {
+    const { position, label } = months[i]!
+    // Omit a cramped partial first month rather than merging two month names.
+    if (i === 0 && months[1] && months[1].position - position < 4) continue
+    for (let j = 0; j < 3 && position + j < labels.length; j++) labels[position + j] = label[j]!
   }
   return <box flexDirection="column" flexShrink={0}>
     <text fg={theme.dim} wrapMode="none">{`    ${labels.join("")}`}</text>
     {Array.from({ length: 7 }, (_, day) => <box key={day} flexDirection="row" height={1} flexShrink={0}>
       <text width={4} fg={theme.dim}>{["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"][day]}</text>
       {Array.from({ length: visible }, (_, col) => {
-        const index = (from + col) * 7 + day - weekday, p = points[index]
+        const index = (from + col) * 7 + day - weekday, p = points[index], cellWidth = widths[col]!
         const level = !p || p[metric] <= 0 || max <= 0 ? 0 : Math.max(1, Math.ceil(p[metric] / max * 4))
         return <box key={col} width={cellWidth} height={1} onMouseDown={() => { if (p) onSelect(index) }}><text bg={index === selected ? theme.selBg : p ? theme.heat[level] : undefined} fg={index === selected ? theme.selFg : theme.dim}>{index === selected ? "◆".padEnd(cellWidth) : !p ? (index < 0 ? " " : "·").repeat(cellWidth) : p.future ? "·".repeat(cellWidth) : " ".repeat(cellWidth)}</text></box>
       })}

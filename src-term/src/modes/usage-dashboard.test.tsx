@@ -111,7 +111,8 @@ for (const palette of PALETTE_NAMES) for (const [width, height] of [[50, 24], [8
       const backgrounds = new Set(spans.map(s => rgbToHex(s.bg)))
       for (const color of theme.heat) expect(backgrounds.has(color)).toBe(true)
       expect(spans.some(s => s.text.includes("Summary") && rgbToHex(s.fg) === theme.accent)).toBe(true)
-      expect(backgrounds.has(theme.selBg)).toBe(true)
+      expect(spans.some(s => s.text.includes("Global") && rgbToHex(s.fg) === theme.accent)).toBe(true)
+      if (view.captureCharFrame().includes("◆")) expect(backgrounds.has(theme.selBg)).toBe(true)
       captureColors(view, `${palette} year ${width}×${height}`)
     } finally { reader.dispose(); await act(async () => { await view.dispose() }) }
   })
@@ -132,5 +133,73 @@ for (const [scope, range] of [["global", "today"], ["global", "week"], ["global"
       expect(frame).toContain("$0.0000")
       expect(frame).toContain(empty ? "No model usage recorded" : "100.0%")
     } finally { reader.dispose(); await act(async () => { await view.dispose() }) }
+  })
+}
+
+test("bar selection moves only the caret marker, preserving native bar shapes and colors", async () => {
+  const reader = new UsageReader({ request: async r => ({ ...fixture(r.scope, r.range), request_id: r.request_id }), dispose() {} })
+  const view = await testRender(<UsageContext.Provider value={{ reader, session: "fixture" }}><ModeSurface mode={{ Usage: { view: "global", range: "today", metric: "cost", data: {} } }} theme={themeFor("dark")} columns={100} onMove={() => {}} send={() => {}} /></UsageContext.Provider>, { width: 100, height: 40 })
+  try {
+    await act(async () => { await view.waitForVisualIdle() }); await act(async () => { await view.waitForVisualIdle() })
+    const barRow = view.captureCharFrame().split("\n").findIndex(line => line.includes("Activity / today")) + 1
+    const nativeBars = () => view.captureSpans().lines.slice(barRow, barRow + 5).map(line => line.spans.map(span => ({ text: span.text, fg: rgbToHex(span.fg), bg: rgbToHex(span.bg) })))
+    const before = nativeBars(), marker = view.captureCharFrame().split("\n")[barRow + 5]!
+    expect(marker).toContain("^^^")
+    const filled = before.flat().filter(span => span.text.includes("█") && themeFor("dark").heat.includes(span.fg))
+    expect(filled.length).toBeGreaterThan(0)
+    for (const span of filled) expect(span.bg).toBe(span.fg)
+    expect(before.flat().some(span => span.bg === themeFor("dark").selBg)).toBe(false)
+    await act(async () => { view.mockInput.pressArrow("left") }); await act(async () => { await view.waitForVisualIdle() })
+    expect(nativeBars()).toEqual(before)
+    expect(view.captureCharFrame().split("\n")[barRow + 5]).toContain("^^^")
+    expect(view.captureCharFrame().split("\n")[barRow + 5]).not.toBe(marker)
+    await act(async () => { view.mockInput.pressKey("HOME") }); await act(async () => { await view.waitForVisualIdle() })
+    expect(view.captureCharFrame().split("\n")[barRow + 5]).toContain("^^^")
+    await act(async () => { view.mockInput.pressKey("END") }); await act(async () => { await view.waitForVisualIdle() })
+    expect(view.captureCharFrame().split("\n")[barRow + 5]).toContain("^^^")
+  } finally { reader.dispose(); await act(async () => { await view.dispose() }) }
+})
+
+for (const width of [50, 80, 100, 160]) {
+  test(`year heat cells fill the panel at ${width} columns`, async () => {
+    const theme = themeFor("dark")
+    const reader = new UsageReader({ request: async r => ({ ...fixture(r.scope, r.range), request_id: r.request_id }), dispose() {} })
+    const view = await testRender(<UsageContext.Provider value={{ reader, session: "fixture" }}><ModeSurface mode={{ Usage: { view: "global", range: "year", metric: "cost", data: {} } }} theme={theme} columns={width} onMove={() => {}} send={() => {}} /></UsageContext.Provider>, { width, height: 40 })
+    try {
+      await act(async () => { await view.waitForVisualIdle() }); await act(async () => { await view.waitForVisualIdle() })
+      const lines = view.captureCharFrame().split("\n"), row = lines.findIndex(line => line.includes("│Thu"))
+      expect(row).toBeGreaterThan(0)
+      let column = 0, heatEnd = 0
+      for (const span of view.captureSpans().lines[row]!.spans) {
+        column += span.width
+        if (theme.heat.includes(rgbToHex(span.bg))) heatEnd = column
+      }
+      expect(heatEnd).toBe(lines[row]!.lastIndexOf("│"))
+    } finally { reader.dispose(); await act(async () => { await view.dispose() }) }
+  })
+}
+
+for (const palette of ["dark", "light", "forest"]) {
+  test(`usage choices match shared tab colors and pointer behavior / ${palette}`, async () => {
+    const sent: unknown[] = [], theme = themeFor(palette)
+    const view = await testRender(<ModeSurface mode={{ Usage: { view: "global", range: "year", metric: "cost", data: {} } }} theme={theme} columns={100} onMove={() => {}} send={r => sent.push(r)} />, { width: 100, height: 40 })
+    try {
+      await act(async () => { await view.waitForVisualIdle() }); await act(async () => { await view.waitForVisualIdle() })
+      const lines = view.captureCharFrame().split("\n"), row = lines.findIndex(line => line.includes("Global") && line.includes("Tokens"))
+      const spans = view.captureSpans().lines[row]!.spans
+      expect(lines[row].trim()).toBe("Global · Session (tab) | Today (1) | Week (2) | Year (3) | Cost · Tokens (m) | Back (esc)")
+      for (const label of ["Global", "Year", "Cost"]) {
+        const span = spans.find(span => span.text.includes(label))!
+        expect(rgbToHex(span.fg)).toBe(theme.accent)
+        expect(rgbToHex(span.bg)).toBe(theme.bg)
+      }
+      for (const label of ["Session", "Today", "Week", "Tokens"]) expect(rgbToHex(spans.find(span => span.text.includes(label))!.fg)).toBe(theme.fg)
+      const click = async (label: string) => { await act(async () => { await view.mockMouse.click(lines[row]!.indexOf(label) + 1, row) }); await act(async () => { await view.waitForVisualIdle() }) }
+      await click("Cost"); await click("Global"); await click("Year")
+      expect(sent).toHaveLength(0)
+      await click("Tokens"); expect(sent.at(-1)).toEqual({ SendKey: { code: { Char: "m" }, mods: 0 } })
+      await click("Session"); expect(sent.at(-1)).toEqual({ SendKey: { code: "Tab", mods: 0 } })
+      await click("Today"); expect(sent.at(-1)).toEqual({ SendKey: { code: { Char: "1" }, mods: 0 } })
+    } finally { await act(async () => { await view.dispose() }) }
   })
 }

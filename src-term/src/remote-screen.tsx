@@ -8,8 +8,8 @@ import { SessionScreen } from "./session.tsx"
 import type { Theme } from "./theme.ts"
 
 type Stage = "progress" | "auth" | "sessions" | "directories" | "live" | "error"
-export function RemoteScreen({ remote, theme, syntaxStyle, onHome, onExit, onRemote, onPalette, ctrlC }: {
-  remote: RemoteHandoff; theme: Theme; syntaxStyle: SyntaxStyle; onHome: () => void; onExit: () => void; onRemote: (remote: RemoteHandoff) => void; onPalette: (palette: string) => void; ctrlC: { current: () => void }
+export function RemoteScreen({ remote, theme, palette = "dark", syntaxStyle, onHome, onExit, onRemote, onPalette, ctrlC }: {
+  remote: RemoteHandoff; theme: Theme; palette?: string; syntaxStyle: SyntaxStyle; onHome: () => void; onExit: () => void; onRemote: (remote: RemoteHandoff) => void; onPalette: (palette: string) => void; ctrlC: { current: () => void }
 }) {
   const resumeId = useRef(remote.sessionId)
   const bridge = useRef<RemoteBridge | null>(null)
@@ -81,7 +81,7 @@ export function RemoteScreen({ remote, theme, syntaxStyle, onHome, onExit, onRem
     if (stage === "sessions" && key.ctrl && key.name === "x") remove()
     if (stage === "directories" && ["up", "down"].includes(key.name)) setDirSel((old) => Math.max(0, Math.min(dirs.length - 1, old + (key.name === "down" ? 1 : -1))))
   })
-  if (stage === "live" && bridge.current) return <SessionScreen key={sessionId} id={sessionId} transport={bridge.current.transport} syntaxStyle={syntaxStyle} onHome={goHub} onOpen={(id) => open(id)} onExit={onHome} onRemote={onRemote} onPalette={onPalette} ctrlC={ctrlC} />
+  if (stage === "live" && bridge.current) return <SessionScreen key={sessionId} id={sessionId} initialPalette={palette} transport={bridge.current.transport} syntaxStyle={syntaxStyle} onHome={goHub} onOpen={(id) => open(id)} onExit={onHome} onRemote={onRemote} onPalette={onPalette} ctrlC={ctrlC} />
   const actions = <box flexDirection="row" flexWrap="wrap" flexShrink={0}>
     {stage === "auth" ? <Action label="Authenticate (enter)" primary theme={theme} onPress={authenticate} /> : null}
     {stage === "sessions" ? <><Action label={armed ? `Confirm ${armed.group === "live" ? "kill" : "delete"} (enter)` : "Open (enter)"} theme={theme} onPress={() => { if (armed) remove(); else if (current) open(current.session_id) }} /><Action label="New session" theme={theme} onPress={() => loadDirs("/")} /><Action label={group === "live" ? "History (tab)" : "Live (tab)"} theme={theme} onPress={() => setGroup((g) => g === "live" ? "history" : "live")} /><Action label={group === "live" ? "Kill (ctrl+x)" : "Delete (ctrl+x)"} theme={theme} onPress={remove} /></> : null}

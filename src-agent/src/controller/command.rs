@@ -46,7 +46,10 @@ pub const COMMANDS: &[(&str, &str)] = &[
         "/task",
         "Run an agent on a task, or open the sub-agents viewer (no args)",
     ),
-    ("/model", "Choose a role and switch its model (/model help for docs)"),
+    (
+        "/model",
+        "Choose a role and switch its model (/model help for docs)",
+    ),
     ("/bash", "Manage bash jobs (FG + background)"),
     ("/todo", "View the session task list"),
     ("/skill", "Load or unload agent skills"),

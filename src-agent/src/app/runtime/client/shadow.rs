@@ -91,7 +91,9 @@ pub(super) fn apply_frame(
     *expected = frame.seq.wrapping_add(1);
 
     match frame.event {
-        DaemonEvent::MenuResult { .. } | DaemonEvent::MenuCapabilities { .. } => FrameEffect::none(),
+        DaemonEvent::MenuResult { .. } | DaemonEvent::MenuCapabilities { .. } => {
+            FrameEffect::none()
+        }
         DaemonEvent::Snapshot(snap) => {
             // A full Snapshot is always a valid rebuild — it clears any pending
             // resync and reseeds the shadow wholesale. (`snap` is boxed on the wire

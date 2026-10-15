@@ -113,7 +113,9 @@ pub fn spawn_check(tx: tokio::sync::mpsc::UnboundedSender<VersionInfo>) {
 
 fn parse_manifest(body: &str) -> Result<VersionInfo, ()> {
     let info: VersionInfo = serde_json::from_str(body).map_err(|_| ())?;
-    if info.version.trim().is_empty() { return Err(()); }
+    if info.version.trim().is_empty() {
+        return Err(());
+    }
     Ok(info)
 }
 
@@ -130,7 +132,10 @@ mod tests {
             (r#"{"version":"0.4.5","message":"same"}"#, false),
             (r#"{"version":"0.4.4"}"#, false),
         ] {
-            assert_eq!(is_newer(&parse_manifest(manifest).unwrap().version, "0.4.5"), expected);
+            assert_eq!(
+                is_newer(&parse_manifest(manifest).unwrap().version, "0.4.5"),
+                expected
+            );
         }
         assert!(!is_newer("1.2", "1.2.0"));
         assert!(is_newer("1.10", "1.9.9"));
@@ -140,11 +145,16 @@ mod tests {
         let mut state = crate::app::state::AppState::new(crate::app::mode::Mode::Chat);
         let current = env!("CARGO_PKG_VERSION");
         for version in [None, Some(current), Some("0.0.0"), Some("9999.0.0")] {
-            state.rest.latest_version = version.map(|v| VersionInfo { version: v.into(), message: None });
+            state.rest.latest_version = version.map(|v| VersionInfo {
+                version: v.into(),
+                message: None,
+            });
             let snap = crate::ipc::snapshot::build_snapshot(&state);
             assert_eq!(snap.global.current_version, current);
-            assert_eq!(snap.global.latest_version.as_deref(), version.filter(|v| is_newer(v, current)));
+            assert_eq!(
+                snap.global.latest_version.as_deref(),
+                version.filter(|v| is_newer(v, current))
+            );
         }
     }
-
 }

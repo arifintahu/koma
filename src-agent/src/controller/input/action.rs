@@ -189,7 +189,9 @@ pub enum Action {
     /// Esc on the `/model` picker (or Enter on Help submode) — return to Chat.
     ModelCancel,
     ModelBackToRoles,
-    ModelOpenRolePick { role: crate::model::app_config::ModelRole },
+    ModelOpenRolePick {
+        role: crate::model::app_config::ModelRole,
+    },
     /// Esc in AgentPick → back to AgentList.
     ModelBackToAgentList,
     /// Enter on a row in AgentList → open AgentPick for that agent.

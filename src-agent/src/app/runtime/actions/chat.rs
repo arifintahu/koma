@@ -102,7 +102,14 @@ pub(super) fn handle_submit(
         // starting fresh. Mirrors the reset below for the immediate-kickoff path.
         state.rest.fg_mut().ext_injected_turns = 0;
         let attachments = state.rest.take_attachments(&steer_text);
-        state.rest.fg_mut().pending_steer.push(crate::app::state::FollowUp { text: steer_text, attachments });
+        state
+            .rest
+            .fg_mut()
+            .pending_steer
+            .push(crate::app::state::FollowUp {
+                text: steer_text,
+                attachments,
+            });
         // Keep selection on the newest item and leave focus on the composer so
         // the user can keep typing more follow-ups; they can ↑ into the list.
         let n = state.rest.fg().pending_steer.len();
@@ -664,29 +671,61 @@ mod approval_tests;
 
 #[cfg(test)]
 mod followup_tests {
+    use crate::app::mode::Mode;
     use crate::app::state::SessionRuntime;
     use crate::app::state::{AppState, FollowUp};
-    use crate::app::mode::Mode;
     use crate::dto::chat::{Attachment, AttachmentKind};
     fn image(n: usize) -> Attachment {
-        Attachment { kind: AttachmentKind::Image, marker_n: n, rel_path: format!("images/{n}.png"), mime: "image/png".into(), label: None }
+        Attachment {
+            kind: AttachmentKind::Image,
+            marker_n: n,
+            rel_path: format!("images/{n}.png"),
+            mime: "image/png".into(),
+            label: None,
+        }
     }
     #[test]
     fn enqueue_captures_only_accepted_media_and_full_queue_keeps_draft() {
         let mut state = AppState::new(Mode::Chat);
-        state.rest.fg_mut().session = Some(crate::model::session::Session::new("queue".into(), std::env::temp_dir().join("koma-queue-fixture"), "test".into(), Default::default(), crate::model::conversation::Conversation::new("")));
+        state.rest.fg_mut().session = Some(crate::model::session::Session::new(
+            "queue".into(),
+            std::env::temp_dir().join("koma-queue-fixture"),
+            "test".into(),
+            Default::default(),
+            crate::model::conversation::Conversation::new(""),
+        ));
         state.rest.fg_mut().waiting = true;
         state.rest.fg_mut().pending_attachments = vec![image(1)];
         let runtime = tokio::runtime::Runtime::new().unwrap();
-        let mut client = Some(std::sync::Arc::new(crate::service::openrouter::OpenRouterClient::new()));
-        super::handle_submit("queued [Image #1]".into(), &mut state, &mut client, runtime.handle()).unwrap();
+        let mut client = Some(std::sync::Arc::new(
+            crate::service::openrouter::OpenRouterClient::new(),
+        ));
+        super::handle_submit(
+            "queued [Image #1]".into(),
+            &mut state,
+            &mut client,
+            runtime.handle(),
+        )
+        .unwrap();
         assert_eq!(state.rest.fg().pending_steer[0].attachments, vec![image(1)]);
         assert!(state.rest.fg().pending_attachments.is_empty());
-        for _ in 0..4 { state.rest.fg_mut().pending_steer.push("text".to_string().into()); }
+        for _ in 0..4 {
+            state
+                .rest
+                .fg_mut()
+                .pending_steer
+                .push("text".to_string().into());
+        }
         state.rest.fg_mut().input = "sixth [Image #2]".into();
         state.rest.fg_mut().pending_attachments = vec![image(2)];
         state.rest.cursor_end();
-        let action = crate::controller::input::handle_chat(&mut state.rest, ratatui::crossterm::event::KeyEvent::new(ratatui::crossterm::event::KeyCode::Enter, ratatui::crossterm::event::KeyModifiers::NONE));
+        let action = crate::controller::input::handle_chat(
+            &mut state.rest,
+            ratatui::crossterm::event::KeyEvent::new(
+                ratatui::crossterm::event::KeyCode::Enter,
+                ratatui::crossterm::event::KeyModifiers::NONE,
+            ),
+        );
         assert!(matches!(action, crate::controller::input::Action::None));
         assert_eq!(state.rest.fg().input, "sixth [Image #2]");
         assert_eq!(state.rest.fg().pending_attachments, vec![image(2)]);
@@ -694,7 +733,10 @@ mod followup_tests {
     #[test]
     fn followups_keep_media_through_projection_shadow_edit_and_clear() {
         let mut state = AppState::new(Mode::Chat);
-        state.rest.fg_mut().pending_steer.push(FollowUp { text: "queued [Image #1]".into(), attachments: vec![image(1)] });
+        state.rest.fg_mut().pending_steer.push(FollowUp {
+            text: "queued [Image #1]".into(),
+            attachments: vec![image(1)],
+        });
         state.rest.fg_mut().pending_attachments.push(image(2));
         let snap = crate::ipc::snapshot::build_snapshot(&state);
         let shadow = crate::app::runtime::client_shadow::shadow_session_runtime(&snap.sessions[0]);
@@ -704,17 +746,42 @@ mod followup_tests {
         assert!(crate::ipc::snapshot::diff(&snap, &changed, None, None).needs_full);
         let wire = serde_json::to_value(&snap).unwrap();
         assert_eq!(wire["sessions"][0]["pending_steer"][0], "queued [Image #1]");
-        assert_eq!(wire["sessions"][0]["pending_steer_attachments"][0][0]["marker_n"], 1);
+        assert_eq!(
+            wire["sessions"][0]["pending_steer_attachments"][0][0]["marker_n"],
+            1
+        );
         let rt = tokio::runtime::Runtime::new().unwrap();
         let mut client = None;
-        super::super::apply_action(crate::controller::input::Action::EditSteer(0), &mut state, &mut client, rt.handle()).unwrap();
+        super::super::apply_action(
+            crate::controller::input::Action::EditSteer(0),
+            &mut state,
+            &mut client,
+            rt.handle(),
+        )
+        .unwrap();
         assert_eq!(state.rest.fg().input, "queued [Image #1]");
-        assert_eq!(state.rest.fg().pending_attachments, vec![image(2), image(1)]);
-        state.rest.fg_mut().pending_steer.push("another".to_string().into());
-        super::super::apply_action(crate::controller::input::Action::CancelSteers, &mut state, &mut client, rt.handle()).unwrap();
+        assert_eq!(
+            state.rest.fg().pending_attachments,
+            vec![image(2), image(1)]
+        );
+        state
+            .rest
+            .fg_mut()
+            .pending_steer
+            .push("another".to_string().into());
+        super::super::apply_action(
+            crate::controller::input::Action::CancelSteers,
+            &mut state,
+            &mut client,
+            rt.handle(),
+        )
+        .unwrap();
         assert_eq!(state.rest.fg().pending_attachments.len(), 2);
         let mut legacy = wire;
-        legacy["sessions"][0].as_object_mut().unwrap().remove("pending_steer_attachments");
+        legacy["sessions"][0]
+            .as_object_mut()
+            .unwrap()
+            .remove("pending_steer_attachments");
         let restored: crate::ipc::proto::StateSnapshot = serde_json::from_value(legacy).unwrap();
         assert!(restored.sessions[0].pending_steer_attachments.is_empty());
     }
@@ -724,17 +791,44 @@ mod followup_tests {
         std::fs::create_dir_all(dir.join("pastes")).unwrap();
         std::fs::write(dir.join("pastes/1.txt"), "Complete pasted body 🐈").unwrap();
         let mut rt = SessionRuntime::new();
-        rt.session = Some(crate::model::session::Session::new("followup".into(), dir.clone(), "test".into(), Default::default(), crate::model::conversation::Conversation::new("")));
-        let paste = Attachment { kind: AttachmentKind::PastedText, marker_n: 1, rel_path: "pastes/1.txt".into(), mime: "text/plain".into(), label: None };
-        rt.pending_steer.push(FollowUp { text: "first [Image #1]".into(), attachments: vec![image(1)] });
-        rt.pending_steer.push(FollowUp { text: "second [Pasted Text #1]".into(), attachments: vec![paste] });
+        rt.session = Some(crate::model::session::Session::new(
+            "followup".into(),
+            dir.clone(),
+            "test".into(),
+            Default::default(),
+            crate::model::conversation::Conversation::new(""),
+        ));
+        let paste = Attachment {
+            kind: AttachmentKind::PastedText,
+            marker_n: 1,
+            rel_path: "pastes/1.txt".into(),
+            mime: "text/plain".into(),
+            label: None,
+        };
+        rt.pending_steer.push(FollowUp {
+            text: "first [Image #1]".into(),
+            attachments: vec![image(1)],
+        });
+        rt.pending_steer.push(FollowUp {
+            text: "second [Pasted Text #1]".into(),
+            attachments: vec![paste],
+        });
         rt.deliver_followups();
         assert!(rt.pending_steer.is_empty());
         let sess = rt.session.as_ref().unwrap();
         let message = sess.conversation.messages().last().unwrap();
         assert!(message.content.contains("Complete pasted body 🐈"));
         assert_eq!(message.attachments.len(), 2);
-        assert_eq!(crate::model::session::Session::load(&dir).unwrap().conversation.messages().last().unwrap().attachments, message.attachments);
+        assert_eq!(
+            crate::model::session::Session::load(&dir)
+                .unwrap()
+                .conversation
+                .messages()
+                .last()
+                .unwrap()
+                .attachments,
+            message.attachments
+        );
         std::fs::remove_dir_all(dir).unwrap();
     }
 }

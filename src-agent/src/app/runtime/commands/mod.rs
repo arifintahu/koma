@@ -56,9 +56,10 @@ mod task;
 fn open_remote_pick(state: &mut AppState, intent: crate::app::mode::remote::RemoteIntent) {
     let hosts = crate::remote::hosts::load_hosts();
     if hosts.hosts.is_empty() {
-        state.rest.fg_mut().set_toast(
-            "no remote hosts yet. Use /remote to add one.".into(),
-        );
+        state
+            .rest
+            .fg_mut()
+            .set_toast("no remote hosts yet. Use /remote to add one.".into());
         return;
     }
     state.set_mode(crate::app::mode::Mode::Remote(Box::new(

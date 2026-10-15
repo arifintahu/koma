@@ -273,3 +273,21 @@ future image renderer. Keep the existing daemon harness and Rust protocol checks
   four views at 50×24, 80×18, 100×40 and 160×45, and inspects native color spans
   for every theme. Review `/tmp/koma-usage-frames.txt` and
   `/tmp/koma-usage-review.html`. See `docs/implementation/usage-reader.md`.
+
+- Usage bars use the legacy percentile heat colors (green/lime/orange/red for the
+  default palette). Selection uses a separate `^^^` row underneath the bars;
+  never fill a selected column's background or recolor its data, because that
+  changes its apparent height/intensity. Keep the marker row reserved while browsing.
+  Fill the background of each occupied bar row with its heat color as well as the
+  glyph foreground, so terminal font line spacing cannot break bars into dashes.
+
+- Year calendars distribute all available columns across visible weeks, including
+  fractional cell widths rounded into balanced whole-column widths. Do not cap
+  the grid at one/two columns per week and leave half the panel empty. Narrow
+  widths still scroll horizontally with selection; avoid overlapping month labels.
+
+- Usage scope, range and metric choices reuse the shared `Action` tabs with
+  `primary` for the active choice, like Cooking/History. Use the approved header:
+  `Global · Session (tab) | Today (1) | Week (2) | Year (3) | Cost · Tokens (m) | Back (esc)`.
+  Keep shortcuts/separators muted. Do not add selected-status dot suffixes or
+  custom filled selection wrappers. Hide date controls in Session.

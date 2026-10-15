@@ -5,7 +5,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { useColumns } from "./columns.ts"
 import { copyText } from "./copy.ts"
 import { Hub } from "./hub.tsx"
-import { listSessions } from "./paths.ts"
+import { launchPalette, listSessions, savedPalette } from "./paths.ts"
 import { nativeMenuInput } from "./modes/bits.tsx"
 import type { RemoteHandoff } from "./protocol.ts"
 import { QuitScreen, type QuitState } from "./quit.tsx"
@@ -44,10 +44,14 @@ function App({ syntaxStyle: baseSyntaxStyle }: { syntaxStyle: SyntaxStyleHandle 
   routeRef.current = route
   hubQuitRef.current = hubQuit
   tooSmallRef.current = tooSmall
-  const [palette, setPalette] = useState("dark")
-  const theme = themeFor(palette)
-  const syntaxStyle = useMemo(() => palette === "dark" ? baseSyntaxStyle : SyntaxStyle.fromStyles(syntaxStyles(themeFor(palette)), renderer.nativeScene), [palette, renderer, baseSyntaxStyle])
+  // The saved palette, including while the hub is on screen. The hub paints dark
+  // on its own; a session splash must not wait for the daemon snapshot.
+  const [palette, setPalette] = useState(() => savedPalette())
+  const shown = launchPalette(route.kind, palette)
+  const theme = themeFor(shown)
+  const syntaxStyle = useMemo(() => shown === "dark" ? baseSyntaxStyle : SyntaxStyle.fromStyles(syntaxStyles(themeFor(shown)), renderer.nativeScene), [shown, renderer, baseSyntaxStyle])
   useEffect(() => () => { if (syntaxStyle !== baseSyntaxStyle) syntaxStyle.destroy() }, [syntaxStyle, baseSyntaxStyle])
+  renderer.setBackgroundColor(theme.bg)
   useEffect(() => {
     renderer.setBackgroundColor(theme.bg)
     renderer.setTerminalTitle("koma")
@@ -55,8 +59,14 @@ function App({ syntaxStyle: baseSyntaxStyle }: { syntaxStyle: SyntaxStyleHandle 
   const returnSession = useRef<string | null>(null)
   const onHome = useCallback(() => setRoute((current) => { if (current.kind === "session") returnSession.current=current.id; return { kind: "hub" } }), [])
   const openHubQuit = () => { void listSessions().then((rows) => setHubQuit({working:rows.live.filter((r)=>r.working).length,total:rows.live.length,selected:2})).catch(()=>setHubQuit({working:0,total:0,selected:2})) }
-  const onOpen = useCallback((id: string) => setRoute({ kind: "session", id }), [])
-  const onRemote = useCallback((remote: RemoteHandoff) => setRoute({ kind: "remote", remote }), [])
+  const onOpen = useCallback((id: string) => {
+    setPalette(savedPalette())
+    setRoute({ kind: "session", id })
+  }, [])
+  const onRemote = useCallback((remote: RemoteHandoff) => {
+    setPalette(savedPalette())
+    setRoute({ kind: "remote", remote })
+  }, [])
 
   useEffect(() => {
     onInterrupt = () => {
@@ -116,12 +126,13 @@ function App({ syntaxStyle: baseSyntaxStyle }: { syntaxStyle: SyntaxStyleHandle 
   if (tooSmall) {
     screen = <TooNarrow theme={theme} width={width} />
   } else if (route.kind === "remote") {
-    screen = <RemoteScreen remote={route.remote} theme={theme} syntaxStyle={syntaxStyle} onHome={onHome} onExit={leave} onRemote={onRemote} onPalette={setPalette} ctrlC={sessionCtrlC} />
+    screen = <RemoteScreen remote={route.remote} theme={theme} palette={palette} syntaxStyle={syntaxStyle} onHome={onHome} onExit={leave} onRemote={onRemote} onPalette={setPalette} ctrlC={sessionCtrlC} />
   } else if (route.kind === "session") {
     screen = (
       <SessionScreen
         key={route.id}
         id={route.id}
+        initialPalette={palette}
         syntaxStyle={syntaxStyle}
         onHome={onHome}
         onOpen={onOpen}
@@ -156,6 +167,7 @@ function TooNarrow({ theme, width }: { theme: ReturnType<typeof themeFor>; width
   )
 }
 
+const bootKind = process.env.KOMA_REMOTE ? "remote" : process.env.KOMA_START === "hub" ? "hub" : "session"
 const renderer = await createCliRenderer({
   exitOnCtrlC: false,
   exitSignals: ["SIGTERM", "SIGQUIT", "SIGABRT", "SIGHUP", "SIGPIPE", "SIGBREAK", "SIGBUS"],
@@ -182,6 +194,8 @@ setInterval(() => {
 process.on("SIGINT", () => {
   onInterrupt()
 })
+renderer.setBackgroundColor(themeFor(launchPalette(bootKind, savedPalette())).bg)
+renderer.setTerminalTitle("koma")
 const syntaxStyle = SyntaxStyle.fromStyles(
   syntaxStyles(themeFor("dark")),
   renderer.nativeScene!,

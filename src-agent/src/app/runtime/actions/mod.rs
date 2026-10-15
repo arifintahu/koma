@@ -48,7 +48,7 @@ mod rewind;
 mod config_reload;
 pub(in crate::app::runtime) mod session;
 mod settings;
-pub(crate) use settings::{commit_settings, choose_model_provider};
+pub(crate) use settings::{choose_model_provider, commit_settings};
 mod store;
 
 // Re-export the pwd-explicit fresh-session creator. Daemon-per-session no longer creates
@@ -273,9 +273,13 @@ pub(in crate::app::runtime) fn apply_action(
 
         Action::ModelOpenRolePick { role } => {
             super::commands::model_cmd::open_role_pick(role, state);
-            if let crate::app::mode::Mode::Model(m)=state.mode_mut() { m.from_roles=true; }
+            if let crate::app::mode::Mode::Model(m) = state.mode_mut() {
+                m.from_roles = true;
+            }
         }
-        Action::ModelBackToRoles => { super::commands::model_cmd::open_roles(state); }
+        Action::ModelBackToRoles => {
+            super::commands::model_cmd::open_roles(state);
+        }
         Action::ModelCancel => {
             *state.mode_mut() = crate::app::mode::Mode::Chat;
         }
