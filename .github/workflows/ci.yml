@@ -1,7 +1,8 @@
 name: ci
 
 # Runs the test suite across every OS/arch koma ships for, plus non-gating
-# formatting and lint checks and a Nix flake check, on pull requests only.
+# formatting and lint checks and a Nix eval (no package build), on pull
+# requests only.
 # Pushes to main and release/tag workflows do not trigger these checks.
 # Uses only standard GitHub-hosted runners, which are free and unmetered for
 # public repositories, so this does not touch the Actions minute allotment used
@@ -109,16 +110,8 @@ jobs:
         run: cargo build --locked --release -p agent --bin koma --target ${{ matrix.target }}
 
   nix:
-    name: nix flake check (${{ matrix.name }})
-    runs-on: ${{ matrix.os }}
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - name: linux-x64
-            os: ubuntu-latest
-          - name: linux-arm64
-            os: ubuntu-24.04-arm
+    name: nix (eval, no build)
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
@@ -132,10 +125,11 @@ jobs:
       - name: webgui npm-deps hash in sync with package-lock
         run: ./scripts/update-webgui-npm-deps.sh --check
 
-      # checks.default / checks.gui are the packages themselves (see flake.nix),
-      # so this already builds and validates both without a separate build step.
-      - name: nix flake check
-        run: nix flake check --print-build-logs
+      # checks.default / checks.gui are the full packages. Instantiate them for
+      # every Linux system, but do not build: the compile is what made this job
+      # long, and the test matrix already builds the agent.
+      - name: evaluate flake
+        run: nix flake check --no-build --all-systems
 
   lint:
     name: fmt (non-gating) + clippy (prod, gating)

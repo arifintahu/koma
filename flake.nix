@@ -58,7 +58,7 @@
           # Hash lives in src-webgui/npm-deps-hash (NOT inlined here) so lockfile
           # bumps don't require editing flake.nix. Refresh with:
           #   ./scripts/update-webgui-npm-deps.sh
-          # CI runs that script with --check before `nix flake check`.
+          # CI checks this hash, then evaluates the flake without building.
           webguiNpmDeps = pkgs.fetchNpmDeps {
             name = "koma-webgui-npm-deps";
             # Only the lock inputs — not the whole React tree — so source noise
