@@ -269,6 +269,22 @@ pub fn to_wire_with_images(
         .collect()
 }
 
+/// Note for images whose bytes were included, so the model reads those parts
+/// instead of calling `load_image` for a picture it already has.
+pub(crate) fn attached_image_note(markers: &[usize]) -> Option<String> {
+    if markers.is_empty() {
+        return None;
+    }
+    let names = markers
+        .iter()
+        .map(|n| format!("[Image #{n}]"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    Some(format!(
+        "\n\nThe image for {names} is attached in this message. Read it directly. Do not call load_image for it."
+    ))
+}
+
 /// Build a user message's content parts: the typed text first, then — per
 /// attachment — either an `image_url` part (model CAN read images) or nothing on
 /// the image rail plus ONE appended warning text part naming every stripped image
@@ -298,6 +314,7 @@ fn attachment_parts(
             Some(c) => c,
             None => return parts,
         };
+        let mut sent = Vec::new();
         for att in attachments {
             // Pasted-text attachments ride the text/fence body only — never as
             // multimodal image parts (and data_url_for would mis-read .txt).
@@ -305,10 +322,16 @@ fn attachment_parts(
                 continue;
             }
             if let Some(url) = data_url_for(&ctx.session_dir, att) {
+                sent.push(att.marker_n);
                 parts.push(WirePart::Image(ImagePart {
                     kind: "image_url",
                     image_url: ImageUrl { url },
                 }));
+            }
+        }
+        if let Some(note) = attached_image_note(&sent) {
+            if let Some(WirePart::Text(part)) = parts.first_mut() {
+                part.text.push_str(&note);
             }
         }
     } else {

@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react"
 import type { Theme } from "./theme.ts"
 
-export type LocalNotice = { id: string; text: string }
+export type LocalNotice = { id: string; text: string; kind?: "info" | "error" }
 
 const TOAST_MS = 3000
 

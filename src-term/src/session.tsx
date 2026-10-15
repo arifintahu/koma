@@ -18,7 +18,7 @@ import { QuitScreen, quitState } from "./quit.tsx"
 import { rewindOf } from "./screens.tsx"
 import { DaemonLink } from "./socket.ts"
 import { themeFor, type Theme } from "./theme.ts"
-import type { LocalNotice } from "./toast.tsx"
+import { Toast, type LocalNotice } from "./toast.tsx"
 
 export function SessionScreen({
   id,
@@ -52,6 +52,16 @@ export function SessionScreen({
   const [leaveSelected, setLeaveSelected] = useState(0)
   const [pending, setPending] = useState(0)
   const snapRef = useRef<Snapshot | null>(null)
+  const report = useCallback((text: string) => {
+    if (!text) {
+      setError("")
+      return
+    }
+    // A live session already has the toast row. The connect screen is the only place
+    // that still keeps the message, because there is no chat to hang a toast on.
+    if (snapRef.current) setNotice({ id: crypto.randomUUID(), text, kind: "error" })
+    else setError(text)
+  }, [])
   const phaseRef = useRef(phase)
   const decision = useRef<string | null>(null)
   const send = useCallback((request: unknown) => {
@@ -80,7 +90,7 @@ export function SessionScreen({
         }
         const tracked = action === "Save"
         if (tracked) {setPending((n) => n+1);setError("")}
-        void link.sendMenu(modeName(current.global.mode), action).then((error) => { if (error) setError(error) }).finally(() => {if (tracked) setPending((n) => Math.max(0,n-1))})
+        void link.sendMenu(modeName(current.global.mode), action).then((error) => { if (error) report(error) }).finally(() => {if (tracked) setPending((n) => Math.max(0,n-1))})
         return
       }
     }
@@ -131,17 +141,17 @@ export function SessionScreen({
           return
         }
         if (control.kind === "error" && control.text) {
-          setError(control.text)
+          report(control.text)
           if (!snapRef.current) setPhase("error")
         }
       },
       transport,
     )
     // Domain replies are observable even when no structural snapshot changes.
-    link.events.on("ExtensionOpResult", (result) => { if (!dead && !result.ok && result.error) setError(result.error) })
-    link.events.on("AgentOp", (result) => { if (!dead && !result.ok && result.error) setError(result.error) })
-    link.events.on("WebSearchValues", (result) => { if (!dead && result.error) setError(result.error) })
-    link.events.on("Notifications", ({ reply }) => { if (!dead && reply.error) setError(reply.error) })
+    link.events.on("ExtensionOpResult", (result) => { if (!dead && !result.ok && result.error) report(result.error) })
+    link.events.on("AgentOp", (result) => { if (!dead && !result.ok && result.error) report(result.error) })
+    link.events.on("WebSearchValues", (result) => { if (!dead && result.error) report(result.error) })
+    link.events.on("Notifications", ({ reply }) => { if (!dead && reply.error) report(reply.error) })
     linkRef.current = link
     void link.start(id).catch((err: unknown) => {
       if (dead) return
@@ -219,7 +229,7 @@ export function SessionScreen({
 
   function decideLeave(action: MenuAction) {
     setLeavePrompt(false)
-    if (snapRef.current) void linkRef.current?.sendMenu(modeName(snapRef.current.global.mode), action).then((error) => { if (error) setError(error) })
+    if (snapRef.current) void linkRef.current?.sendMenu(modeName(snapRef.current.global.mode), action).then((error) => { if (error) report(error) })
   }
 
   usePaste((event) => {
@@ -337,13 +347,13 @@ export function SessionScreen({
     return <Fullscreen title="Unsaved changes" theme={theme} hint={<box flexDirection="row"><Action label="Save (s)" primary={leaveSelected === 0} theme={theme} onPress={() => decideLeave("Save")} /><Action label="Discard (d)" primary={leaveSelected === 1} theme={theme} onPress={() => decideLeave({ Key: { code: "Esc", mods: 0 } })} /><Action label="Keep editing (esc)" primary={leaveSelected === 2} theme={theme} onPress={() => setLeavePrompt(false)} /></box>}><Note text="Save these changes before leaving?" color={theme.warn} theme={theme} /></Fullscreen>
   }
   if (place === "full") {
-    return <box flexDirection="column" flexGrow={1} minHeight={0}>{error ? <text fg={theme.error}>{error}</text> : null}{pending ? <text fg={theme.info}>Waiting for daemon…</text> : null}<ModeSurface mode={snap.global.mode} theme={theme} columns={columns} onMove={moveTo} disabled={approval} send={approval ? () => {} : send} />{approval && session ? <Approval session={session} theme={theme} send={send} /> : null}</box>
+    return <box flexDirection="column" flexGrow={1} minHeight={0}>{notice ? <Toast id={notice.id} kind={notice.kind ?? "error"} text={notice.text} theme={theme} onDismiss={() => setNotice((current) => current?.id === notice.id ? null : current)} /> : null}{pending ? <text fg={theme.info}>Waiting for daemon…</text> : null}<ModeSurface mode={snap.global.mode} theme={theme} columns={columns} onMove={moveTo} disabled={approval} send={approval ? () => {} : send} />{approval && session ? <Approval session={session} theme={theme} send={send} /> : null}</box>
   }
   if (viewer) {
     return <box flexDirection="column" flexGrow={1} minHeight={0}><AgentViewer agent={agentAt(session?.subagents, snap.global.agent_viewer)} theme={theme} />{approval && session ? <Approval session={session} theme={theme} send={send} /> : null}</box>
   }
   if (!chat) {
-    return <box flexDirection="column" flexGrow={1} minHeight={0}><OtherMode name={mode} theme={theme} note={error} />{approval && session ? <Approval session={session} theme={theme} send={send} /> : null}</box>
+    return <box flexDirection="column" flexGrow={1} minHeight={0}>{notice ? <Toast id={notice.id} kind={notice.kind ?? "error"} text={notice.text} theme={theme} onDismiss={() => setNotice((current) => current?.id === notice.id ? null : current)} /> : null}<OtherMode name={mode} theme={theme} note="" />{approval && session ? <Approval session={session} theme={theme} send={send} /> : null}</box>
   }
   const overlay = place === "overlay"
     ? <ModeSurface mode={snap.global.mode} theme={theme} columns={columns} onMove={moveTo} send={send} />
@@ -367,7 +377,6 @@ export function SessionScreen({
       : null
   return (
     <box flexDirection="column" flexGrow={1} backgroundColor={theme.bg}>
-      {error ? <text fg={theme.warn}>{`  ${error}`}</text> : null}
       <Chat
         snap={snap}
         theme={theme}
@@ -379,7 +388,7 @@ export function SessionScreen({
         onNoticeDismiss={() => setNotice((current) => current?.id === notice?.id ? null : current)}
         send={send}
         sendTracked={sendTracked}
-        onFlushError={(text) => setError(text)}
+        onFlushError={report}
       />
     </box>
   )

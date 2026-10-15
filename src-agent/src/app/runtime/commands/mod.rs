@@ -52,6 +52,20 @@ mod attach;
 pub(crate) mod store;
 mod task;
 
+/// `/new remote` and `/resume remote` only pick a saved host. Adding one stays on `/remote`.
+fn open_remote_pick(state: &mut AppState, intent: crate::app::mode::remote::RemoteIntent) {
+    let hosts = crate::remote::hosts::load_hosts();
+    if hosts.hosts.is_empty() {
+        state.rest.fg_mut().set_toast(
+            "no remote hosts yet. Use /remote to add one.".into(),
+        );
+        return;
+    }
+    state.set_mode(crate::app::mode::Mode::Remote(Box::new(
+        crate::app::mode::RemoteState::for_intent(hosts.hosts, intent),
+    )));
+}
+
 /// Apply a parsed slash command. Like [`apply_action`], it mutates state and
 /// may spawn/abort the request task.
 pub(super) fn apply_slash(
@@ -68,13 +82,7 @@ pub(super) fn apply_slash(
                 new_session::handle_new(state, client, handle, request.mode)?
             }
             crate::controller::command::SessionDestination::Remote => {
-                let hosts = crate::remote::hosts::load_hosts();
-                state.set_mode(crate::app::mode::Mode::Remote(Box::new(
-                    crate::app::mode::RemoteState::for_intent(
-                        hosts.hosts,
-                        crate::app::mode::remote::RemoteIntent::New,
-                    ),
-                )));
+                open_remote_pick(state, crate::app::mode::remote::RemoteIntent::New);
             }
         },
         Command::Mode(arg) => misc::handle_mode(state, arg)?,
@@ -103,13 +111,7 @@ pub(super) fn apply_slash(
                 new_session::handle_resume(state)?
             }
             crate::controller::command::SessionDestination::Remote => {
-                let hosts = crate::remote::hosts::load_hosts();
-                state.set_mode(crate::app::mode::Mode::Remote(Box::new(
-                    crate::app::mode::RemoteState::for_intent(
-                        hosts.hosts,
-                        crate::app::mode::remote::RemoteIntent::Resume,
-                    ),
-                )));
+                open_remote_pick(state, crate::app::mode::remote::RemoteIntent::Resume);
             }
         },
         Command::Select => misc::handle_select(state)?,

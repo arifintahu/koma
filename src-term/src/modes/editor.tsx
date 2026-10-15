@@ -65,15 +65,20 @@ export function EditorNote({ text, theme }: { text: string; theme: Theme }) {
 function NativeEditor({ body, theme, update }: { body: Rec; theme: Theme; update: (field: string, value: string) => void }) {
   const suspended = useContext(InputSuspendedContext)
   const ref = useRef<TextareaRenderable | null>(null)
+  const live = useRef(true)
   const initial = useRef(strings(body.lines).join("\n"))
   const [position, setPosition] = useState({ row: num(body.row), col: num(body.col), lines: strings(body.lines).length })
   useEffect(() => {
     const node = ref.current
+    live.current = true
     nativeMenuInput.current = node
     nativeMenuInput.multiline = true
     nativeMenuInput.listNavigation = false
     if (ref.current) ref.current.cursorOffset = strings(body.lines).slice(0, num(body.row)).reduce((n, line) => n + [...line].length + 1, 0) + num(body.col)
-    return () => { if (nativeMenuInput.current === node) { nativeMenuInput.current = null; nativeMenuInput.multiline = false } }
+    return () => {
+      live.current = false
+      if (nativeMenuInput.current === node) { nativeMenuInput.current = null; nativeMenuInput.multiline = false }
+    }
   }, [])
   const read = () => {
     const area = ref.current
@@ -82,7 +87,7 @@ function NativeEditor({ body, theme, update }: { body: Rec; theme: Theme; update
     setPosition({ row: cursor.row, col: cursor.col, lines: area.plainText.split("\n").length })
   }
   return <box flexDirection="column" flexGrow={1} flexBasis={0} minHeight={0}>
-    <textarea ref={ref} flexGrow={1} flexBasis={0} minHeight={0} focused={!suspended} keyBindings={[{name:"a",ctrl:true,action:"select-all"}]} initialValue={initial.current} textColor={theme.fg} focusedTextColor={theme.fg} backgroundColor={theme.bg} focusedBackgroundColor={theme.bg} cursorColor={theme.accent} onContentChange={() => { if (ref.current) update("editor", ref.current.plainText); read() }} onCursorChange={read} />
+    <textarea ref={ref} flexGrow={1} flexBasis={0} minHeight={0} focused={!suspended} keyBindings={[{name:"a",ctrl:true,action:"select-all"}]} initialValue={initial.current} textColor={theme.fg} focusedTextColor={theme.fg} backgroundColor={theme.bg} focusedBackgroundColor={theme.bg} cursorColor={theme.accent} onContentChange={() => { if (!live.current || !ref.current) return; update("editor", ref.current.plainText); read() }} onCursorChange={read} />
     <text flexShrink={0} fg={theme.dim}>{`Line ${position.row + 1} / ${position.lines} · Column ${position.col + 1}`}</text>
   </box>
 }

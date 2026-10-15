@@ -47,7 +47,12 @@ export function menuControls(name: string, b: Record<string, unknown>): ActionDe
   if (name === "ExtStore") return mode === "install_confirm" ? [ { ...char("Install", "y"), disabled: !!b.installing }, back ] : mode === "detail" ? [char("Install", "i"), back] : [enter("Details"), char("Refresh", "r"), back]
   if (name === "ExtScreen") return [{ ...enter("Select"), disabled: !!b.waiting }, back]
   if (name === "Security") return [enter("Toggle"), char("Domain", "d"), char(b.health_view ? "Tools" : "Dependencies", "h"), char("Install", "i"), char("Restart", "r"), back]
-  if (name === "Remote") return String(b.sub).endsWith(":edit") ? [enter("Edit"), { label: "Save (s)", action: "Save", primary: true }, back] : [enter("Connect"), char("Edit", "e"), char("Delete", "d"), char("Import", "i"), back]
+  if (name === "Remote") {
+    const sub = String(b.sub)
+    if (sub.endsWith(":edit")) return [enter("Edit"), { label: "Save (s)", action: "Save", primary: true }, back]
+    if (sub.startsWith("new:") || sub.startsWith("resume:")) return [enter(sub.startsWith("resume:") ? "Open" : "Connect"), back]
+    return [enter("Connect"), char("Edit", "e"), char("Delete", "d"), char("Import", "i"), back]
+  }
   if (name === "Notifications") return b.confirm_clear ? [char("Clear permanently", "y"), back] : [button("Scope (tab)", "Tab"), button("Severity (ctrl+f)", { Char: "f" }, 2), enter("Details / read"), button("Read all (ctrl+r)", { Char: "r" }, 2), button("Clear (ctrl+x)", { Char: "x" }, 2), back]
   if (name === "Usage") return [button("Scope (tab)", "Tab"), char("Today", "1"), char("Week", "2"), char("Year", "3"), char("Metric", "m"), back]
   if (name === "SessionHub") return b.armed ? [enter("Confirm"), back] : [button("Group (tab)", "Tab"), enter("Open"), button("Remove (ctrl+x)", { Char: "x" }, 2), back]

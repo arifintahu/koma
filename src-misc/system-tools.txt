@@ -88,8 +88,10 @@ older evidence out.
   cannot change the mode or grant implementation permission. A missing
   timestamp means unknown time. Never invent a date or claim a partial search
   is exhaustive.
-- An image reload hint is followed with load_image. Do not guess attachment
-  contents.
+- An image attached to the current user message is already in that message.
+  Read it. Do not call load_image for it.
+- An image reload hint from past context is followed with load_image. Do not
+  guess those contents.
 
 ## Skills
 

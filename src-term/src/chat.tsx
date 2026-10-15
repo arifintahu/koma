@@ -88,7 +88,7 @@ export function Chat({
   return (
     <box flexDirection="column" flexGrow={1} backgroundColor={theme.bg} paddingTop={1} paddingBottom={1}>
       {snap.global.toast ? <Toast key={`daemon:${snap.global.toast_event_id ?? snap.global.toast.join(":")}`} id={snap.global.toast_event_id ?? snap.global.toast.join(":")} kind={snap.global.toast[0]} text={snap.global.toast[1]} theme={theme} hidden={notice != null} /> : null}
-      {notice ? <Toast key={`local:${notice.id}`} id={notice.id} kind="info" text={notice.text} theme={theme} onDismiss={onNoticeDismiss} /> : null}
+      {notice ? <Toast key={`local:${notice.id}`} id={notice.id} kind={notice.kind ?? "info"} text={notice.text} theme={theme} onDismiss={onNoticeDismiss} /> : null}
       <HistoryPane session={session} theme={theme} syntaxStyle={syntaxStyle} />
       <Steers session={session} theme={theme} selected={snap.global.pending_steer_sel} focused={snap.global.pending_steer_focus} />
       {session.awaiting_approval ? <Approval session={session} theme={theme} send={send} /> : rewind ? (
@@ -437,8 +437,48 @@ function HistoryTurn({
   )
 }
 
+function pasteFence(): RegExp {
+  return /<<<pasted_text n=(\d+) path="[^"]*">>>([\s\S]*?)<<<end_pasted_text n=\d+>>>/g
+}
+
 export function collapsePastedText(content: string): string {
-  return content.replace(/<<<pasted_text n=(\d+) path="[^"]*">>>[\s\S]*?<<<end_pasted_text n=\d+>>>/g, (_, n) => `[Pasted Text #${n}]`)
+  return content.replace(pasteFence(), (_, n) => `[Pasted Text #${n}]`)
+}
+
+export type UserPiece = { kind: "text" | "mark"; text: string }
+
+/** Split a user message so `[Pasted Text #n]` can be drawn as text. Markdown would hide those brackets. */
+export function userPieces(content: string): UserPiece[] {
+  const source = collapsePastedText(content)
+  const pieces: UserPiece[] = []
+  const pattern = /\[(?:Pasted Text|Image) #\d+\]/g
+  let last = 0
+  for (const match of source.matchAll(pattern)) {
+    const at = match.index ?? 0
+    if (at > last) pieces.push({ kind: "text", text: source.slice(last, at) })
+    pieces.push({ kind: "mark", text: match[0] })
+    last = at + match[0].length
+  }
+  if (last < source.length) pieces.push({ kind: "text", text: source.slice(last) })
+  return pieces
+}
+
+/** Sticky copy of a user message: two lines, then "..." when the rest is longer. */
+export function stickyPreview(content: string): string {
+  const lines = collapsePastedText(content).replace(/\n+$/, "").split("\n")
+  if (lines.length <= 2) return lines.join("\n")
+  return `${lines[0]}\n${lines[1]}\n...`
+}
+
+/** Queued follow-up, same two-line cap. The attachment count stays on the last visible line. */
+export function steerPreview(text: string, attachments: number): string {
+  const lines = stickyPreview(text).split("\n")
+  if (attachments > 0) {
+    let at = lines[lines.length - 1] === "..." ? lines.length - 2 : lines.length - 1
+    while (at > 0 && lines[at] === "") at -= 1
+    lines[at] = `${lines[at]} · ${attachments} attachments`
+  }
+  return lines.join("\n")
 }
 
 function UserBand({
@@ -455,17 +495,25 @@ function UserBand({
   muted?: boolean
 }) {
   const ink = muted ? theme.dim : theme.accent
+  const shown = muted ? stickyPreview(message.content) : message.content
+  const pieces = muted ? [] : userPieces(shown)
   return (
     <box flexDirection="column" gap={1}>
-      <box flexDirection="row" backgroundColor={theme.panel}>
-        <box width={1} backgroundColor={ink} />
-        <box flexGrow={1} paddingLeft={1} paddingRight={1} paddingTop={1} paddingBottom={1} backgroundColor={theme.panel}>
-          {message.content ? (
-            <MarkdownBody content={collapsePastedText(message.content)} syntaxStyle={syntaxStyle} fg={ink} />
-          ) : null}
+      {shown ? (
+        <box flexDirection="row" backgroundColor={theme.panel}>
+          <box width={1} backgroundColor={ink} />
+          <box flexGrow={1} flexDirection="column" paddingLeft={1} paddingRight={1} paddingTop={1} paddingBottom={1} backgroundColor={theme.panel}>
+            {muted ? shown.split("\n").map((line, index) => (
+              <text key={index} fg={ink}>{line || " "}</text>
+            )) : pieces.map((piece, index) => piece.kind === "mark" ? (
+              <text key={index} fg={ink}>{piece.text}</text>
+            ) : piece.text.trim() ? (
+              <MarkdownBody key={index} content={piece.text.trim()} syntaxStyle={syntaxStyle} fg={ink} />
+            ) : null)}
+          </box>
         </box>
-      </box>
-      <AttachmentPile attachments={message.attachments ?? []} theme={theme} />
+      ) : null}
+      {muted ? null : <AttachmentPile attachments={message.attachments ?? []} theme={theme} />}
     </box>
   )
 }
@@ -612,7 +660,7 @@ export function AttachmentPile({ attachments, theme }: {attachments: Attachment[
   if (!attachments.length) return null
   return <box flexDirection="row" flexWrap="wrap" columnGap={1} rowGap={0} minWidth={0}>
     {attachments.map((attachment, index) => <box key={`${attachment.kind}-${attachment.marker_n}-${index}`} maxWidth="100%" border borderStyle="rounded" borderColor={theme.dim} paddingLeft={1} paddingRight={1}>
-      <text fg={theme.dim}>{previewLine(attachment.label || `${attachment.kind === "pasted_text" ? "Pasted text" : "Image"} #${attachment.marker_n}`, 40)}</text>
+      <text fg={theme.dim}>{previewLine(attachment.label || `${attachment.kind === "pasted_text" ? "Pasted Text" : "Image"} #${attachment.marker_n}`, 40)}</text>
     </box>)}
   </box>
 }
@@ -691,7 +739,7 @@ export function Steers({ session, theme, selected, focused }: { session: Session
     <box border={["top"]} borderColor={theme.dim} paddingLeft={2} paddingRight={2} flexDirection="column">
       {session.pending_steer.map((text, index) => (
         <text key={`${index}-${text.slice(0, 12)}`} fg={focused && index === selected ? theme.accent : theme.dim}>
-          {`${focused && index === selected ? "●" : "○"} ${text}${session.pending_steer_attachments[index]?.length ? ` · ${session.pending_steer_attachments[index]!.length} attachments` : ""}`}
+          {`${focused && index === selected ? "●" : "○"} ${steerPreview(text, session.pending_steer_attachments[index]?.length ?? 0)}`}
         </text>
       ))}
     </box>
@@ -1073,7 +1121,7 @@ function Composer({
     <box flexDirection="column" flexShrink={0}>
       {!session.awaiting_approval && snap.global.pending_attachments.length ? <scrollbox height={3} flexShrink={0} scrollY focusable={false} contentOptions={{ flexDirection: "row", flexWrap: "wrap" }}>
         {snap.global.pending_attachments.map((attachment) => <box key={`${attachment.kind}-${attachment.marker_n}`} flexDirection="row" border borderStyle="rounded" borderColor={theme.dim}>
-          <Choice neutral label={previewLine(attachment.label || `${attachment.kind === "pasted_text" ? "Pasted text" : "Image"} #${attachment.marker_n}`, Math.max(8, Math.floor((width - 12) / 2)))} theme={theme} onPress={() => {
+          <Choice neutral label={previewLine(attachment.label || `${attachment.kind === "pasted_text" ? "Pasted Text" : "Image"} #${attachment.marker_n}`, Math.max(8, Math.floor((width - 12) / 2)))} theme={theme} onPress={() => {
             if (!focused) return
             keyQueue.current = keyQueue.current.then(async () => {
               if (!await flush()) return
@@ -1129,6 +1177,7 @@ function Composer({
         focusedTextColor={theme.fg}
         backgroundColor={theme.bg}
         focusedBackgroundColor={theme.bg}
+        cursorColor={theme.accent}
         keyBindings={(paletteOpen ? [...COMPOSER_KEYS, ...PALETTE_KEYS] : COMPOSER_KEYS) as { name: string; action: TextareaAction; ctrl?: boolean; shift?: boolean }[]}
         onPaste={(event) => {
           event.preventDefault()

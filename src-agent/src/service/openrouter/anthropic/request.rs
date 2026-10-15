@@ -279,6 +279,7 @@ fn user_blocks(m: &ChatMessage, image_ctx: Option<&ImageWireCtx>) -> Vec<Block> 
             Some(c) => c,
             None => return blocks,
         };
+        let mut sent = Vec::new();
         for att in &m.attachments {
             if !att.is_image() {
                 continue;
@@ -286,8 +287,14 @@ fn user_blocks(m: &ChatMessage, image_ctx: Option<&ImageWireCtx>) -> Vec<Block> 
             if let Some(url) = crate::dto::openrouter::request::data_url_for(&ctx.session_dir, att)
             {
                 if let Some(source) = image_source_from_data_url(&url) {
+                    sent.push(att.marker_n);
                     blocks.push(Block::Image { source });
                 }
+            }
+        }
+        if let Some(note) = crate::dto::openrouter::request::attached_image_note(&sent) {
+            if let Some(Block::Text { text }) = blocks.first_mut() {
+                text.push_str(&note);
             }
         }
     }

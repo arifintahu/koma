@@ -260,19 +260,12 @@ export function remoteView(body: MenuData["Remote"] & Rec, theme: Theme, wide: b
       children: <Lines rows={sessionLines} selected={num(body.session_selected)} theme={theme} onPress={onMove} />,
     }
   }
-  const host = hosts[filtered[selected] ?? selected]
-  const sessions = rows(body.sessions)
-  const detail = [
-    host ? `${str(host.user)}@${str(host.host)}:${str(host.port)}` : "no hosts",
-    str(host?.key_path),
-    str(body.connection_state),
-    str(body.error),
-    ...sessions.map((row) => `${flag(row.working) ? "●" : "○"} ${str(row.name)}`),
-  ].filter(Boolean)
+  const intent = sub.split(":")[0] || "manage"
+  const picking = intent === "new" || intent === "resume"
   return {
-    title: `remote · ${sub.split(":")[0] || "manage"}`,
-    hint: "↑↓ or j k · enter connect · n new · e edit · d delete · i import · esc close",
-    children: managementList("Hosts", theme, lines, selected, onMove, <Action label="+ New (n)" theme={theme} onPress={() => sendKey(send, { Char: "n" })} />),
+    title: `remote · ${intent}`,
+    hint: picking ? "↑↓ pick · enter connect · esc close" : "↑↓ or j k · enter connect · n new · e edit · d delete · i import · esc close",
+    children: managementList("Hosts", theme, lines, selected, onMove, picking ? null : <Action label="+ New (n)" theme={theme} onPress={() => sendKey(send, { Char: "n" })} />),
   }
 }
 

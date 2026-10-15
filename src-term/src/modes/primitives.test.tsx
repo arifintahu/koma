@@ -117,6 +117,20 @@ test("a click directly selects the intended model without arrow replay", async (
   } finally { await act(async () => { await view.dispose() }) }
 })
 
+test("new and resume remote only pick a saved host", async () => {
+  for (const sub of ["new:browse", "resume:browse"]) {
+    const view = await testRender(<ModeSurface mode={{ Remote: { sub, hosts: [{ name: "box", user: "u", host: "h", port: 22 }], filtered: [0], selected: 0 } }} theme={themeFor("dark")} columns={80} onMove={() => {}} send={() => {}} />, { width: 80, height: 24 })
+    try {
+      await act(async () => { await view.waitForVisualIdle() })
+      const frame = view.captureCharFrame()
+      expect(frame).toContain("box")
+      expect(frame).not.toContain("+ New")
+      expect(frame).not.toContain("import")
+      expect(frame).not.toContain("delete")
+    } finally { await act(async () => { await view.dispose() }) }
+  }
+})
+
 test("inactive panel titles accent only their existing shortcut letter", async () => {
   const theme = themeFor("dark")
   const view = await testRender(<Fullscreen title="Settings" hint="Esc back" theme={theme}><Panel title="General" mark={0} hot={false} theme={theme}><text>Settings fields</text></Panel></Fullscreen>, { width: 50, height: 24 })
