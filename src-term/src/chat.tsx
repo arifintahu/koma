@@ -953,6 +953,15 @@ function Composer({
   const lastPaletteKey = useRef({ code: "", at: 0 })
   useKeyboard((key) => {
     if (key.eventType === "release" || key.defaultPrevented || !focused) return
+    // Shift+Tab is the mode cycle (Auto → Normal → Plan → SDLC). The textarea
+    // does not own it, and it must fire even when no slash palette is open.
+    if (key.name === "tab" && key.shift) {
+      if (typeof key.preventDefault === "function") key.preventDefault()
+      keyQueue.current = keyQueue.current.then(async () => {
+        if (await flush() && focusRef.current) send({ SendKey: { code: "BackTab", mods: 0 } })
+      })
+      return
+    }
     if (snap.global.pending_steer_focus || !paletteOpen && session.pending_steer.length > 0 && key.name === "up" && area.current?.logicalCursor.row === 0) {
       key.preventDefault()
       const wire = forwardKey(key)
@@ -981,7 +990,7 @@ function Composer({
     const name = key.name
     if (name !== "up" && name !== "down" && name !== "tab") return
     if (typeof key.preventDefault === "function") key.preventDefault()
-    const code = name === "up" ? "Up" : name === "down" ? "Down" : key.shift ? "BackTab" : "Tab"
+    const code = name === "up" ? "Up" : name === "down" ? "Down" : "Tab"
     // One physical key can arrive twice. Drop the duplicate so the highlight
     // moves a single row. Flush first so the daemon already has the / or @ draft.
     const now = Date.now()

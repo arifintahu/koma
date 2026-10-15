@@ -3,6 +3,7 @@ import type { Theme } from "../theme.ts"
 import { Action, Document, InputField, Lines, Note, OVERLAY_BODY, Panel, Paragraphs, type Line } from "./bits.tsx"
 import { editorFrom, TextEditor } from "./editor.tsx"
 import { clip, flag, num, rec, rows, str, strings, type Rec } from "./read.ts"
+import { UsageBoard } from "./usage.tsx"
 
 export function helpView(body: MenuData["Help"] & Rec, theme: Theme, onMove: (index: number) => void) {
   const all = rows(body.all)
@@ -170,47 +171,13 @@ export function notificationsView(body: MenuData["Notifications"] & Rec, theme: 
   }
 }
 
-export function usageView(body: MenuData["Usage"] & Rec, theme: Theme, wide: boolean) {
-  const data = rec(body.data)
+export function usageView(body: MenuData["Usage"] & Rec, theme: Theme, _wide: boolean) {
   const session = body.view === "session"
-  const models = rows(session ? data.session_models : data.top_models)
-  const totals = session ? body.session_totals ? rec(body.session_totals) : { cost: models.reduce((sum, row) => sum + num(row.total_cost), 0), calls: num(data.session_calls), tokens_in: models.reduce((sum, row) => sum + num(row.tokens_in), 0), tokens_out: models.reduce((sum, row) => sum + num(row.tokens_out), 0), tokens_cached: models.reduce((sum, row) => sum + num(row.tokens_cached), 0) } : rec(data.totals)
-  const metric = body.metric === "tokens" ? "tokens" : "cost"
-  const heat = rows(session ? data.session_hourly : data.heatmap_buckets)
-  const max = heat.reduce((best, row) => Math.max(best, num(row[metric])), 0)
-  const role = rec(data.role_split)
-  const tokenMax = Math.max(1, ...models.map((row) => num(row.tokens_in) + num(row.tokens_out)))
   return {
     title: `Usage / ${session ? "Session" : "Global"} / ${str(body.range) || "today"}`,
     hint: "tab switch view · 1 today · 2 week · 3 year · m change metric · esc back",
-    children: <Document>
-      <text fg={theme.accent}>{`${money(totals.cost)}    ${num(totals.calls)} calls    ${money(num(totals.cost) / Math.max(1, num(totals.calls)))} / call`}</text>
-      <text><span fg={theme.info}>{`${num(totals.tokens_in)} in`}</span><span fg={theme.dim}> · </span><span fg={theme.success}>{`${num(totals.tokens_cached)} cached`}</span><span fg={theme.dim}> · </span><span fg={theme.accent}>{`${num(totals.tokens_out)} out`}</span></text>
-      <text fg={theme.accent}>{`Activity · ${metric}`}</text>
-      <box flexDirection="row" flexWrap="wrap" flexShrink={0}>
-        {heat.map((bucket, i) => <text key={i} fg={theme.heat[max ? Math.min(4, Math.ceil(num(bucket[metric]) / max * 4)) : 0]}>{"██"}</text>)}
-      </box>
-      <text><span fg={theme.dim}>less </span>{theme.heat.map((color, i) => <span key={i} fg={color}>██</span>)}<span fg={theme.dim}> more</span></text>
-      {heat.length ? <text fg={theme.dim}>{`${new Date(num(heat[0]!.bucket_epoch) * 1000).toISOString().slice(0, 10)} – ${new Date(num(heat[heat.length - 1]!.bucket_epoch) * 1000).toISOString().slice(0, 10)} · ${metric === "tokens" ? `${heat.reduce((n, b) => n + num(b.tokens), 0)} tokens` : money(heat.reduce((n, b) => n + num(b.cost), 0))}`}</text> : <text fg={theme.dim}>No activity recorded in this range.</text>}
-      <text fg={theme.accent}>Model breakdown</text>
-      {models.length ? models.map((row, index) => <box key={index} flexDirection="column" flexShrink={0}>
-        <text><span fg={theme.fg}>{str(row.model_id)}</span><span fg={theme.info}>{`  ${money(row.total_cost)} · ${num(row.call_count)} calls`}</span></text>
-        <text><span fg={theme.accent}>{bar(num(row.tokens_out), tokenMax)}</span><span fg={theme.info}>{bar(num(row.tokens_in), tokenMax)}</span><span fg={theme.dim}>{` ${num(row.tokens_in)} in · ${num(row.tokens_out)} out`}</span></text>
-        <text fg={theme.success}>{`Cached ${num(row.tokens_cached)} · ${num(row.tokens_in) + num(row.tokens_out)} total tokens`}</text>
-      </box>) : <text fg={theme.dim}>No model usage recorded in this range.</text>}
-      {!session ? <><text fg={theme.accent}>Role split</text><text><span fg={theme.info}>{`Main  ${money(role.main_cost)} · ${num(role.main_calls)} calls`}</span><span fg={theme.success}>{`    Subagents  ${money(role.sub_cost)} · ${num(role.sub_calls)} calls`}</span></text></> : null}
-    </Document>,
+    children: <UsageBoard body={body} theme={theme} />,
   }
-}
-
-function money(value: unknown): string {
-  const amount = typeof value === "number" ? value : 0
-  return `$${amount.toFixed(4)}`
-}
-
-function bar(value: number, max: number): string {
-  const width = max <= 0 ? 0 : Math.round((value / max) * 10)
-  return "█".repeat(width).padEnd(10, "·")
 }
 
 function side(wide: boolean, theme: Theme, lines: Line[], selected: number, onMove: (index: number) => void, detail: string[]) {
