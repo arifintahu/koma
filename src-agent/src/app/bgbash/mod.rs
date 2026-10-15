@@ -66,6 +66,9 @@ pub struct BashJobShared {
     /// path is reused (never rewritten) once populated, so the model's
     /// full-output pointer for this job never changes out from under it.
     pub tee_path: Mutex<Option<std::path::PathBuf>>,
+    /// Raw output already returned by a default poll or a foreground completion.
+    /// The next default poll returns only the suffix past this snapshot.
+    pub delivered: Mutex<String>,
     /// Wall deadline for foreground-only timeout. `Some` while the job still
     /// blocks a main-turn tool call; cleared on Ctrl+B promote (or never set for
     /// true background). The worker polls this and times out only while set.
@@ -116,6 +119,40 @@ impl BashJob {
             .lock()
             .map(|g| g.clone())
             .unwrap_or_default()
+    }
+
+    pub fn has_delivered_output(&self) -> bool {
+        self.shared
+            .delivered
+            .lock()
+            .map(|g| !g.is_empty())
+            .unwrap_or(false)
+    }
+
+    /// Remember the current raw buffer as already shown to the model.
+    pub fn mark_output_delivered(&self) {
+        let current = self.output_snapshot();
+        if let Ok(mut delivered) = self.shared.delivered.lock() {
+            *delivered = current;
+        }
+    }
+
+    /// Raw output the model has not been shown yet. Advances the cursor.
+    /// A trimmed buffer that no longer extends the previous snapshot is
+    /// returned whole, once.
+    pub fn take_new_output(&self) -> String {
+        let current = self.output_snapshot();
+        let Ok(mut delivered) = self.shared.delivered.lock() else {
+            return current;
+        };
+        if current.starts_with(delivered.as_str()) {
+            let delta = current[delivered.len()..].to_string();
+            *delivered = current;
+            delta
+        } else {
+            *delivered = current.clone();
+            current
+        }
     }
 
     /// True while the job's status is still `Running`. Used by the `/bash` panel
@@ -364,6 +401,7 @@ pub fn spawn_bash_job(
         pid: Mutex::new(None),
         ended_at: Mutex::new(None),
         tee_path: Mutex::new(None),
+        delivered: Mutex::new(String::new()),
         deadline: Mutex::new(deadline),
     });
     let job = BashJob {

@@ -1,12 +1,9 @@
 import { Component, Suspense, lazy, type ReactNode } from 'react'
 
 // Persistent mascot pinned at the composer's top-right corner: a small
-// (~48px) rounded box with a cute cat looping forever. ALWAYS on — not gated
-// on `session.working`, it's decorative chrome for the composer, not a
-// working indicator. Composer bumps `swapTrigger` once per submit, which
-// tells the inner player to pick a different random cat (without restarting
-// the animation loop). Degrades to a bare pulse if no animations bundled or
-// the player throws.
+// (~48px) rounded box. Two states only — black cat while `session.working`
+// (streaming / thinking), rolling loader when idle. Degrades to a bare pulse if
+// no animations bundled or the player throws.
 
 const CatMascotLottie = lazy(() => import('./CatMascotLottie'))
 
@@ -28,7 +25,7 @@ class MascotBoundary extends Component<{ children: ReactNode }, { failed: boolea
   }
 }
 
-export function CatMascot({ swapTrigger }: { swapTrigger: number }) {
+export function CatMascot({ working }: { working: boolean }) {
   return (
     <div
       className="flex h-12 w-12 flex-none items-center justify-center overflow-hidden rounded-2xl border border-koma-border bg-koma-panel2 p-1.5 shadow-sm"
@@ -36,7 +33,7 @@ export function CatMascot({ swapTrigger }: { swapTrigger: number }) {
     >
       <MascotBoundary>
         <Suspense fallback={<Pulse />}>
-          <CatMascotLottie swapTrigger={swapTrigger} />
+          <CatMascotLottie working={working} />
         </Suspense>
       </MascotBoundary>
     </div>

@@ -34,16 +34,19 @@ type LottieAsset = {
   [key: string]: unknown
 }
 
-function extractAnimations(dir: string): unknown[] {
+// GUI mascot uses exactly two clips. The nyan remix stays on disk unused.
+const USED = new Set(['loader cat.lottie', 'black rainbow cat.lottie'])
+
+function extractAnimations(dir: string): Record<string, unknown> {
   let files: string[]
   try {
-    files = readdirSync(dir).filter((f) => f.toLowerCase().endsWith('.lottie'))
+    files = readdirSync(dir).filter((f) => USED.has(f.toLowerCase()))
   } catch {
     // No lottie folder — the waiting indicator falls back to its pulse.
-    return []
+    return {}
   }
 
-  const out: unknown[] = []
+  const out: Record<string, unknown> = {}
   for (const file of files) {
     try {
       const buf = readFileSync(resolve(dir, file))
@@ -74,7 +77,7 @@ function extractAnimations(dir: string): unknown[] {
         asset.e = 1
       }
 
-      out.push(anim)
+      out[file.replace(/\.lottie$/i, '')] = anim
     } catch {
       // Skip an unreadable / malformed archive; the rest still load.
     }

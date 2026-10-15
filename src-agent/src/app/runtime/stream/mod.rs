@@ -16,7 +16,9 @@ pub(crate) use turn::push_image_unsupported_notice;
 pub(super) use turn::{advance_turn, finish_stream};
 // Re-exported for the daemon's detached-approval park-timeout (stage 11): the loop
 // auto-denies a too-long parked call through the SAME deny path the TUI uses.
-pub(crate) use spawn::{spawn_or_queue, try_start_pending, SpawnFailReason, SpawnOutcome};
+pub(crate) use spawn::{
+    build_tool_ctx, spawn_or_queue, try_start_pending, SpawnFailReason, SpawnOutcome,
+};
 pub(crate) use tools::deny_all_pending;
 // The Phase 8 workspace-mutating primitive, shared by the `cd` tool interception
 // (here) and the user `/cd` + `/adddir` commands.

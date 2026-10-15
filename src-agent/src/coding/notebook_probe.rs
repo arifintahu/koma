@@ -24,7 +24,12 @@ fn default_langserver() -> PathBuf {
         .unwrap_or_else(|| PathBuf::from("basedpyright-langserver"))
 }
 
-fn write_rpc(stdin: &mut impl Write, id: Option<u64>, method: &str, params: Value) -> std::io::Result<()> {
+fn write_rpc(
+    stdin: &mut impl Write,
+    id: Option<u64>,
+    method: &str,
+    params: Value,
+) -> std::io::Result<()> {
     let mut body = json!({ "jsonrpc": "2.0", "method": method, "params": params });
     if let Some(id) = id {
         body["id"] = json!(id);
@@ -51,9 +56,11 @@ fn read_rpc(stdout: &mut impl BufRead) -> std::io::Result<Value> {
             break;
         }
         if let Some(rest) = trimmed.strip_prefix("Content-Length:") {
-            content_length = Some(rest.trim().parse::<usize>().map_err(|e| {
-                std::io::Error::new(std::io::ErrorKind::InvalidData, e)
-            })?);
+            content_length = Some(
+                rest.trim()
+                    .parse::<usize>()
+                    .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?,
+            );
         }
     }
     let len = content_length.ok_or_else(|| {
@@ -126,9 +133,7 @@ pub fn probe_notebook_document_sync(binary: &Path) -> anyhow::Result<NotebookPro
     }
 
     let sync = caps.get("notebookDocumentSync").is_some()
-        || caps
-            .pointer("/notebookDocument/synchronization")
-            .is_some();
+        || caps.pointer("/notebookDocument/synchronization").is_some();
 
     let _ = write_rpc(&mut stdin, Some(2), "shutdown", json!(null));
     let _ = write_rpc(&mut stdin, None, "exit", json!(null));
@@ -142,7 +147,8 @@ pub fn probe_notebook_document_sync(binary: &Path) -> anyhow::Result<NotebookPro
         note: if sync {
             "basedpyright advertises notebookDocumentSync — Analysis wiring may proceed (C3)".into()
         } else {
-            "basedpyright did not advertise notebookDocumentSync — Analysis stays Unavailable".into()
+            "basedpyright did not advertise notebookDocumentSync — Analysis stays Unavailable"
+                .into()
         },
     })
 }

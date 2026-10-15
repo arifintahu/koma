@@ -43,6 +43,10 @@ pub struct SessionSnapshot {
     pub subagents: Vec<SubAgentSnapshot>,
     pub pending_subagents: Vec<PendingSubagentSnapshot>,
     pub resolved_model_id: String,
+    /// The session's `/effort` value. Empty means the model default, so the
+    /// composer omits it. Skipped on the wire when unset.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub effort: String,
     /// Session-scoped skill names loaded into the current chat context.
     /// Body-free and version-tolerant; sorted by the BTree map/set source.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -54,6 +58,8 @@ pub struct SessionSnapshot {
     /// Empty = no panel. Cap is enforced daemon-side (5).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub pending_steer: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub pending_steer_attachments: Vec<Vec<crate::dto::chat::Attachment>>,
     /// The session's background-bash jobs (list + RAW status only — no output/elapsed).
     /// Carried so the native-React GUI's Explore sidepanel `bash[]` shows jobs — INCLUDING
     /// finished / failed ones — which it never did before (the shadow's `bash_jobs` had no

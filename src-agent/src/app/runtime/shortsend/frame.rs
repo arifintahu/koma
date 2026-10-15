@@ -5,6 +5,11 @@
 use crate::dto::chat::{ChatMessage, Role};
 
 const OBSERVATION_PREFIX: &str = "Computer observation ";
+const BROWSER_OBSERVATION_PREFIX: &str = "On-screen browser observation ";
+
+pub fn is_browser_observation(message: &ChatMessage) -> bool {
+    message.role == Role::User && message.content.starts_with(BROWSER_OBSERVATION_PREFIX)
+}
 
 /// Keep the newest computer screenshot and coordinate list. Earlier computer
 /// observations lose their attachments and coordinate JSON. Earlier computer
@@ -31,6 +36,31 @@ pub fn retain_latest_computer_frame(history: &mut [ChatMessage]) {
                 message.content = short;
             }
         }
+    }
+}
+
+/// Keep the newest on-screen browser screenshot. Earlier observations lose
+/// the image and keep the observation id. The chat and the archive stay full.
+pub fn retain_latest_browser_observation(history: &mut [ChatMessage]) {
+    let last = history.iter().rposition(is_browser_observation);
+    for (index, message) in history.iter_mut().enumerate() {
+        if is_browser_observation(message) && Some(index) != last {
+            let id = browser_observation_id(&message.content).unwrap_or_default();
+            message.content = format!(
+                "On-screen browser observation superseded. Its picture is omitted from this request. observation_id={id}"
+            );
+            message.attachments.clear();
+        }
+    }
+}
+
+fn browser_observation_id(content: &str) -> Option<String> {
+    let rest = content.split("observation_id=").nth(1)?;
+    let id: String = rest.chars().take_while(|c| !c.is_whitespace()).collect();
+    if id.is_empty() {
+        None
+    } else {
+        Some(id)
     }
 }
 

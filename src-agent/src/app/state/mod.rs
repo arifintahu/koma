@@ -25,6 +25,7 @@ mod input;
 mod misc;
 mod rest;
 mod runtime;
+pub use runtime::FollowUp;
 mod scroll;
 mod types;
 

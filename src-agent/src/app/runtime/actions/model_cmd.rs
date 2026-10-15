@@ -163,6 +163,8 @@ pub(crate) fn handle_model_back_to_agent_list(state: &mut AppState) {
         .map(|name| (Some(name.clone()), name))
         .collect();
     *state.mode_mut() = crate::app::mode::Mode::Model(Box::new(ModelCmdState {
+        query: String::new(),
+        from_roles: false,
         sub: ModelCmdSub::AgentList,
         options,
         cursor: 0,
@@ -204,6 +206,8 @@ pub(crate) fn handle_model_open_agent_pick(agent_name: String, state: &mut AppSt
     };
 
     *state.mode_mut() = crate::app::mode::Mode::Model(Box::new(ModelCmdState {
+        query: String::new(),
+        from_roles: false,
         sub: ModelCmdSub::AgentPick {
             agent_name,
             current_model: agent.model_uuid,

@@ -446,18 +446,24 @@ pub(super) fn render_tool_lines(
         return Vec::new();
     };
     let mut lines: Vec<Line<'static>> = Vec::with_capacity(calls.len());
-    for (ci, call) in calls.iter().enumerate() {
+    let mut first_visible = true;
+    for call in calls.iter() {
+        // Checklist is Explore / `/todo` — skip the inline tool row (and its result).
+        if call.function.name == "checklist" {
+            continue;
+        }
         let done = completed.contains(call.id.as_str());
         let (glyph, glyph_style) = if done {
             ("✓ ", Style::default().fg(palette.accent))
         } else {
             ("⚙ ", Style::default().fg(palette.dim))
         };
-        let prefix = if !has_body && ci == 0 {
+        let prefix = if !has_body && first_visible {
             Span::styled("● ", Style::default().fg(palette.fg))
         } else {
             Span::raw("  ")
         };
+        first_visible = false;
 
         // plan_ready: render the composed user-facing plan (checklist + full plan,
         // or checklist + highlights when the plan is long) as a readable quote block

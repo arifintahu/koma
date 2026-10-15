@@ -101,8 +101,8 @@ fn remote_target_is_retained_for_usage_rejection() {
 }
 
 #[test]
-fn palette_lists_attach() {
-    assert!(COMMANDS.iter().any(|(n, _)| *n == "/attach"));
+fn palette_hides_attach() {
+    assert!(COMMANDS.iter().all(|(n, _)| *n != "/attach"));
     let matches = palette_matches("/att");
-    assert!(matches.iter().any(|(n, _)| *n == "/attach"));
+    assert!(matches.iter().all(|(n, _)| *n != "/attach"));
 }

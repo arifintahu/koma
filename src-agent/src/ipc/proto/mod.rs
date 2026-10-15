@@ -5,6 +5,8 @@
 //! the agent runtime + session locks) and a thin attach/detach TUI client.
 
 pub mod key;
+mod menu;
+pub use menu::MenuAction;
 mod run;
 pub use run::{RunExtension, RunState};
 pub mod snapshot;
@@ -59,6 +61,21 @@ pub struct FileSearchItem {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[allow(dead_code)]
 pub enum ClientRequest {
+    /// Direct menu actions, correlated independently from legacy Ack traffic.
+    GetMenuCapabilities,
+    SetUsageReader {
+        enabled: bool,
+    },
+    ReplaceInputTracked {
+        request_id: String,
+        text: String,
+        cursor: usize,
+    },
+    Menu {
+        request_id: String,
+        mode: String,
+        action: MenuAction,
+    },
     Notifications {
         request: crate::model::notifications::Request,
     },
@@ -133,6 +150,17 @@ pub enum ClientRequest {
     SendKey(KeyWire),
     Paste {
         text: String,
+    },
+    /// Replace the foreground composer draft in one shot.
+    ///
+    /// The OpenTUI textarea edits locally and flushes the whole buffer. `cursor`
+    /// is a CHAR index (`0..=text.chars().count()`), matching `AppState::cursor`.
+    /// The daemon clamps it, drops history-recall, and the existing diff emits
+    /// `InputChanged`. Slash commands, `@` completion, and submit still run
+    /// through `SendKey` after this flush. The ratatui client never sends it.
+    ReplaceInput {
+        text: String,
+        cursor: usize,
     },
     /// Drop a single STAGED attachment (a GUI chip) by its `[Image #N]` marker number,
     /// unstaging it from the foreground session's `pending_attachments` before submit.
@@ -894,6 +922,15 @@ pub struct DaemonFrame {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[allow(dead_code)]
 pub enum DaemonEvent {
+    MenuResult {
+        request_id: String,
+        error: Option<String>,
+    },
+    MenuCapabilities {
+        version: u32,
+        #[serde(default)]
+        usage_reader: bool,
+    },
     Notifications {
         reply: crate::model::notifications::Reply,
     },

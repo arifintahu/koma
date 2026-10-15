@@ -55,7 +55,6 @@ const ALL_ENTRIES: HelpEntry[] = [
   { key: '/bash',          desc: 'Manage bash jobs (FG + background)',                         isCommand: true },
   { key: '/todo',          desc: 'View the session task list',                                 isCommand: true },
   { key: '/skill',         desc: 'Load or unload agent skills',                                isCommand: true },
-  { key: '/attach',        desc: 'Attach a .screenshoot/*.png to the next message',           isCommand: true },
   { key: '/cd',            desc: 'Change the session working directory',                       isCommand: true },
   { key: '/adddir',        desc: 'Add a directory to the workspace roots',                    isCommand: true },
   { key: '/compact',       desc: 'Summarize and compact the conversation',                     isCommand: true },
@@ -77,7 +76,7 @@ const ALL_ENTRIES: HelpEntry[] = [
   { key: 'Esc',            desc: 'interrupt while busy (kills still-blocking FG bash)',       isCommand: false },
   { key: 'Esc Esc',        desc: 'edit a previous message (rewind)',                          isCommand: false },
   { key: 'Up/Down/wheel',  desc: 'scroll the transcript',                                     isCommand: false },
-  { key: '$',              desc: 'open the sub-agents panel \u2014 Ctrl+B backgrounds, Ctrl+X kills', isCommand: false },
+
 ]
 
 // ─── Screen Builder ───────────────────────────────────────────────────

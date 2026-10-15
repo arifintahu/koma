@@ -516,7 +516,14 @@ pub fn handle_chat(rest: &mut AppStateRest, key: KeyEvent) -> Action {
                         }
                     }
                 } else if !rest.fg().input.trim().is_empty() && !rest.fg().awaiting_shell {
-                    Action::Submit(rest.take_input())
+                    if rest.fg().waiting && rest.fg().pending_steer.len() >= 5 {
+                        rest.fg_mut().set_toast("5 pending allowed!".to_string());
+                        Action::None
+                    } else if rest.fg().session.is_none() {
+                        Action::None
+                    } else {
+                        Action::Submit(rest.take_input())
+                    }
                 } else {
                     Action::None
                 }

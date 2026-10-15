@@ -490,6 +490,11 @@ pub(crate) fn install_daemon_session(
     state.rest.transcript_cache.borrow_mut().blocks.clear();
     state.rest.fg_mut().status = "ready".into();
 
+    // Reopened daemons need the same non-blocking update awareness as new sessions.
+    if let Some(tx) = state.rest.version_tx.as_ref() {
+        crate::app::version::spawn_check(tx.clone());
+    }
+
     // Seed this session's cumulative token counters from its own (possibly empty) ledger.
     state.rest.load_token_totals(0, &sess_path);
 

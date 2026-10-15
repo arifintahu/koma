@@ -833,6 +833,72 @@ fn active_context_can_borrow_spare_room_without_raising_the_300k_cap() {
 }
 
 #[test]
+fn oversized_tool_round_is_stubbed_instead_of_dropped() {
+    let archive = Archive::new();
+    let body = "x".repeat(200_000);
+    let mut assistant = archive.append(Role::Assistant, "old note");
+    assistant.tool_calls = Some(vec![ToolCall {
+        id: "fat".into(),
+        kind: "function".into(),
+        function: FunctionCall {
+            name: "web_fetch".into(),
+            arguments: "{\"url\":\"https://example.test\"}".into(),
+        },
+    }]);
+    let mut tool = archive.append(Role::Tool, &body);
+    tool.tool_call_id = Some("fat".into());
+    let history = vec![
+        ChatMessage::new(Role::System, "system"),
+        assistant,
+        tool,
+        archive.append(Role::User, "what next?"),
+    ];
+    let shaped = send(&history, &archive, 100_000);
+    assert!(shaped.iter().any(|m| m.content.contains("old note")));
+    assert!(shaped
+        .iter()
+        .any(|m| m.content.contains("DRSS live body stored in archive")));
+    assert!(shaped.iter().all(|m| !m.content.contains(&body)));
+    let saved = crate::model::msglog::fetch_messages_since(&archive.0, 0, 20);
+    assert!(saved.iter().any(|row| row.content.contains(&body[..32])));
+}
+
+#[test]
+fn older_browser_observations_keep_only_the_latest_picture() {
+    use crate::dto::chat::{Attachment, AttachmentKind};
+    let archive = Archive::new();
+    let mut history = vec![ChatMessage::new(Role::System, "system")];
+    for (n, id) in [(1, "obs-a"), (2, "obs-b"), (3, "obs-c")] {
+        let mut message = archive.append(
+            Role::User,
+            format!("On-screen browser observation [Image #{n}]. observation_id={id} tab=1"),
+        );
+        message.attachments.push(Attachment {
+            kind: AttachmentKind::Image,
+            marker_n: n,
+            rel_path: format!("images/{n}.png"),
+            mime: "image/png".into(),
+            label: None,
+        });
+        history.push(message);
+    }
+    let shaped = send(&history, &archive, 100_000);
+    let shots: Vec<_> = shaped
+        .iter()
+        .filter(|m| m.content.contains("observation_id=") || m.content.contains("observation_id"))
+        .collect();
+    assert_eq!(shots.len(), 3);
+    assert_eq!(shots[0].attachments.len(), 0);
+    assert!(shots[0].content.contains("obs-a"));
+    assert!(shots[0].content.contains("superseded"));
+    assert_eq!(shots[1].attachments.len(), 0);
+    assert!(shots[1].content.contains("obs-b"));
+    assert_eq!(shots[2].attachments.len(), 1);
+    assert!(shots[2].content.contains("obs-c"));
+    assert!(!shots[2].content.contains("superseded"));
+}
+
+#[test]
 fn message_find_plain_object_schema_still_validates_read_modes() {
     use crate::tool::Tool;
     let tool = crate::tool::history::MessageFind;

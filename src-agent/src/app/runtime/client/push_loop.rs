@@ -1849,7 +1849,10 @@ pub(super) fn push_loop(
                             // makeKeyAndOrderFront via set_visible(true) and steals
                             // focus whenever a page finishes loading.
                             let need_open = status.enabled && !status.window_open;
-                            push(serde_json::json!({"k":"ScreenBrowser","status":status}).to_string());
+                            push(
+                                serde_json::json!({"k":"ScreenBrowser","status":status})
+                                    .to_string(),
+                            );
                             if need_open {
                                 push(serde_json::json!({"k":"ScreenBrowserOpen"}).to_string());
                             }

@@ -68,7 +68,7 @@ pub fn handle_paste(state: &mut AppState, text: &str) {
                 }
             }
         }
-        Mode::KeyInput(form) => {
+        Mode::KeyInput(form) if form.step == 1 || form.editing => {
             // Step 1 on a fetchable endpoint is the catalogue omnisearch: paste
             // feeds the live query and resets the result highlight, exactly as a
             // typed char does, then arms the on-demand catalogue fetch. Every other
@@ -90,13 +90,15 @@ pub fn handle_paste(state: &mut AppState, text: &str) {
             //   role picker (no text field) > model modal > provider modal >
             //   FS path picker > plain text field.
             if let Some(editor) = s.search_editor.as_mut() {
-                if editor.provider != crate::model::web_search::SearchProvider::BuiltIn {
+                if editor.editing
+                    && editor.provider != crate::model::web_search::SearchProvider::BuiltIn
+                {
                     paste_single_line(text, |c| editor.key.0.push(c));
                     editor.error = None;
                 }
             } else if s.mm_role_picker_open() {
                 // Checkbox overlay — no text entry; swallow the paste.
-            } else if s.model_modal.is_some() {
+            } else if s.model_modal.is_some() && s.model_editing {
                 // `mm_push_char` already routes to the active model-modal field:
                 // Name → name, Model → omnisearch query (any provider with an
                 // endpoint, resets the result highlight) or raw model id, and
@@ -109,7 +111,7 @@ pub fn handle_paste(state: &mut AppState, text: &str) {
                         state.rest.request_catalogue(&ep, &key, "");
                     }
                 }
-            } else if s.prov_modal.is_some() {
+            } else if s.prov_modal.is_some() && s.provider_editing {
                 // Add-API-provider modal: `modal_push_char` writes to the active
                 // text field (name/endpoint/api_key) and no-ops on the buttons.
                 paste_single_line(text, |c| s.modal_push_char(c));
@@ -168,6 +170,13 @@ pub fn handle_paste(state: &mut AppState, text: &str) {
             // query and re-runs the filter, exactly as a typed char does.
             paste_single_line(text, |c| p.query.push(c));
             p.refilter();
+        }
+        Mode::Model(m) => {
+            if m.searchable() {
+                let mut query = m.query.clone();
+                paste_single_line(text, |c| query.push(c));
+                m.set_query(query);
+            }
         }
         Mode::Help(h) => {
             // The `/help` reference has a live search field: paste feeds the
@@ -229,9 +238,9 @@ pub fn handle_paste(state: &mut AppState, text: &str) {
                 ed.insert_str(&cleaned);
             }
         }
-        Mode::Onboard(_)
+        Mode::KeyInput(_)
+        | Mode::Onboard(_)
         | Mode::Effort(_)
-        | Mode::Model(_)
         | Mode::Loading(_)
         | Mode::Usage(_)
         | Mode::MessageRewind(_)

@@ -10,7 +10,7 @@
 
 use crate::app::mode::settings::{
     ModelDraft, ModelModal, OAuthDraft, OAuthFlowState, PathPicker, PickerMode, ProviderDraft,
-    ProviderModal, RolePickerState, SettingsPage, SettingsState,
+    ProviderModal, QuickFocus, RolePickerState, SettingsPage, SettingsState,
 };
 use crate::dto::openrouter::{ModelEndpoint, ModelPricing};
 use crate::ipc::proto::{
@@ -25,9 +25,22 @@ use crate::model::settings::{InternetMode, MouseCapture, Settings};
 /// fields) renders exactly as the daemon's would.
 pub(crate) fn shadow_settings(s: SettingsSnapshot) -> SettingsState {
     SettingsState {
+        clean_fingerprint: 0,
+        model_editing: s.model_editing,
+        provider_editing: s.provider_editing,
+
+        model_provider_cursor: s.model_provider_cursor,
+
+        edit_original: None,
         web_search: s.web_search,
         search_editor: s.search_editor,
         page: shadow_settings_page(&s.page),
+        quick_focus: if s.quick_focus == "general" {
+            QuickFocus::General
+        } else {
+            QuickFocus::Appearance
+        },
+        prov_replace: s.prov_replace,
         menu_sel: s.menu_sel,
         field: s.field,
         editing: s.editing,
@@ -179,6 +192,7 @@ pub(crate) fn shadow_path_picker(p: PathPickerSnapshot) -> PathPicker {
 /// Map a wire page token back to a [`SettingsPage`] (unknown → Menu).
 fn shadow_settings_page(t: &str) -> SettingsPage {
     match t {
+        "quick" => SettingsPage::Quick,
         "appearance" => SettingsPage::Appearance,
         "general" => SettingsPage::General,
         "providers" => SettingsPage::Providers,

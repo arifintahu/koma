@@ -118,6 +118,11 @@ pub fn session_snapshot(
             .map(pending_subagent_snapshot)
             .collect(),
         resolved_model_id,
+        effort: rt
+            .session
+            .as_ref()
+            .map(|s| s.settings.effort.clone())
+            .unwrap_or_default(),
         loaded_skill_names: if rt.active_skills.is_empty() {
             rt.projected_loaded_skill_names.iter().cloned().collect()
         } else {
@@ -130,7 +135,12 @@ pub fn session_snapshot(
             .unwrap_or_default(),
         // Full text (not truncated): clients need it for select/edit. TUI/GUI still
         // ellipsize at render time for the row width.
-        pending_steer: rt.pending_steer.clone(),
+        pending_steer: rt.pending_steer.iter().map(|s| s.text.clone()).collect(),
+        pending_steer_attachments: rt
+            .pending_steer
+            .iter()
+            .map(|s| s.attachments.clone())
+            .collect(),
         // Background-bash jobs (identity + raw status; no output) so the GUI sidepanel's
         // `bash[]` shows them. Reads the LIVE registry the jobs actually land in — the
         // same `bash_jobs` vec `bash_output`/`bash_kill` mutate — so finished/failed jobs
@@ -333,6 +343,10 @@ pub fn global_snapshot_with_mode(state: &AppState, mode: ModeSnapshot) -> Global
         pending_steer_focus: state.rest.pending_steer_focus,
         pending_attachments: state.rest.fg().pending_attachments.clone(),
         file_palette: file_palette_matches(state),
+        command_palette: crate::controller::command::palette_matches(&state.rest.fg().input)
+            .into_iter()
+            .map(|(name, desc)| (name.to_string(), desc.to_string()))
+            .collect(),
         agent_mode: match state.rest.agent_mode() {
             crate::app::state::AgentMode::Auto => "auto",
             crate::app::state::AgentMode::Normal => "normal",
@@ -392,10 +406,12 @@ pub fn global_snapshot_with_mode(state: &AppState, mode: ModeSnapshot) -> Global
         } else {
             None
         },
+        current_version: env!("CARGO_PKG_VERSION").to_string(),
         latest_version: state
             .rest
             .latest_version
             .as_ref()
+            .filter(|v| crate::app::version::is_newer(&v.version, env!("CARGO_PKG_VERSION")))
             .map(|v| v.version.clone()),
     }
 }

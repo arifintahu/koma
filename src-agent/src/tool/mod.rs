@@ -20,7 +20,6 @@ use std::sync::{Arc, RwLock};
 
 pub mod cd;
 mod computer;
-mod screen_browser;
 pub mod dircache;
 pub mod fs;
 pub mod git_cred;
@@ -35,6 +34,7 @@ pub mod output;
 pub mod plan;
 mod plan_policy;
 pub mod pong;
+mod screen_browser;
 pub mod sdlc;
 pub mod search;
 pub mod seqthink;

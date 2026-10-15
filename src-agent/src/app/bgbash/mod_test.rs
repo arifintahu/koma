@@ -84,6 +84,7 @@ fn ensure_tee_log_is_idempotent_and_reuses_the_same_path() {
         pid: Mutex::new(None),
         ended_at: Mutex::new(None),
         tee_path: Mutex::new(None),
+        delivered: Mutex::new(String::new()),
         deadline: Mutex::new(None),
     });
     let job = BashJob {
@@ -121,6 +122,7 @@ fn is_blocking_requires_running_and_call_id() {
         pid: Mutex::new(None),
         ended_at: Mutex::new(None),
         tee_path: Mutex::new(None),
+        delivered: Mutex::new(String::new()),
         deadline: Mutex::new(None),
     });
     let mut job = BashJob {
@@ -150,6 +152,7 @@ fn format_tool_result_done_includes_exit_code() {
         pid: Mutex::new(None),
         ended_at: Mutex::new(None),
         tee_path: Mutex::new(None),
+        delivered: Mutex::new(String::new()),
         deadline: Mutex::new(None),
     });
     let job = BashJob {
@@ -181,6 +184,7 @@ fn format_tool_result_timeout_error_is_plain_message() {
         pid: Mutex::new(None),
         ended_at: Mutex::new(None),
         tee_path: Mutex::new(None),
+        delivered: Mutex::new(String::new()),
         deadline: Mutex::new(None),
     });
     let job = BashJob {
@@ -206,6 +210,7 @@ fn elapsed_secs_freezes_for_terminal_without_ended_at() {
         pid: Mutex::new(None),
         ended_at: Mutex::new(None),
         tee_path: Mutex::new(None),
+        delivered: Mutex::new(String::new()),
         deadline: Mutex::new(None),
     });
     let job = BashJob {
@@ -233,6 +238,7 @@ fn elapsed_secs_uses_ended_at_when_stamped() {
         pid: Mutex::new(None),
         ended_at: Mutex::new(Some(ended)),
         tee_path: Mutex::new(None),
+        delivered: Mutex::new(String::new()),
         deadline: Mutex::new(None),
     });
     let job = BashJob {
@@ -254,6 +260,7 @@ fn clear_deadline_drops_fg_timeout() {
         pid: Mutex::new(None),
         ended_at: Mutex::new(None),
         tee_path: Mutex::new(None),
+        delivered: Mutex::new(String::new()),
         deadline: Mutex::new(Some(Instant::now())),
     });
     let job = BashJob {
@@ -267,6 +274,31 @@ fn clear_deadline_drops_fg_timeout() {
     job.clear_deadline();
     let d = shared.deadline.lock().unwrap();
     assert!(d.is_none());
+}
+
+#[test]
+fn default_polls_return_only_the_new_suffix() {
+    let shared = Arc::new(BashJobShared {
+        output: Mutex::new("alpha\n".into()),
+        status: Mutex::new(BashJobStatus::Running),
+        pid: Mutex::new(None),
+        ended_at: Mutex::new(None),
+        tee_path: Mutex::new(None),
+        delivered: Mutex::new(String::new()),
+        deadline: Mutex::new(None),
+    });
+    let job = BashJob {
+        id: 7,
+        command: "echo".into(),
+        started_at: Instant::now(),
+        tool_call_id: None,
+        suppress_completion_nudge: false,
+        shared: Arc::clone(&shared),
+    };
+    assert_eq!(job.take_new_output(), "alpha\n");
+    *shared.output.lock().unwrap() = "alpha\nbeta\n".into();
+    assert_eq!(job.take_new_output(), "beta\n");
+    assert_eq!(job.take_new_output(), "");
 }
 
 /// A unique path under the OS temp root for a single test, removed

@@ -77,8 +77,10 @@ fn sample_session_snapshot() -> SessionSnapshot {
         // serialize -> deserialize (an empty string would alias the default).
         model_routes: Vec::new(),
         resolved_model_id: "anthropic/claude-sonnet-4-5".to_string(),
+        effort: "medium".to_string(),
         loaded_skill_names: vec!["review".to_string()],
         pending_steer: Vec::new(),
+        pending_steer_attachments: Vec::new(),
         bash_jobs: vec![],
         file_changes: vec![],
         plan_todos: vec![
@@ -125,6 +127,9 @@ fn sample_global_snapshot() -> GlobalSnapshot {
         // Use a populated stage-2 payload (KeyInput) so a full mode projection
         // gets round-trip coverage, not just the unit/struct-light variants.
         mode: ModeSnapshot::KeyInput(KeyInputSnapshot {
+            editing: false,
+
+            results: Vec::new(),
             step: 1,
             field: 0,
             endpoint: "https://openrouter.ai/api/v1".to_string(),
@@ -171,6 +176,7 @@ fn sample_global_snapshot() -> GlobalSnapshot {
             label: None,
         }],
         file_palette: Some(vec!["src/main.rs".to_string(), "src/lib.rs".to_string()]),
+        command_palette: vec![("/help".to_string(), "Show help".to_string())],
         agent_mode: "auto".to_string(),
         sdlc_phase: None,
         sdlc_goal: None,
@@ -178,6 +184,7 @@ fn sample_global_snapshot() -> GlobalSnapshot {
         sdlc_open: None,
         sdlc_sealed: None,
         latest_version: None,
+        current_version: env!("CARGO_PKG_VERSION").to_string(),
     }
 }
 
@@ -214,6 +221,10 @@ fn client_request_variants_roundtrip() {
         }),
         ClientRequest::Paste {
             text: "/home/u/shot.png".to_string(),
+        },
+        ClientRequest::ReplaceInput {
+            text: "draft line".to_string(),
+            cursor: 5,
         },
         ClientRequest::ApproveTool {
             approve: true,
@@ -498,6 +509,7 @@ fn mode_snapshot_stage3_variants_roundtrip() {
 
     // Usage: nav tokens + a populated ledger projection (both views' fields).
     let usage = ModeSnapshot::Usage(Box::new(UsageSnapshot {
+        session_totals: None,
         view: "global".to_string(),
         range: "week".to_string(),
         metric: "tokens".to_string(),
@@ -559,6 +571,9 @@ fn mode_snapshot_stage3_variants_roundtrip() {
 
     // Model command: role_pick submode + options + cursor + note.
     roundtrip(&ModeSnapshot::Model(Box::new(ModelCmdSnapshot {
+        query: String::new(),
+        filtered_indices: Vec::new(),
+        from_roles: false,
         sub: "role_pick".to_string(),
         role: Some("main".to_string()),
         agent_name: None,
@@ -576,6 +591,9 @@ fn mode_snapshot_stage3_variants_roundtrip() {
 
     // Model command: help submode.
     roundtrip(&ModeSnapshot::Model(Box::new(ModelCmdSnapshot {
+        query: String::new(),
+        filtered_indices: Vec::new(),
+        from_roles: false,
         sub: "help".to_string(),
         role: None,
         agent_name: None,
@@ -591,6 +609,9 @@ fn mode_snapshot_stage3_variants_roundtrip() {
 
     // Model command: agent_pick submode.
     roundtrip(&ModeSnapshot::Model(Box::new(ModelCmdSnapshot {
+        query: String::new(),
+        filtered_indices: Vec::new(),
+        from_roles: false,
         sub: "agent_pick".to_string(),
         role: None,
         agent_name: Some("explore".to_string()),

@@ -154,6 +154,10 @@ fn apply_login_result(rest: &mut AppStateRest, conn: OAuthConn, handle: &tokio::
             Ok(drafts) => {
                 s.oauth_drafts = drafts;
                 s.oauth_flow = OAuthFlowState::Idle;
+                if let Some(at) = s.oauth_drafts.iter().position(|d| d.uuid == conn_uuid) {
+                    s.oauth_sel = at;
+                    s.jump_to_new_model(s.providers.len() + at);
+                }
             }
             Err(e) => {
                 s.oauth_flow = OAuthFlowState::Failed(format!(

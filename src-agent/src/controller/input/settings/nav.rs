@@ -14,7 +14,7 @@ use super::{is_ctrl, Action};
 pub(super) fn handle_providers_nav(s: &mut SettingsState, key: KeyEvent) -> Action {
     match key.code {
         KeyCode::Esc => {
-            s.page = SettingsPage::Menu;
+            s.page = SettingsPage::Quick;
         }
         KeyCode::Up => {
             s.prov_up();
@@ -31,9 +31,11 @@ pub(super) fn handle_providers_nav(s: &mut SettingsState, key: KeyEvent) -> Acti
         KeyCode::Enter => {
             if s.prov_on_add_button() {
                 s.open_provider_modal();
-                if s.prov_modal.is_some() {
-                    s.page = SettingsPage::ProviderForm;
-                }
+            } else {
+                s.open_provider_modal_edit();
+            }
+            if s.prov_modal.is_some() {
+                s.page = SettingsPage::ProviderForm;
             }
         }
         _ if is_ctrl(&key, 'x') => {
@@ -58,7 +60,7 @@ pub(super) fn handle_models_nav(
     let mut models_action = Action::None;
     match key.code {
         KeyCode::Esc => {
-            s.page = SettingsPage::Menu;
+            s.page = SettingsPage::Quick;
         }
         KeyCode::Up => {
             s.model_up();

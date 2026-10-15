@@ -27,9 +27,9 @@ pub(crate) fn save_web_search_config(
 pub(crate) mod client;
 mod client_shadow;
 pub(crate) mod computer;
-pub(crate) mod screen_browser;
 mod event_loop;
 mod manage;
+pub(crate) mod screen_browser;
 mod stream;
 pub(crate) mod terminal;
 // `pub(crate)` so the shared `commands::internet::internet_feedback` helper is
@@ -142,3 +142,5 @@ pub(crate) use actions::session::handle_live_switch;
 pub(super) type Term = Terminal<CrosstermBackend<std::io::Stdout>>;
 
 use ratatui::{backend::CrosstermBackend, Terminal};
+
+pub(crate) use actions::choose_model_provider;

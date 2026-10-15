@@ -3,6 +3,7 @@
 
 use anyhow::Result;
 
+use crate::app::mode::settings::SettingsPage;
 use crate::app::mode::{AgentsState, HelpState, Mode, SettingsState};
 use crate::app::state::{AgentMode, AppState};
 use crate::app::version;
@@ -88,6 +89,11 @@ pub(super) fn handle_mode(state: &mut AppState, arg: Option<String>) -> Result<(
 /// safe mid-stream (read-only view; the turn keeps streaming), so there is no
 /// busy guard here.
 pub(super) fn handle_settings(state: &mut AppState) -> Result<()> {
+    open_settings(state, SettingsPage::Quick)
+}
+
+/// Open `/settings` on a page. `/model` uses this for provider, oauth, and models.
+pub(crate) fn open_settings(state: &mut AppState, page: SettingsPage) -> Result<()> {
     // No catalogue prefetch here anymore: the Models Select modal's
     // omnisearch fetches the EDITED provider's `/models` on demand
     // (debounced) the first time it opens / a key is typed — see
@@ -97,7 +103,8 @@ pub(super) fn handle_settings(state: &mut AppState) -> Result<()> {
         state.rest.fg_mut().status = "no active session".into();
         return Ok(());
     };
-    let st = SettingsState::from(session, &state.rest.config);
+    let mut st = SettingsState::from(session, &state.rest.config);
+    st.page = page;
     *state.mode_mut() = Mode::Settings(Box::new(st));
     Ok(())
 }
@@ -166,4 +173,41 @@ pub(super) fn handle_quit(state: &mut AppState) -> Result<()> {
 pub(super) fn handle_usage(state: &mut AppState) -> Result<()> {
     *state.mode_mut() = Mode::Usage(Box::default());
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::model::conversation::Conversation;
+    use crate::model::session::Session;
+    use crate::model::settings::Settings;
+
+    fn session() -> Session {
+        Session::new(
+            "shortcut".into(),
+            "/tmp/unused".into(),
+            "test".into(),
+            Settings::default(),
+            Conversation::from_messages(vec![]),
+        )
+    }
+
+    #[test]
+    fn open_settings_lands_on_the_requested_page() {
+        let mut state = AppState::new(Mode::Chat);
+        state.rest.fg_mut().session = Some(session());
+        open_settings(&mut state, SettingsPage::OAuth).unwrap();
+        let Mode::Settings(settings) = state.mode() else {
+            panic!("settings did not open");
+        };
+        assert_eq!(settings.page, SettingsPage::OAuth);
+    }
+
+    #[test]
+    fn open_settings_without_a_session_stays_on_chat() {
+        let mut state = AppState::new(Mode::Chat);
+        open_settings(&mut state, SettingsPage::Providers).unwrap();
+        assert!(matches!(state.mode(), Mode::Chat));
+        assert_eq!(state.rest.fg().status, "no active session");
+    }
 }

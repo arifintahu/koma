@@ -79,15 +79,72 @@ pub(crate) fn apply_global_catalogue_reload(state: &mut AppState) {
     let mut mode = state.take_mode();
     match &mut mode {
         crate::app::mode::Mode::Settings(s) => {
-            // Rebuild the full SettingsState from fresh config + session.
+            // Refresh saved data without destroying input, navigation or dirty drafts.
+            if s.dirty()
+                || s.editing
+                || s.prov_modal.is_some()
+                || s.model_modal.is_some()
+                || s.picker.is_some()
+                || s.search_editor.is_some()
+                || s.list_editing
+            {
+                state.set_mode(mode);
+                return;
+            }
+            let page = s.page;
+            let focus = s.quick_focus;
+            let field = s.field;
+            let palette_sel = s.palette_sel;
+            let oauth = s.oauth_drafts.get(s.oauth_sel).map(|o| o.uuid.clone());
+            let model_filter = s.model_filter;
+            let model_selection = s.model_sel;
+            let model = s
+                .selected_model_index()
+                .and_then(|i| s.models.get(i))
+                .map(|m| m.uuid.clone());
+            let provider = s.providers.get(s.prov_sel).map(|p| p.uuid.clone());
+            // Rebuild the clean draft from the authoritative config + session.
             if let Some(session) = state.rest.fg().session.as_ref() {
                 let cfg = state.rest.config.clone();
                 **s = crate::app::mode::settings::SettingsState::from(session, &cfg);
+                s.page = page;
+                s.quick_focus = focus;
+                s.field = field;
+                s.palette_sel = palette_sel;
+                s.model_filter = model_filter;
+                if let Some(id) = oauth {
+                    s.oauth_sel = s
+                        .oauth_drafts
+                        .iter()
+                        .position(|o| o.uuid == id)
+                        .unwrap_or(0);
+                }
+                s.model_sel = model
+                    .and_then(|id| {
+                        s.models
+                            .iter()
+                            .filter(|m| s.model_filter.matches(m.session_only))
+                            .position(|m| m.uuid == id)
+                    })
+                    .map(|i| i + 5)
+                    .unwrap_or(model_selection.min(4));
+                if let Some(id) = provider {
+                    s.prov_sel = s.providers.iter().position(|p| p.uuid == id).unwrap_or(0);
+                }
+            }
+        }
+        crate::app::mode::Mode::Mcp(m) if m.mode == crate::app::mode::McpSubMode::Browse => {
+            let selected = m.servers.get(m.list_sel).map(|s| s.uuid.clone());
+            m.reload(&state.rest.config.mcp_servers);
+            if let Some(id) = selected {
+                m.list_sel = m.servers.iter().position(|s| s.uuid == id).unwrap_or(0);
             }
         }
         crate::app::mode::Mode::Agents(a) => {
             if let Some(session) = state.rest.fg().session.as_ref() {
-                a.reload(session);
+                if a.mode == crate::app::mode::AgentSubMode::Browse {
+                    a.reload(session);
+                }
             }
         }
         _ => {}

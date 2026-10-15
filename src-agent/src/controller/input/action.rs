@@ -188,12 +188,19 @@ pub enum Action {
     },
     /// Esc on the `/model` picker (or Enter on Help submode) — return to Chat.
     ModelCancel,
+    ModelBackToRoles,
+    ModelOpenRolePick {
+        role: crate::model::app_config::ModelRole,
+    },
     /// Esc in AgentPick → back to AgentList.
     ModelBackToAgentList,
     /// Enter on a row in AgentList → open AgentPick for that agent.
     ModelOpenAgentPick {
         agent_name: String,
     },
+    /// `p`, `o`, or `m` on `/model` when the list is not a search box.
+    /// Opens settings on Providers, OAuth, or Models.
+    ModelOpenSettings(crate::app::mode::settings::SettingsPage),
     // --- Agents dashboard actions ---
     /// Confirm CREATE: write a new agent from the drafts, reload, back to Browse.
     CreateAgent,

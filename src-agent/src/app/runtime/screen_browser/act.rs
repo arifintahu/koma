@@ -476,7 +476,10 @@ mod tests {
             keys: vec!["Enter".into()],
         });
         assert!(s.contains("requestSubmit"), "{s}");
-        assert!(!s.contains("scrollBy(0, h)") || s.contains("komaEnter"), "{s}");
+        assert!(
+            !s.contains("scrollBy(0, h)") || s.contains("komaEnter"),
+            "{s}"
+        );
     }
 
     #[test]

@@ -115,7 +115,10 @@ pub fn encode_frames(
 ) -> Result<Vec<Vec<u8>>> {
     anyhow::ensure!(buffers.len() <= MAX_BUFFERS, "Too many Jupyter buffers");
     for buf in buffers {
-        anyhow::ensure!(buf.len() <= MAX_BUFFER_BYTES, "Jupyter buffer exceeds size bound");
+        anyhow::ensure!(
+            buf.len() <= MAX_BUFFER_BYTES,
+            "Jupyter buffer exceeds size bound"
+        );
     }
     let header_s = dump_json(header)?;
     let parent_s = dump_json(parent_header)?;
@@ -165,9 +168,12 @@ pub fn decode_frames(key: &[u8], frames: &[Vec<u8>]) -> Result<JupyterMessage> {
         "Jupyter HMAC signature mismatch"
     );
     // Bound binary frames; v1 does not surface them to the UI.
-anyhow::ensure!(rest[5..].len() <= MAX_BUFFERS, "Too many Jupyter buffers");
+    anyhow::ensure!(rest[5..].len() <= MAX_BUFFERS, "Too many Jupyter buffers");
     for buf in &rest[5..] {
-        anyhow::ensure!(buf.len() <= MAX_BUFFER_BYTES, "Jupyter buffer exceeds size bound");
+        anyhow::ensure!(
+            buf.len() <= MAX_BUFFER_BYTES,
+            "Jupyter buffer exceeds size bound"
+        );
     }
     // Parse metadata so bad JSON fails closed; discard after (unused by v1 client).
     let _: Value = serde_json::from_str(meta_s).context("Parse metadata JSON")?;
@@ -253,7 +259,10 @@ pub fn make_header(msg_type: &str, session: &str, msg_id: &str) -> Value {
 
 /// Build an `execute_request` content object (v1: no stdin).
 pub fn execute_request_content(code: &str, silent: bool) -> Result<Value> {
-    anyhow::ensure!(code.len() <= MAX_CONTENT_BYTES / 2, "Cell code exceeds size bound");
+    anyhow::ensure!(
+        code.len() <= MAX_CONTENT_BYTES / 2,
+        "Cell code exceeds size bound"
+    );
     // Reject NULs that break kernel parsing.
     anyhow::ensure!(!code.contains('\0'), "Cell code must not contain NUL");
     Ok(json!({
@@ -375,7 +384,10 @@ pub fn correlates(parent_msg_id: Option<&str>, expected: &str) -> bool {
 
 /// Reject malformed connection transport.
 pub fn validate_connection_public(ip: &str, transport: &str, signature_scheme: &str) -> Result<()> {
-    anyhow::ensure!(ip == "127.0.0.1" || ip == "localhost", "Kernel must bind loopback only");
+    anyhow::ensure!(
+        ip == "127.0.0.1" || ip == "localhost",
+        "Kernel must bind loopback only"
+    );
     anyhow::ensure!(transport == "tcp", "Only tcp transport is supported");
     anyhow::ensure!(
         signature_scheme == "hmac-sha256",
@@ -412,7 +424,10 @@ mod tests {
         assert_eq!(frames[0], DELIM);
         let msg = decode_frames(key, &frames).unwrap();
         assert_eq!(msg.msg_type(), Some("execute_request"));
-        assert_eq!(msg.header.get("msg_id").and_then(Value::as_str), Some("mid-1"));
+        assert_eq!(
+            msg.header.get("msg_id").and_then(Value::as_str),
+            Some("mid-1")
+        );
         assert_eq!(msg.content["code"], "print('hi')");
     }
 
@@ -420,7 +435,8 @@ mod tests {
     fn rejects_wrong_signature() {
         let key = b"correct-key";
         let header = make_header("kernel_info_request", "s", "m");
-        let mut frames = encode_frames(key, &header, &json!({}), &json!({}), &json!({}), &[]).unwrap();
+        let mut frames =
+            encode_frames(key, &header, &json!({}), &json!({}), &json!({}), &[]).unwrap();
         // Tamper with signature frame.
         frames[1] = b"0000000000000000000000000000000000000000000000000000000000000000".to_vec();
         let err = decode_frames(key, &frames).unwrap_err();
@@ -431,7 +447,15 @@ mod tests {
     fn decode_strips_identity_prefix() {
         let key = b"k";
         let header = make_header("status", "s", "m");
-        let mut frames = encode_frames(key, &header, &json!({}), &json!({}), &json!({"execution_state":"idle"}), &[]).unwrap();
+        let mut frames = encode_frames(
+            key,
+            &header,
+            &json!({}),
+            &json!({}),
+            &json!({"execution_state":"idle"}),
+            &[],
+        )
+        .unwrap();
         frames.insert(0, b"identity-bytes".to_vec());
         let msg = decode_frames(key, &frames).unwrap();
         assert_eq!(msg.content["execution_state"], "idle");
@@ -457,7 +481,9 @@ mod tests {
     fn scrub_detects_key_fields() {
         assert!(scrub_secrets(&json!({"key": "abc"})));
         assert!(scrub_secrets(&json!({"shell_port": 1234})));
-        assert!(!scrub_secrets(&json!({"text": "hello", "execution_count": 1})));
+        assert!(!scrub_secrets(
+            &json!({"text": "hello", "execution_count": 1})
+        ));
     }
 
     #[test]
@@ -472,7 +498,10 @@ mod tests {
         let (id, frames) = encode_execute_request(b"key", "sess", "x=1", false).unwrap();
         assert!(!id.is_empty());
         let msg = decode_frames(b"key", &frames).unwrap();
-        assert_eq!(msg.header.get("msg_id").and_then(Value::as_str), Some(id.as_str()));
+        assert_eq!(
+            msg.header.get("msg_id").and_then(Value::as_str),
+            Some(id.as_str())
+        );
         assert_eq!(msg.msg_type(), Some("execute_request"));
     }
 }

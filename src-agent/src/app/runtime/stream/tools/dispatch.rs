@@ -281,17 +281,11 @@ pub(super) fn finish_tool_round(
     // Inject any queued mid-turn steers as ONE coalesced user message before the
     // next hop, so the model sees the tool results + the user's steer together and
     // continues with its reasoning intact. Drained here = "sent in one window".
-    let steers = std::mem::take(&mut state.rest.sessions[sess_idx].pending_steer);
-    if !steers.is_empty() {
+    if !state.rest.sessions[sess_idx].pending_steer.is_empty() {
         // Queue emptied — drop list focus/selection so a later enqueue starts clean.
         state.rest.pending_steer_sel = 0;
         state.rest.pending_steer_focus = false;
-        let joined = steers.join("\n\n");
-        if let Some(sess) = state.rest.sessions[sess_idx].session.as_mut() {
-            let _ = crate::model::msglog::append(&sess.path, Role::User, &joined, None, None);
-            sess.conversation.push_user(joined);
-            let _ = sess.save();
-        }
+        state.rest.sessions[sess_idx].deliver_followups();
     }
 
     // Apply the validated workdir side effect: append each media dir so the

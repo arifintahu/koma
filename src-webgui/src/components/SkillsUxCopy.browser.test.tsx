@@ -128,7 +128,7 @@ describe.sequential('Skills UX copy and disclosures', () => {
     const context = screen.getByRole('textbox', { name: 'Context window limit', exact: true })
     await userEvent.fill(context, '400000')
     await userEvent.keyboard('{Enter}')
-    expect(req.mock.calls.some(([request]) => request.contextWindowLimit === 300000)).toBe(true)
+    expect(req.mock.calls.some(([request]) => request.contextWindowLimit === 400000)).toBe(true)
     const reply = screen.getByRole('textbox', { name: 'Reply token limit', exact: true })
     await userEvent.fill(reply, '')
     await userEvent.keyboard('{Enter}')

@@ -218,7 +218,9 @@ mod tests {
             Default::default(),
             crate::model::conversation::Conversation::new(""),
         ));
-        assert!(state.rest.try_attach_paste_text_named("hi", Some("notes.md")));
+        assert!(state
+            .rest
+            .try_attach_paste_text_named("hi", Some("notes.md")));
         let fg = state.rest.fg();
         let att = fg.pending_attachments.last().unwrap();
         assert!(att.is_pasted_text());

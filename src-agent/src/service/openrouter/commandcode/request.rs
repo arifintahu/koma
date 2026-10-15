@@ -157,11 +157,13 @@ pub(super) fn build_messages(
                             "type": "text",
                             "text": text,
                         })];
+                        let mut sent = Vec::new();
                         for att in &m.attachments {
                             if !att.is_image() {
                                 continue;
                             }
                             if let Some(url) = data_url_for(&ctx.session_dir, att) {
+                                sent.push(att.marker_n);
                                 // Extract mime from the data URL itself —
                                 // data_url_for re-sniffs and may downscale
                                 // (PNG→JPEG), so att.mime could be stale.
@@ -175,6 +177,18 @@ pub(super) fn build_messages(
                                     "image": url,
                                     "mediaType": mime,
                                 }));
+                            }
+                        }
+                        if let Some(note) =
+                            crate::dto::openrouter::request::attached_image_note(&sent)
+                        {
+                            if let Some(text) = content_parts
+                                .first_mut()
+                                .and_then(|part| part.get_mut("text"))
+                            {
+                                if let Some(value) = text.as_str() {
+                                    *text = json!(format!("{value}{note}"));
+                                }
                             }
                         }
                         out.push(json!({

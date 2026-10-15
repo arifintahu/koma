@@ -5,8 +5,8 @@
 
 use super::notebook_wire::{
     self, cap_content_for_event, decode_frames, encode_execute_request, encode_input_reply_empty,
-    encode_interrupt_request, encode_kernel_info_request, scrub_secrets, validate_connection_public,
-    JupyterMessage, MAX_CONTENT_BYTES,
+    encode_interrupt_request, encode_kernel_info_request, scrub_secrets,
+    validate_connection_public, JupyterMessage, MAX_CONTENT_BYTES,
 };
 use super::WorkspaceRef;
 use anyhow::{bail, Context, Result};
@@ -157,7 +157,10 @@ impl ClientHandle {
         cell_id: Option<String>,
         document_epoch: u64,
     ) -> Result<Value> {
-        anyhow::ensure!(code.len() <= MAX_CONTENT_BYTES / 2, "Cell code exceeds size bound");
+        anyhow::ensure!(
+            code.len() <= MAX_CONTENT_BYTES / 2,
+            "Cell code exceeds size bound"
+        );
         let (reply_tx, reply_rx) = mpsc::channel();
         let tx = self
             .cmd_tx
@@ -401,7 +404,14 @@ async fn client_main_inner(
         .await
         .context("Send kernel_info_request")?;
 
-    let ready = wait_kernel_info(&mut shell, &mut iopub, &key, &info_id, Duration::from_secs(25)).await;
+    let ready = wait_kernel_info(
+        &mut shell,
+        &mut iopub,
+        &key,
+        &info_id,
+        Duration::from_secs(25),
+    )
+    .await;
     match ready {
         Ok(()) => {
             set_state(&shared, &workspace, &document_path, KernelRunState::Idle);
@@ -535,7 +545,10 @@ async fn run_execute(
             .inflight_msg_id
             .lock()
             .map_err(|_| anyhow::anyhow!("inflight lock poisoned"))?;
-        anyhow::ensure!(inflight.is_none(), "Kernel already has an in-flight execute");
+        anyhow::ensure!(
+            inflight.is_none(),
+            "Kernel already has an in-flight execute"
+        );
         let (msg_id, frames) = encode_execute_request(key, session, &code, false)?;
         *inflight = Some(msg_id.clone());
         (msg_id, frames)
@@ -741,12 +754,7 @@ async fn handle_iopub_msg(
     // Only forward IO for known output message types.
     let interesting = matches!(
         msg_type,
-        "stream"
-            | "execute_result"
-            | "display_data"
-            | "error"
-            | "execute_input"
-            | "clear_output"
+        "stream" | "execute_result" | "display_data" | "error" | "execute_input" | "clear_output"
     );
     if !interesting {
         return;

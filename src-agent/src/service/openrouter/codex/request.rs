@@ -216,6 +216,7 @@ pub(super) fn build_input(
                             Some(c) => c,
                             None => return (instructions, input),
                         };
+                        let mut sent = Vec::new();
                         for att in &m.attachments {
                             if !att.is_image() {
                                 continue;
@@ -223,7 +224,15 @@ pub(super) fn build_input(
                             if let Some(url) =
                                 crate::dto::openrouter::request::data_url_for(&ctx.session_dir, att)
                             {
+                                sent.push(att.marker_n);
                                 content.push(ContentItem::InputImage { image_url: url });
+                            }
+                        }
+                        if let Some(note) =
+                            crate::dto::openrouter::request::attached_image_note(&sent)
+                        {
+                            if let Some(ContentItem::InputText { text }) = content.first_mut() {
+                                text.push_str(&note);
                             }
                         }
                     }

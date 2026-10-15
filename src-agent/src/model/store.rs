@@ -73,6 +73,13 @@ pub struct SessionMeta {
 ///   per-user machine-local data location. The old `~/.koma` path is migrated
 ///   on first launch by [`migrate_legacy_dir`].
 pub fn base_dir() -> Result<PathBuf> {
+    // Debug-only isolation for socket integration tests.
+    #[cfg(debug_assertions)]
+    if let Some(path) = std::env::var_os("KOMA_TEST_DATA_DIR").filter(|s| !s.is_empty()) {
+        let path = PathBuf::from(path);
+        anyhow::ensure!(path.is_absolute(), "KOMA_TEST_DATA_DIR must be absolute");
+        return Ok(path);
+    }
     #[cfg(windows)]
     {
         let data =

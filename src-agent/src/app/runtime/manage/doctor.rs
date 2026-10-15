@@ -598,7 +598,10 @@ fn check_gui_linux(details: &mut Vec<String>) -> (String, Status) {
         note.push_str(", display ok");
     }
 
-    details.push("WEBKIT_DISABLE_COMPOSITING_MODE is defaulted to 1 by koma on Linux".to_string());
+    details.push(
+        "WEBKIT_DISABLE_COMPOSITING_MODE is defaulted to 1 by koma on Linux so scroll layers repaint; View Transitions are disabled"
+            .to_string(),
+    );
 
     (note, status)
 }

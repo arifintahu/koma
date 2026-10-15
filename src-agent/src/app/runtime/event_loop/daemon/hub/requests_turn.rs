@@ -82,6 +82,35 @@ impl DaemonHub {
         self.send_to(idx, DaemonEvent::Ack);
     }
 
+    /// Replace the foreground composer draft. `cursor` is a char index and is
+    /// clamped to the new text. History recall is dropped so the next Up starts
+    /// fresh; the stash is left as-is. Reconcile staged media against the new
+    /// text, just as native backspace/delete do when a marker is removed.
+    /// `@` and slash matching are not done here; they read `input` on the next key.
+    pub(super) fn replace_input(
+        &mut self,
+        idx: usize,
+        state: &mut AppState,
+        text: String,
+        cursor: usize,
+    ) {
+        let fg = state.rest.fg_mut();
+        let text_changed = fg.input != text;
+        let chars = text.chars().count();
+        fg.input = text;
+        fg.cursor = cursor.min(chars);
+        fg.hist_idx = None;
+        fg.reconcile_attachments();
+        // Same as push_char / backspace: a real edit returns the / and @ highlight
+        // to the first match. Cursor-only flushes leave the highlight where it is.
+        if text_changed {
+            state.rest.palette_sel = 0;
+            // Typing disarms a pending double-Esc, same as any non-Esc key.
+            state.rest.last_esc = None;
+        }
+        self.send_to(idx, DaemonEvent::Ack);
+    }
+
     // Answer the foreground session's pending tool-approval prompt via the
     // local approve/deny handlers.
     //

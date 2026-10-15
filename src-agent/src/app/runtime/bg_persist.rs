@@ -117,6 +117,7 @@ pub(crate) fn restore_bg_records(
                 pid: Mutex::new(None),
                 ended_at: Mutex::new(Some(started)),
                 tee_path: Mutex::new(None),
+                delivered: Mutex::new(String::new()),
                 deadline: Mutex::new(None),
             }),
         });

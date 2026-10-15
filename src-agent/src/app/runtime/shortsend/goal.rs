@@ -166,6 +166,16 @@ pub fn detect_goal_update(user_text: &str) -> Option<GoalPatch> {
     None
 }
 
+/// Drop the chat's objective. `/clear` calls this so the next turn does not
+/// resume the previous kickoff. Archive rows are not touched.
+pub fn wipe_chat_doctrine(settings: &mut Settings) {
+    settings.session_charter.clear();
+    settings.session_goal.clear();
+    settings.session_goal_source = "none".into();
+    settings.session_goal_msg_id = 0;
+    settings.session_objective_fp.clear();
+}
+
 /// Seed `session_charter` once from a real kickoff prompt. Returns true if written.
 /// Does not set `session_goal` or source — charter alone feeds resolve step 3.
 pub fn seed_charter_if_empty(settings: &mut Settings, last_user: &str) -> bool {
@@ -310,11 +320,12 @@ fn strip_goal_prefix<'a>(lower: &str, raw: &'a str) -> Option<&'a str> {
 }
 
 fn looks_like_greeting(s: &str) -> bool {
-    let t = s.trim().trim_matches(|c: char| c.is_ascii_punctuation() || c.is_whitespace());
+    let t = s
+        .trim()
+        .trim_matches(|c: char| c.is_ascii_punctuation() || c.is_whitespace());
     matches!(
         t.to_ascii_lowercase().as_str(),
-        "hi"
-            | "hello"
+        "hi" | "hello"
             | "hey"
             | "yo"
             | "sup"
@@ -521,6 +532,31 @@ mod tests {
         let eg = resolve_effective_goal(&s, None);
         assert_eq!(eg.source, GoalSource::None);
         assert!(eg.objective.is_empty());
+    }
+
+    #[test]
+    fn clear_chat_wipes_charter_and_a_greeting_does_not_reseed_it() {
+        let mut s = Settings {
+            session_charter: "investigate the repo for vulnerabilities".into(),
+            session_goal: "keep going".into(),
+            session_goal_source: "user".into(),
+            session_goal_msg_id: 4,
+            session_objective_fp: "user:keep going".into(),
+            session_system_extra: "keep this suffix".into(),
+            ..Settings::default()
+        };
+        wipe_chat_doctrine(&mut s);
+        assert!(s.session_charter.is_empty());
+        assert!(s.session_goal.is_empty());
+        assert_eq!(s.session_goal_source, "none");
+        assert_eq!(s.session_goal_msg_id, 0);
+        assert!(s.session_objective_fp.is_empty());
+        assert_eq!(s.session_system_extra, "keep this suffix");
+        let eg = resolve_effective_goal(&s, None);
+        assert_eq!(eg.source, GoalSource::None);
+        assert!(eg.objective.is_empty());
+        assert!(!seed_charter_if_empty(&mut s, "hello?"));
+        assert!(s.session_charter.is_empty());
     }
 
     #[test]

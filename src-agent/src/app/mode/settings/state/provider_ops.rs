@@ -74,33 +74,73 @@ impl SettingsState {
 
     /// Open the add-provider modal with a blank draft.
     pub fn open_provider_modal(&mut self) {
+        self.provider_editing = false;
+        self.prov_replace = None;
         self.prov_modal = Some(ProviderModal::new());
+    }
+
+    /// Open the provider form filled from the selected row.
+    ///
+    /// Save deletes that row and adds the draft. Extension-managed providers
+    /// cannot be deleted, so they cannot be modified either.
+    pub fn open_provider_modal_edit(&mut self) {
+        let Some(current) = self.providers.get(self.prov_sel) else {
+            return;
+        };
+        if let Some(ext) = current.ext_id.as_deref() {
+            self.prov_msg = Some(format!("managed by extension {ext} — uninstall to remove"));
+            self.prov_delete_armed = false;
+            return;
+        }
+        self.prov_replace = Some(self.prov_sel);
+        self.prov_modal = Some(ProviderModal {
+            name: current.name.clone(),
+            endpoint: current.endpoint.clone(),
+            api_type: current.api_type,
+            api_key: current.api_key.clone(),
+            field: 0,
+        });
     }
 
     /// Close the add-provider modal without saving.
     pub fn close_provider_modal(&mut self) {
+        self.provider_editing = false;
         self.prov_modal = None;
+        self.prov_replace = None;
     }
 
-    /// Save the modal draft as a new provider and close the modal. Mints a fresh
-    /// uuid for the new entry (the add-provider modal only ever creates).
-    pub fn save_provider_modal(&mut self) {
-        if let Some(m) = self.prov_modal.take() {
-            let name = m.name.trim().to_string();
-            let endpoint = m.endpoint.trim().to_string();
-            let api_key = m.api_key.trim().to_string();
-            self.providers.push(ProviderDraft {
-                uuid: super::super::new_uuid(),
-                name,
-                endpoint,
-                api_type: m.api_type,
-                api_key,
-                // A user-created provider is never extension-managed.
-                ext_id: None,
-            });
-            // Select the newly added entry (last real index).
-            self.prov_sel = self.providers.len().saturating_sub(1);
+    /// Save the modal draft and close it.
+    ///
+    /// Returns the new provider's index when this was an add. An edit returns
+    /// `None` so the caller stays on the provider list.
+    pub fn save_provider_modal(&mut self) -> Option<usize> {
+        let m = self.prov_modal.take()?;
+        if let Some(index) = self.prov_replace.take() {
+            if let Some(existing) = self.providers.get_mut(index) {
+                if existing.ext_id.is_some() {
+                    return None;
+                }
+                existing.name = m.name.trim().into();
+                existing.endpoint = m.endpoint.trim().into();
+                existing.api_type = m.api_type;
+                if !m.api_key.trim().is_empty() {
+                    existing.api_key = m.api_key.trim().into();
+                }
+                self.prov_sel = index;
+                return None;
+            }
         }
+        self.providers.push(ProviderDraft {
+            uuid: super::super::new_uuid(),
+            name: m.name.trim().into(),
+            endpoint: m.endpoint.trim().into(),
+            api_type: m.api_type,
+            api_key: m.api_key.trim().into(),
+            ext_id: None,
+        });
+        let idx = self.providers.len() - 1;
+        self.prov_sel = idx;
+        Some(idx)
     }
 
     /// Move focus up in the modal (clamp 0..=4).

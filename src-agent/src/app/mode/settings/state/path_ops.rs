@@ -1,7 +1,7 @@
 //! Path-list accessors, list management, and filesystem picker operations for
 //! [`SettingsState`].
 
-use super::super::picker::{PathPicker, PickerMode};
+use super::super::picker::{materialize_picker_path, PathPicker, PickerMode};
 use super::super::SettingField;
 use super::SettingsState;
 
@@ -117,11 +117,7 @@ impl SettingsState {
             .selected()
             .cloned()
             .unwrap_or_else(|| picker.query.clone());
-        let chosen = chosen
-            .strip_prefix('@')
-            .unwrap_or(&chosen)
-            .trim()
-            .to_string();
+        let chosen = materialize_picker_path(&chosen, &self.cwd);
         if chosen.is_empty() {
             return;
         }

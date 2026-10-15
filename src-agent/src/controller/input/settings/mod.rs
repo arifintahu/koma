@@ -8,7 +8,7 @@ mod modals;
 mod nav;
 
 use super::{is_ctrl, Action};
-use crate::app::mode::settings::{OAuthFlowState, SettingsPage};
+use crate::app::mode::settings::{OAuthFlowState, QuickFocus, SettingsPage};
 use crate::app::mode::{SettingField, SettingsState};
 use crate::app::state::AppStateRest;
 use crate::model::app_config::OAuthProvider;
@@ -51,7 +51,7 @@ pub fn handle_settings(s: &mut SettingsState, rest: &mut AppStateRest, key: KeyE
 
     // --- ProviderForm page (provider modal open) ---
     if s.page == SettingsPage::ProviderForm && s.prov_modal.is_some() {
-        return handle_provider_form(s, key);
+        return handle_provider_form(s, rest, key);
     }
 
     // --- OAuth connect-flow overlay (active while on OAuth page) ---
@@ -66,8 +66,14 @@ pub fn handle_settings(s: &mut SettingsState, rest: &mut AppStateRest, key: KeyE
         handle_list_editing(s, key)
     } else if s.editing {
         match key.code {
-            KeyCode::Enter | KeyCode::Esc => {
-                s.editing = false;
+            KeyCode::Enter | KeyCode::Esc | KeyCode::Tab | KeyCode::BackTab => {
+                s.finish_edit(key.code != KeyCode::Esc);
+                if key.code == KeyCode::Tab {
+                    s.down();
+                }
+                if key.code == KeyCode::BackTab {
+                    s.up();
+                }
                 Action::None
             }
             KeyCode::Backspace => {
@@ -82,8 +88,37 @@ pub fn handle_settings(s: &mut SettingsState, rest: &mut AppStateRest, key: KeyE
         }
     } else {
         // Page-specific navigation.
+        if matches!(
+            s.page,
+            SettingsPage::Quick
+                | SettingsPage::Providers
+                | SettingsPage::OAuth
+                | SettingsPage::Models
+        ) {
+            match key.code {
+                KeyCode::Char('1') => {
+                    s.page = SettingsPage::Quick;
+                    return Action::None;
+                }
+                KeyCode::Char('2') => {
+                    s.page = SettingsPage::Providers;
+                    return Action::None;
+                }
+                KeyCode::Char('3') => {
+                    s.page = SettingsPage::OAuth;
+                    return Action::None;
+                }
+                KeyCode::Char('4') => {
+                    s.page = SettingsPage::Models;
+                    return Action::None;
+                }
+                KeyCode::Esc => return Action::SaveSettings,
+                _ => {}
+            }
+        }
         match s.page {
             SettingsPage::Menu => handle_menu(s, key),
+            SettingsPage::Quick => handle_quick(s, rest, key),
             SettingsPage::Appearance => handle_appearance_page(s, rest, key),
             SettingsPage::General => handle_general_page(s, rest, key),
             SettingsPage::Providers => handle_providers_nav(s, key),
@@ -94,6 +129,24 @@ pub fn handle_settings(s: &mut SettingsState, rest: &mut AppStateRest, key: KeyE
                 Action::None
             }
         }
+    }
+}
+
+/// Quick dashboard: `a` appearance, `g` general, arrows and Enter inside that box.
+fn handle_quick(s: &mut SettingsState, rest: &mut AppStateRest, key: KeyEvent) -> Action {
+    match key.code {
+        KeyCode::Char('a') | KeyCode::Char('A') => {
+            s.quick_focus = QuickFocus::Appearance;
+            Action::None
+        }
+        KeyCode::Char('g') | KeyCode::Char('G') => {
+            s.quick_focus = QuickFocus::General;
+            Action::None
+        }
+        _ => match s.quick_focus {
+            QuickFocus::Appearance => handle_appearance_page(s, rest, key),
+            QuickFocus::General => handle_general_page(s, rest, key),
+        },
     }
 }
 
@@ -143,7 +196,7 @@ fn handle_menu(s: &mut SettingsState, key: KeyEvent) -> Action {
 fn handle_appearance_page(s: &mut SettingsState, rest: &mut AppStateRest, key: KeyEvent) -> Action {
     match key.code {
         KeyCode::Esc => {
-            s.page = SettingsPage::Menu;
+            s.page = SettingsPage::Quick;
             Action::None
         }
         KeyCode::Up => {
@@ -173,7 +226,7 @@ fn handle_appearance_page(s: &mut SettingsState, rest: &mut AppStateRest, key: K
 fn handle_general_page(s: &mut SettingsState, rest: &mut AppStateRest, key: KeyEvent) -> Action {
     match key.code {
         KeyCode::Esc => {
-            s.page = SettingsPage::Menu;
+            s.page = SettingsPage::Quick;
             Action::None
         }
         KeyCode::Up => {
@@ -182,6 +235,20 @@ fn handle_general_page(s: &mut SettingsState, rest: &mut AppStateRest, key: KeyE
         }
         KeyCode::Down | KeyCode::Tab => {
             s.down();
+            Action::None
+        }
+        KeyCode::Char(' ') => {
+            let f = s.current_field();
+            if matches!(
+                f,
+                SettingField::AwarenessEnabled
+                    | SettingField::ClassifierEnabled
+                    | SettingField::ShortSendEnabled
+                    | SettingField::BashSaving
+                    | SettingField::CodingAutosave
+            ) {
+                s.enter();
+            }
             Action::None
         }
         KeyCode::Enter => {
@@ -219,7 +286,7 @@ fn handle_general_page(s: &mut SettingsState, rest: &mut AppStateRest, key: KeyE
 fn handle_oauth_page(s: &mut SettingsState, key: KeyEvent) -> Action {
     match key.code {
         KeyCode::Esc => {
-            s.page = SettingsPage::Menu;
+            s.page = SettingsPage::Quick;
             Action::None
         }
         KeyCode::Up => {
@@ -228,6 +295,10 @@ fn handle_oauth_page(s: &mut SettingsState, key: KeyEvent) -> Action {
         }
         KeyCode::Down | KeyCode::Tab => {
             s.oauth_down();
+            Action::None
+        }
+        KeyCode::Char('a') | KeyCode::Char('+') => {
+            s.oauth_open_picker();
             Action::None
         }
         KeyCode::Enter => {
@@ -363,10 +434,14 @@ fn handle_search_editor_with(
         return;
     };
     match key.code {
+        KeyCode::Esc if editor.confirmed => {
+            editor.confirmed = false;
+            editor.editing = false;
+        }
         KeyCode::Esc => {
             s.search_editor = None;
         }
-        KeyCode::Up | KeyCode::Left | KeyCode::Down | KeyCode::Right => {
+        KeyCode::Up | KeyCode::Left | KeyCode::Down | KeyCode::Right if !editor.confirmed => {
             let idx = SearchProvider::ALL
                 .iter()
                 .position(|p| *p == editor.provider)
@@ -380,16 +455,21 @@ fn handle_search_editor_with(
             editor.key.0.clear();
             editor.error = None;
         }
-        KeyCode::Backspace => {
+        KeyCode::Backspace if editor.editing => {
             editor.key.0.pop();
             editor.error = None;
         }
         KeyCode::Char(c)
             if !key.modifiers.contains(KeyModifiers::CONTROL)
+                && editor.editing
                 && editor.provider != SearchProvider::BuiltIn =>
         {
             editor.key.0.push(c);
             editor.error = None;
+        }
+        KeyCode::Enter if !editor.confirmed => {
+            editor.confirmed = true;
+            editor.editing = editor.provider != SearchProvider::BuiltIn;
         }
         KeyCode::Enter => {
             let key = if editor.key.0.is_empty() {
@@ -453,6 +533,9 @@ mod web_search_tests {
             s.search_editor.as_ref().unwrap().provider,
             SearchProvider::Firecrawl
         );
+        assert!(!s.search_editor.as_ref().unwrap().editing);
+        handle_search_editor_with(&mut s, &mut rest, key(KeyCode::Enter), save);
+        assert!(s.search_editor.as_ref().unwrap().editing);
         handle_search_editor_with(&mut s, &mut rest, key(KeyCode::Enter), save);
         assert!(s
             .search_editor
@@ -473,6 +556,8 @@ mod web_search_tests {
         };
         assert_eq!(snapshot.search_editor.unwrap().key.0, "•");
         handle_search_editor_with(&mut s, &mut rest, key(KeyCode::Esc), save);
+        assert!(!s.search_editor.as_ref().unwrap().editing);
+        handle_search_editor_with(&mut s, &mut rest, key(KeyCode::Esc), save);
         assert!(s.search_editor.is_none());
         assert!(rest.config.web_search.firecrawl_key.0.is_empty());
     }
@@ -481,6 +566,8 @@ mod web_search_tests {
         let (mut s, _) = fixture();
         s.search_editor = Some(SearchEditor {
             provider: SearchProvider::Exa,
+            confirmed: true,
+            editing: true,
             ..Default::default()
         });
         let mut app =
@@ -505,6 +592,8 @@ mod web_search_tests {
             provider: SearchProvider::Exa,
             key: SearchKey("secret".into()),
             error: None,
+            confirmed: true,
+            editing: true,
         });
         handle_search_editor_with(&mut s, &mut rest, key(KeyCode::Enter), |c, p, k| {
             commit_selection(c, p, k, |_| Err("Could not save".into()))
@@ -530,6 +619,8 @@ mod web_search_tests {
         handle_search_editor_with(&mut s, &mut rest, key(KeyCode::Enter), save);
         s.search_editor = Some(SearchEditor {
             provider: SearchProvider::Exa,
+            confirmed: true,
+            editing: true,
             ..Default::default()
         });
         handle_search_editor_with(&mut s, &mut rest, key(KeyCode::Enter), save);

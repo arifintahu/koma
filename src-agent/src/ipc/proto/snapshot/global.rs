@@ -75,6 +75,10 @@ pub struct GlobalSnapshot {
     pub pending_steer_focus: bool,
     pub pending_attachments: Vec<crate::dto::chat::Attachment>,
     pub file_palette: Option<Vec<String>>,
+    /// Slash-command matches for the thin client. Empty unless the draft is a
+    /// `/` name with no arguments yet. Filled by `command::palette_matches`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub command_palette: Vec<(String, String)>,
     pub agent_mode: String,
     /// SDLC phase when mode is sdlc: assess|execute|integrate|done. Optional for back-compat.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -94,6 +98,8 @@ pub struct GlobalSnapshot {
     /// Latest published koma version when newer than the running one (for the
     /// header update badge), else None. Projected from the daemon's version check.
     pub latest_version: Option<String>,
+    #[serde(default)]
+    pub current_version: String,
 }
 
 // -- mode payload projections (stage 2: core interactive modes) ----------------
@@ -108,12 +114,14 @@ pub struct OnboardSnapshot {
 /// A serde-safe projection of the guided provider onboarding wizard
 /// (`Mode::OnboardProvider`).
 ///
-/// The model-result list is NOT carried: the thin client recomputes it from the
-/// globally-projected `models_cache` (+ the compiled-in Codex static list) exactly as
-/// the `/settings` model omnisearch does, so no separate results projection is needed.
+/// The filtered model ids are projected in the same order used by the daemon's
+/// input handler. Thin clients must not infer OAuth membership from a native cache.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[allow(dead_code)]
 pub struct OnboardProviderSnapshot {
+    /// Authoritative filtered model ids; clients must not recreate OAuth catalogues.
+    #[serde(default)]
+    pub results: Vec<String>,
     /// Wire token for the active step: `"login"` | `"model_select"`.
     pub step: String,
     /// The reused OAuth connect-flow state (picker / wait / paste / failed).
@@ -132,6 +140,11 @@ pub struct OnboardProviderSnapshot {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[allow(dead_code)]
 pub struct KeyInputSnapshot {
+    #[serde(default)]
+    pub editing: bool,
+
+    #[serde(default)]
+    pub results: Vec<String>,
     pub step: usize,
     pub field: usize,
     pub endpoint: String,
@@ -201,6 +214,8 @@ pub struct HistoryEntrySnapshot {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[allow(dead_code)]
 pub struct SessionHubSnapshot {
+    #[serde(default)]
+    pub pending_delete: Option<String>,
     pub cooking: Vec<CookingEntrySnapshot>,
     pub history: Vec<HistoryEntrySnapshot>,
     pub focus_cooking: bool,

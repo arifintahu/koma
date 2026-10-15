@@ -333,10 +333,8 @@ pub(super) fn plan(
             p.id == "python",
             "Notebook kernel (ipykernel) install is only available for the Python pack"
         );
-        let python = super::environment::executable(
-            root,
-            if cfg!(windows) { "python" } else { "python3" },
-        )?;
+        let python =
+            super::environment::executable(root, if cfg!(windows) { "python" } else { "python3" })?;
         commands.push(command(
             &python.to_string_lossy(),
             vec![
@@ -378,7 +376,10 @@ pub(super) fn plan(
         note_parts.push(format!("Language server: {server}."));
     }
     if notebook && p.id == "python" {
-        note_parts.push("ipykernel installs into the workspace Python (pip); never silent on notebook open.".into());
+        note_parts.push(
+            "ipykernel installs into the workspace Python (pip); never silent on notebook open."
+                .into(),
+        );
     }
     if p.adapter == "lldb-dap" && include_adapter {
         note_parts.push("LLVM's lldb-dap must be on PATH.".into());

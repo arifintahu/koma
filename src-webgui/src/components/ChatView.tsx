@@ -13,7 +13,6 @@ import {
   Check,
   ChevronDown,
   ChevronRight,
-  Circle,
   FileText,
   Files,
   Frame,
@@ -41,7 +40,7 @@ import { splitPasteMessage } from '../lib/pasteText'
 import { Composer } from './Composer'
 import { ApprovalOverlay } from './ApprovalOverlay'
 import { BrailleSpinner } from './BrailleSpinner'
-import { formatToolPayload } from '../lib/toolSignature'
+import { formatToolPayload, isPathToolPreview, toolPreviewValue } from '../lib/toolSignature'
 
 // Native chat view — a 1:1 clone of the TUI `view::chat` render grammar
 // (src-agent/src/view/chat/*), with every box-drawing/unicode glyph swapped
@@ -76,6 +75,13 @@ function toolLooksFailed(output: string | null): boolean {
   const t = output.trim()
   return /^error:/i.test(t) || /exit code:\s*[1-9]\d*/.test(t)
 }
+
+function toolLooksBlocked(output: string | null): boolean {
+  if (output == null) return false
+  return /^\s*blocked by harness:/i.test(output)
+}
+
+const HARNESS_TOOLS = new Set(['write', 'edit', 'delete'])
 
 function toolArgString(args: string, key: string): string {
   try {
@@ -130,6 +136,7 @@ const ToolCallRow = memo(function ToolCallRow({ call }: { call: ToolCallView }) 
   const done = call.status === 'done'
   const req = useKoma((s) => s.req)
   const awaitingApproval = useKoma((s) => s.session.awaitingApproval)
+  const pendingCall = useKoma((s) => s.session.pendingCall)
   const pendingIsPlan = useKoma(
     (s) =>
       s.session.pendingCall?.name === 'plan_ready' ||
@@ -193,9 +200,12 @@ const ToolCallRow = memo(function ToolCallRow({ call }: { call: ToolCallView }) 
 
   const meta = toolBoxMeta(call.name)
   const payload = formatToolPayload(call.args)
+  const hint = toolPreviewValue(call.name, call.args)
+  const pathHint = isPathToolPreview(call.name)
   const output = call.output != null ? call.output.replace(/\s+$/, '') : ''
   const hasOutput = output.trim() !== ''
-  const failed = done && toolLooksFailed(call.output)
+  const blocked = done && toolLooksBlocked(call.output)
+  const failed = done && !blocked && toolLooksFailed(call.output)
 
   let imageUrl: string | null = null
   if (call.name === 'show_image' && done && hasOutput) {
@@ -241,7 +251,14 @@ const ToolCallRow = memo(function ToolCallRow({ call }: { call: ToolCallView }) 
     bashMatch != null &&
     bashMatch.status === 'running' &&
     bashMatch.blocking === true
-  const status = !settled ? 'running' : failed ? 'failed' : 'done'
+  const status = !settled ? 'running' : blocked ? 'blocked' : failed ? 'failed' : 'done'
+  const harnessWait =
+    !settled &&
+    (HARNESS_TOOLS.has(call.name) ||
+      (awaitingApproval &&
+        pendingCall != null &&
+        !pendingIsPlan &&
+        (pendingCall.id === call.id || pendingCall.name === call.name)))
 
   return (
     <div className="overflow-hidden rounded-md border border-koma-border bg-koma-panel/30">
@@ -249,7 +266,7 @@ const ToolCallRow = memo(function ToolCallRow({ call }: { call: ToolCallView }) 
         <button
           type="button"
           aria-expanded={open}
-          aria-label={`${call.name} ${status}`}
+          aria-label={`${call.name}${hint ? ` ${hint}` : ''} ${status}`}
           onClick={() => setOpen((v) => !v)}
           className="flex min-w-0 flex-1 items-center gap-2 text-left hover:opacity-90"
         >
@@ -261,7 +278,25 @@ const ToolCallRow = memo(function ToolCallRow({ call }: { call: ToolCallView }) 
             <Check size={12} className="flex-none text-koma-accent" />
           )}
           <meta.Icon size={12} className="flex-none text-koma-accent" />
-          <span className="min-w-0 flex-1 truncate font-medium text-koma-fg">{call.name}</span>
+          <span className="flex-none font-medium text-koma-fg">{call.name}</span>
+          {hint !== '' && (
+            pathHint ? (
+              <span
+                dir="rtl"
+                className="min-w-0 flex-1 overflow-hidden text-ellipsis whitespace-nowrap text-left font-mono text-[11.5px] font-normal text-koma-dim"
+                title={hint}
+              >
+                <bdi dir="ltr">{hint}</bdi>
+              </span>
+            ) : (
+              <span
+                className="min-w-0 flex-1 truncate font-mono text-[11.5px] font-normal text-koma-dim"
+                title={hint}
+              >
+                {hint}
+              </span>
+            )
+          )}
         </button>
         {canBackgroundTask && taskMatch?.id != null && (
           <button
@@ -297,8 +332,15 @@ const ToolCallRow = memo(function ToolCallRow({ call }: { call: ToolCallView }) 
           type="button"
           aria-label={open ? 'Collapse' : 'Expand'}
           onClick={() => setOpen((v) => !v)}
-          className="flex flex-none items-center text-koma-dim hover:text-koma-fg"
+          className="flex flex-none items-center gap-1 text-koma-dim hover:text-koma-fg"
         >
+          {harnessWait ? (
+            <span title="Waiting on harness">
+              <BrailleSpinner size={12} className="flex-none text-koma-warn" />
+            </span>
+          ) : blocked ? (
+            <AlertCircle size={12} className="flex-none text-koma-error" aria-label="Blocked by harness" />
+          ) : null}
           <ChevronDown
             size={12}
             className={`transition-transform ${open ? 'rotate-180' : ''}`}
@@ -515,10 +557,9 @@ function BashNudgeMessage({ content }: { content: string }) {
   )
 }
 
-// ---- ASSISTANT message: `●` bullet (transcript.rs `render_message_block`) →
-// a filled Circle in fg; reasoning above, markdown body (streaming-safe), then
-// tool calls with inline results. The body/tools sit in the column offset by
-// the bullet, matching the TUI's 2-space hang under `●`.
+// ---- ASSISTANT message: TUI `●` maps here to a full-height dotted rail in
+// fg (same color as the old filled Circle). Reasoning, markdown, then tool
+// calls hang in the column to its right — same 9px gutter as the bullet.
 const AssistantMessage = memo(function AssistantMessage({
   content,
   reasoning,
@@ -536,7 +577,10 @@ const AssistantMessage = memo(function AssistantMessage({
   const parts = diagramMessageParts(content).filter((part) => part.type === 'diagram' || part.text.trim() !== '')
   return (
     <div className="flex gap-2">
-      <Circle size={9} className="mt-[5px] flex-none fill-koma-fg text-koma-fg" />
+      <div
+        aria-hidden
+        className="w-[9px] flex-none self-stretch bg-[radial-gradient(circle,var(--color-koma-fg)_1.1px,transparent_1.25px)] bg-center bg-repeat-y opacity-60 [background-size:9px_5px]"
+      />
       <div className="relative min-w-0 flex-1">
         {hasReasoning && <ReasoningBlock text={reasoning as string} defaultOpen={streaming} />}
         {hasBody &&

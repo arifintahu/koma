@@ -236,10 +236,15 @@ pub(in crate::app::runtime::stream::tools) fn intercept_bash_output(
 
             if out.is_empty() {
                 format!("{line}\n(no output yet)")
-            } else if qualifies {
-                // Mirror `tool::shell::finalize_output`'s "saving" path
-                // (filter + tee) for a finished background job, same as
-                // synchronous bash/git_operator.
+            } else if tail_lines.is_some() || pattern.is_some() {
+                // An explicit view is the full buffer, not a delta.
+                match filter_bash_output(&out, tail_lines, pattern) {
+                    Ok(filtered) if filtered.is_empty() => format!("{line}\n(no matching lines)"),
+                    Ok(filtered) => format!("{line}\n{filtered}"),
+                    Err(e) => format!("{line}\n[{e}]"),
+                }
+            } else if qualifies && !job.has_delivered_output() {
+                // First look at a finished job: filter the whole buffer once.
                 let code = match finished_code {
                     Some(c) => c,
                     None => {
@@ -264,17 +269,25 @@ pub(in crate::app::runtime::stream::tools) fn intercept_bash_output(
                         }
                     }
                 }
+                job.mark_output_delivered();
                 body
             } else {
-                match filter_bash_output(&out, tail_lines, pattern) {
-                    Ok(filtered) if filtered.is_empty() => format!("{line}\n(no matching lines)"),
-                    Ok(filtered) => format!("{line}\n{filtered}"),
-                    Err(e) => format!("{line}\n[{e}]"),
+                let delta = job.take_new_output();
+                if delta.is_empty() {
+                    format!("{line}\n(no new output)")
+                } else {
+                    format!("{line}\n{delta}")
                 }
             }
         }
         None => format!("error: no such job: {job_id}"),
     };
+    let result = crate::tool::output::finish_tool_output(
+        &super::super::super::build_tool_ctx(state, sess_idx),
+        "bash_output",
+        &args,
+        result,
+    );
     state.rest.sessions[sess_idx]
         .tool_results
         .push((call.id.clone(), result));

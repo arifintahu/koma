@@ -196,6 +196,9 @@ pub fn open_disk_session(
     .is_none_or(|r| !r.is_usable());
     let sess_path = sess.path.clone();
     runtime.session = Some(sess);
+    if let Some(tx) = state.rest.version_tx.as_ref() {
+        crate::app::version::spawn_check(tx.clone());
+    }
 
     // Remember where to return if the (creds-less) KeyInput below is cancelled,
     // then APPEND + make foreground.

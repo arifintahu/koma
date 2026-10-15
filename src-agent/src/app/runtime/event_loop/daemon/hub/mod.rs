@@ -14,6 +14,7 @@ mod requests;
 mod requests_agents;
 mod requests_config;
 mod requests_ext;
+mod requests_menu;
 mod requests_oauth;
 mod requests_read;
 mod requests_run;

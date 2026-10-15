@@ -351,6 +351,7 @@ fn shape_inner(
             if computer_frames {
                 super::frame::retain_latest_computer_frame(&mut history);
             }
+            super::frame::retain_latest_browser_observation(&mut history);
             let body_tokens = history.iter().skip(1).map(message_tokens).sum::<u64>();
             anyhow::ensure!(fixed + body_tokens + minimum_reply <= window,
                 "DRSS archive unavailable ({error}); cannot safely reduce context. Conversation preserved.");
@@ -363,9 +364,15 @@ fn shape_inner(
     let body = &history[1..];
     // Computer-use sends one frame. Charges and the live tail use that reduced
     // copy. Fingerprints, protection, and the archive index still see `body`.
-    let wire_charges = computer_frames.then(|| {
+    let browser_frames = body.iter().any(super::frame::is_browser_observation);
+    let wire_charges = (computer_frames || browser_frames).then(|| {
         let mut copy = body.to_vec();
-        super::frame::retain_latest_computer_frame(&mut copy);
+        if computer_frames {
+            super::frame::retain_latest_computer_frame(&mut copy);
+        }
+        if browser_frames {
+            super::frame::retain_latest_browser_observation(&mut copy);
+        }
         copy
     });
     let charge = |start: usize, end: usize| -> u64 {
@@ -411,12 +418,19 @@ fn shape_inner(
     let rounds = rounds(body, &ids, &refs, index.boundary);
     let mut boundary = index.boundary;
     let mut keep: Vec<bool> = rounds.iter().map(|r| r.protected || !r.covered).collect();
+    // Computer frames and older browser shots are already reduced on this copy.
+    // Stubbing a fat tool body mutates only this copy; the transcript stays full.
+    let mut shaped_body = wire_charges.clone().unwrap_or_else(|| body.to_vec());
+    let shaped_charge = |body: &[ChatMessage], start: usize, end: usize| -> u64 {
+        (start..end).map(|i| message_tokens(&body[i])).sum()
+    };
     let mut tokens: u64 = rounds
         .iter()
         .zip(&keep)
         .filter(|(_, keep)| **keep)
-        .map(|(round, _)| charge(round.start, round.end))
+        .map(|(round, _)| shaped_charge(&shaped_body, round.start, round.end))
         .sum();
+    let mut stubbed_live = false;
     if tokens > ceiling {
         for (round, retained) in rounds.iter().zip(&mut keep) {
             if tokens <= target {
@@ -425,15 +439,40 @@ fn shape_inner(
             if round.protected || !*retained {
                 continue;
             }
+            let before = shaped_charge(&shaped_body, round.start, round.end);
+            // A normal 60% trim may cross the target by one ordinary round.
+            // Stub only when dropping this round would land far under it.
+            let undershoot = target.saturating_sub(tokens.saturating_sub(before));
+            if before >= 1600 && undershoot > 8_000 {
+                let snapshot: Vec<String> = (round.start..round.end)
+                    .map(|i| shaped_body[i].content.clone())
+                    .collect();
+                let mut stubbed = false;
+                for i in round.start..round.end {
+                    let prior = shaped_body[i].content.clone();
+                    stub(&mut shaped_body[i], refs[i].as_ref());
+                    stubbed |= shaped_body[i].content != prior;
+                }
+                let after = shaped_charge(&shaped_body, round.start, round.end);
+                if stubbed && tokens.saturating_sub(before) + after <= ceiling {
+                    tokens = tokens.saturating_sub(before) + after;
+                    stubbed_live = true;
+                    break;
+                }
+                for (offset, i) in (round.start..round.end).enumerate() {
+                    shaped_body[i].content = snapshot[offset].clone();
+                }
+            }
             *retained = false;
-            tokens = tokens.saturating_sub(charge(round.start, round.end));
+            tokens = tokens.saturating_sub(before);
             boundary = boundary.max(round.archived_end.unwrap_or(0));
         }
     }
     // Previously covered history still counts as active on later requests,
     // even when this pass does not advance the boundary. /clear moves start_id
     // past the old boundary, so an empty/new conversation does not inherit it.
-    let mut drss_active = boundary >= index.start_id || keep.iter().any(|retained| !retained);
+    let mut drss_active =
+        boundary >= index.start_id || keep.iter().any(|retained| !retained) || stubbed_live;
     let omitted: Vec<_> = rounds
         .iter()
         .zip(&keep)
@@ -448,7 +487,10 @@ fn shape_inner(
         .filter(|(_, keep)| **keep)
         .flat_map(|(round, _)| round.start..round.end)
         .collect();
-    let mut tail: Vec<_> = retained_indices.iter().map(|i| body[*i].clone()).collect();
+    let mut tail: Vec<_> = retained_indices
+        .iter()
+        .map(|i| shaped_body[*i].clone())
+        .collect();
     let recovery_omitted = if recovery { omitted.as_slice() } else { &[] };
     let memory_key = memory_key(&index, boundary, user, goal, b_budget, recovery_omitted)?;
     let cached_memory = index.cached_memory(&memory_key)?.filter(|text| {
@@ -471,11 +513,6 @@ fn shape_inner(
             },
         )?,
     };
-    if let Some(wire) = &wire_charges {
-        for (slot, index) in tail.iter_mut().zip(&retained_indices) {
-            *slot = wire[*index].clone();
-        }
-    }
     // Recovery borrows only real free room: A, B, schemas, framing, a useful D,
     // and the safety margin still fit W. The 300k operating cap never changes.
     let recovery_room = window.saturating_sub(fixed + message_tokens(&b) + minimum_reply);

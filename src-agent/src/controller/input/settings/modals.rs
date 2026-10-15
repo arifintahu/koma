@@ -43,6 +43,60 @@ pub(super) fn handle_model_form(
     use crate::app::mode::filter_models;
     use crate::app::mode::settings::ModelField;
 
+    if let Some(cursor) = s.model_provider_cursor {
+        let choices = s.mm_provider_choices();
+        match key.code {
+            KeyCode::Esc => s.model_provider_cursor = None,
+            KeyCode::Up => s.model_provider_cursor = Some(cursor.saturating_sub(1)),
+            KeyCode::Down => {
+                s.model_provider_cursor = Some((cursor + 1).min(choices.len().saturating_sub(1)))
+            }
+            KeyCode::Enter => {
+                if let Some(p) = choices.get(cursor) {
+                    crate::app::runtime::choose_model_provider(s, rest, p.index);
+                }
+            }
+            _ => {}
+        }
+        return Action::None;
+    }
+    if s.mm_current_field() == Some(ModelField::Provider) && key.code == KeyCode::Enter {
+        let selected = s.model_modal.as_ref().map_or(0, |m| m.provider_idx);
+        s.model_provider_cursor = Some(
+            s.mm_provider_choices()
+                .iter()
+                .position(|p| p.index == selected)
+                .unwrap_or(0),
+        );
+        return Action::None;
+    }
+    if matches!(
+        s.mm_current_field(),
+        Some(ModelField::Name | ModelField::Model)
+    ) && !s.model_editing
+    {
+        if key.code == KeyCode::Enter {
+            s.model_editing = true;
+            return Action::None;
+        }
+        if matches!(key.code, KeyCode::Char(_) | KeyCode::Backspace) {
+            return Action::None;
+        }
+    } else if s.model_editing
+        && matches!(
+            key.code,
+            KeyCode::Esc | KeyCode::Tab | KeyCode::Up | KeyCode::Down
+        )
+    {
+        // Results retain their intentional arrow navigation.
+        if key.code == KeyCode::Esc {
+            s.model_editing = false;
+            return Action::None;
+        }
+        if key.code == KeyCode::Tab || s.mm_current_field() != Some(ModelField::Model) {
+            s.model_editing = false;
+        }
+    }
     let omni = s.mm_provider_omnisearchable();
     let is_or = s.mm_provider_is_openrouter();
     let cur = s.mm_current_field();
@@ -52,7 +106,8 @@ pub(super) fn handle_model_form(
         .as_ref()
         .map(|(ep, _)| rest.models_cache_endpoint.as_deref() == Some(ep.as_str()))
         .unwrap_or(false);
-    let search_mode = cur == Some(ModelField::Model) && omni && !query.is_empty();
+    let search_mode =
+        s.model_editing && cur == Some(ModelField::Model) && omni && !query.is_empty();
 
     let mut modal_action = Action::None;
 
@@ -197,13 +252,17 @@ pub(super) fn handle_model_form(
                 s.mm_down();
             }
             KeyCode::Left => {
-                s.mm_left();
+                if cur != Some(ModelField::Provider) {
+                    s.mm_left();
+                }
                 if let Some((ep, key)) = s.mm_provider_conn() {
                     rest.request_catalogue(&ep, &key, &s.mm_provider_oauth_uuid());
                 }
             }
             KeyCode::Right => {
-                s.mm_right();
+                if cur != Some(ModelField::Provider) {
+                    s.mm_right();
+                }
                 if let Some((ep, key)) = s.mm_provider_conn() {
                     rest.request_catalogue(&ep, &key, &s.mm_provider_oauth_uuid());
                 }
@@ -245,12 +304,37 @@ pub(super) fn handle_model_form(
             _ => {}
         }
     }
+    if s.mm_current_field() != cur || key.code == KeyCode::Enter {
+        s.model_editing = false;
+    }
     modal_action
 }
 
 /// Handle a key on the ProviderForm page (provider modal open as a full page).
 /// Same logic as the old `handle_provider_modal` but Esc goes back to Providers.
-pub(super) fn handle_provider_form(s: &mut SettingsState, key: KeyEvent) -> Action {
+pub(super) fn handle_provider_form(
+    s: &mut SettingsState,
+    rest: &mut AppStateRest,
+    key: KeyEvent,
+) -> Action {
+    let field = s.prov_modal.as_ref().map_or(0, |m| m.field);
+    if field < 3 && key.code == KeyCode::Enter && !s.provider_editing {
+        s.provider_editing = true;
+        return Action::None;
+    }
+    if s.provider_editing && key.code == KeyCode::Esc {
+        s.provider_editing = false;
+        return Action::None;
+    }
+    if !s.provider_editing && matches!(key.code, KeyCode::Char(_) | KeyCode::Backspace) {
+        return Action::None;
+    }
+    if matches!(
+        key.code,
+        KeyCode::Enter | KeyCode::Tab | KeyCode::Up | KeyCode::Down
+    ) {
+        s.provider_editing = false;
+    }
     match key.code {
         KeyCode::Esc => {
             s.close_provider_modal();
@@ -271,8 +355,15 @@ pub(super) fn handle_provider_form(s: &mut SettingsState, key: KeyEvent) -> Acti
         KeyCode::Enter => {
             let field = s.prov_modal.as_ref().map(|m| m.field).unwrap_or(0);
             if field == 3 {
-                s.save_provider_modal();
-                s.page = SettingsPage::Providers;
+                match s.save_provider_modal() {
+                    Some(idx) => {
+                        s.jump_to_new_model(idx);
+                        if let Some((ep, key)) = s.mm_provider_conn() {
+                            rest.request_catalogue(&ep, &key, &s.mm_provider_oauth_uuid());
+                        }
+                    }
+                    None => s.page = SettingsPage::Providers,
+                }
             } else if field == 4 {
                 s.close_provider_modal();
                 s.page = SettingsPage::Providers;

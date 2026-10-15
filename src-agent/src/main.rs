@@ -9,10 +9,10 @@
 //!
 //! | Invocation | Action |
 //! |---|---|
-//! | `koma` (no args) | **default** — ensure a daemon is running (spawn a detached daemon if none is up), then attach as a thin client. NO fallback to local. |
-//! | `koma agents` | open the session hub (alias for `--resume`). |
-//! | `koma --resume` | open the session hub. |
-//! | `koma alone` | standalone no-daemon TUI ([`app::run`]); REFUSES if a daemon is already alive. The escape hatch (alias for `--local`). |
+//! | `koma` (no args) | new terminal, a fresh session. The client starts that session's daemon. |
+//! | `koma legacy` | **current terminal** — ensure a daemon is running, then attach the ratatui client. NO fallback to local. |
+//! | `koma legacy agents` / `koma legacy --resume` | current session hub. |
+//! | `koma legacy alone` | current standalone no-daemon TUI ([`app::run`]); REFUSES if a daemon is already alive. |
 //! | `koma daemon <status\|kill\|restart\|clean\|delete>` | daemon management CLI then exit. |
 //! | `koma ext install --dev <zip\|dir>` | sideload an unsigned local extension (offline, no koma.run account) then exit. |
 //! | `koma doctor [-v\|--verbose]` | flutter-doctor-style readiness report, then exit. Read-only. |
@@ -61,7 +61,40 @@ mod service;
 mod tool;
 mod view;
 
+/// Interactive ratatui client. Without `legacy`, this is the new-terminal preview.
+fn open_client(opts: cli::Opts) -> anyhow::Result<()> {
+    if opts.legacy_tui {
+        app::client_run(opts)
+    } else if let Some(target) = opts.remote_target.clone() {
+        app::run_term_preview(app::TermStart::Remote {
+            target,
+            key: opts.remote_key.clone(),
+            port: opts.remote_port,
+            session: opts.session.clone(),
+        })
+    } else if opts.resume {
+        app::run_term_preview(app::TermStart::Hub)
+    } else {
+        app::run_term_preview(app::TermStart::Session(opts.session.clone()))
+    }
+}
+
+/// Standalone ratatui session (`koma legacy alone`, the remote host picker).
+fn open_standalone(opts: cli::Opts) -> anyhow::Result<()> {
+    if opts.legacy_tui {
+        app::run(opts)
+    } else {
+        app::run_term_preview(app::TermStart::Hub)
+    }
+}
+
 fn main() -> anyhow::Result<()> {
+    if std::env::args().nth(1).as_deref() == Some("remote-usage") {
+        return model::usage::reader::run();
+    }
+    if std::env::args().nth(1).as_deref() == Some("term-remote") {
+        return app::run_term_remote();
+    }
     #[cfg(windows)]
     if std::env::args().nth(1).as_deref() == Some("coding-pty-gate") {
         return coding::pty_gate_main();
@@ -356,12 +389,12 @@ fn main() -> anyhow::Result<()> {
 
     // --- remote development: saved-host picker or direct target ---
     if opts.remote_picker {
-        return app::run(opts);
+        return open_standalone(opts);
     }
     if opts.remote_target.is_some() {
         let mut opts = opts;
         opts.remote_entry = true;
-        return app::client_run(opts);
+        return open_client(opts);
     }
     // Speaks the IPC protocol over stdin/stdout instead of a unix socket.
     // Checked BEFORE `--daemon` since `server` is a distinct mode.
@@ -377,9 +410,7 @@ fn main() -> anyhow::Result<()> {
         return app::run_remote_git(opts);
     }
     if opts.remote_usage {
-        anyhow::bail!(
-            "usage history is served via the session daemon when attached; no remote-usage process"
-        );
+        return model::usage::reader::run();
     }
     #[cfg(feature = "linker")]
     if opts.remote_linker {
@@ -402,7 +433,7 @@ fn main() -> anyhow::Result<()> {
     // (or a missing `--session`) surfaces as an error (the operator asked to attach to one
     // that should already exist).
     if opts.attach {
-        return app::client_run(opts);
+        return open_client(opts);
     }
 
     // --- escape hatch: force the OLD standalone local TUI (`--local`) ---
@@ -413,9 +444,12 @@ fn main() -> anyhow::Result<()> {
     // corrupts the locks. Direct the user to attach (plain `koma`) or kill the daemon
     // first, and exit non-zero. With no daemon up, run the standalone TUI normally.
     if opts.local {
+        if !opts.legacy_tui {
+            return app::run_term_preview(app::TermStart::Hub);
+        }
         if app::any_daemon_alive() {
             eprintln!(
-                "error: a koma daemon is running; use `koma` to attach to it, \
+                "error: a koma daemon is running; use `koma legacy` to attach to it, \
                  or `koma daemon kill` first (refusing to run a standalone local TUI \
                  against a live daemon — it would corrupt the session locks)"
             );
@@ -454,13 +488,19 @@ fn main() -> anyhow::Result<()> {
     // ensure+attach the chosen session's daemon (minting a fresh id only for `[+ new
     // session]`). So a `--resume` launch never creates a stray empty session-daemon.
     if opts.resume {
-        return app::client_run(opts);
+        return open_client(opts);
+    }
+
+    // Bare `koma` is the new terminal. `koma legacy` keeps the spawn-or-attach
+    // ratatui client below, including minting a session daemon.
+    if !opts.legacy_tui {
+        return app::run_term_preview(app::TermStart::Session(None));
     }
 
     let mut opts = opts;
     let session_id = uuid::Uuid::new_v4().to_string();
     if let Err(e) = app::ensure_daemon_running(&session_id, false, None) {
-        eprintln!("error: could not start the koma daemon: {e:#} — try `koma --local`");
+        eprintln!("error: could not start the koma daemon: {e:#} — try `koma legacy alone`");
         std::process::exit(1);
     }
     // Hand the minted id to the client so it connects to THIS session's keyed socket.

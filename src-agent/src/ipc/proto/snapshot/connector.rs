@@ -90,6 +90,8 @@ pub struct OAuthDraftSnapshot {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
 #[allow(dead_code)]
 pub struct OAuthFlowSnapshot {
+    #[serde(default)]
+    pub options: Vec<String>,
     /// `"idle"` | `"starting"` | `"pick"` | `"codex_wait"` | `"codex_paste"` |
     /// `"kilo_wait"` | `"failed"`.
     pub kind: String,

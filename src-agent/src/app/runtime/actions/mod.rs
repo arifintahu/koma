@@ -48,6 +48,7 @@ mod rewind;
 mod config_reload;
 pub(in crate::app::runtime) mod session;
 mod settings;
+pub(crate) use settings::{choose_model_provider, commit_settings};
 mod store;
 
 // Re-export the pwd-explicit fresh-session creator. Daemon-per-session no longer creates
@@ -270,6 +271,15 @@ pub(in crate::app::runtime) fn apply_action(
             model_cmd::handle_model_agent_swap(agent_name, model_uuid, state)?;
         }
 
+        Action::ModelOpenRolePick { role } => {
+            super::commands::model_cmd::open_role_pick(role, state);
+            if let crate::app::mode::Mode::Model(m) = state.mode_mut() {
+                m.from_roles = true;
+            }
+        }
+        Action::ModelBackToRoles => {
+            super::commands::model_cmd::open_roles(state);
+        }
         Action::ModelCancel => {
             *state.mode_mut() = crate::app::mode::Mode::Chat;
         }
@@ -280,6 +290,10 @@ pub(in crate::app::runtime) fn apply_action(
 
         Action::ModelOpenAgentPick { agent_name } => {
             model_cmd::handle_model_open_agent_pick(agent_name, state);
+        }
+
+        Action::ModelOpenSettings(page) => {
+            super::commands::open_settings(state, page)?;
         }
 
         Action::CreateAgent => {
@@ -533,7 +547,8 @@ pub(in crate::app::runtime) fn apply_action(
                 }
                 {
                     let fg = state.rest.fg_mut();
-                    fg.input = text;
+                    fg.input = text.text;
+                    fg.pending_attachments.extend(text.attachments);
                     fg.hist_idx = None;
                     fg.input_stash.clear();
                 }

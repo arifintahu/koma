@@ -293,6 +293,21 @@ pub(crate) fn ensure_koma_compatible(
     )
 }
 
+/// Headless progress variant used by the terminal transport helper.
+pub(crate) fn ensure_koma_compatible_progress(
+    target: &RemoteTarget,
+    auth: Option<&SshAuth>,
+    progress: impl FnMut(BootstrapStage),
+) -> Result<bool> {
+    ensure_compatible_with(
+        env!("CARGO_PKG_VERSION"),
+        || query_remote_version(target, auth),
+        || install_koma(target, auth),
+        progress,
+        |_| Ok(true),
+    )
+}
+
 /// Same as [`ensure_koma_compatible`], but spins a braille timeline on `terminal`
 /// and prompts **update remote? [y/n]** when the remote version differs.
 pub(crate) fn ensure_koma_compatible_animated(

@@ -46,11 +46,13 @@ pub const COMMANDS: &[(&str, &str)] = &[
         "/task",
         "Run an agent on a task, or open the sub-agents viewer (no args)",
     ),
-    ("/model", "Switch session / agent model  (/model for help)"),
+    (
+        "/model",
+        "Choose a role and switch its model (/model help for docs)",
+    ),
     ("/bash", "Manage bash jobs (FG + background)"),
     ("/todo", "View the session task list"),
     ("/skill", "Load or unload agent skills"),
-    ("/attach", "Attach a .screenshoot/*.png to the next message"),
     ("/cd", "Change the session working directory"),
     ("/adddir", "Add a directory to the workspace roots"),
     ("/compact", "Summarize and compact the conversation"),
@@ -93,10 +95,6 @@ pub const KEYBINDINGS: &[(&str, &str)] = &[
     ("Esc", "interrupt while busy (kills still-blocking FG bash)"),
     ("Esc Esc", "edit a previous message (rewind)"),
     ("Up/Down/wheel", "scroll the transcript"),
-    (
-        "$",
-        "open the sub-agents panel — Ctrl+B backgrounds, Ctrl+X kills",
-    ),
 ];
 
 /// True while the user is still typing a command NAME: input starts with `/`
@@ -214,7 +212,8 @@ pub enum Command {
     /// Open the `/skill` hub overlay. Inner string is the raw remainder after
     /// `/skill` — pre-seeds the hub's search query if non-empty.
     Skill(String),
-    /// Attach a `.screenshoot/*.png` to the next message.
+    /// Hidden. Pulls a `.screenshoot/*.png` the agent already captured.
+    /// Not listed in `/help` or the slash palette. People paste images instead.
     /// Inner string is the raw path argument after `/attach`.
     Attach(String),
     /// An unrecognised command verb; holds the raw verb for display.

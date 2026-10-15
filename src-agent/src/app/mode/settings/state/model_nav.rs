@@ -232,6 +232,53 @@ impl SettingsState {
         idx < self.providers.len() && self.providers[idx].api_type == ApiType::KomaFree
     }
 
+    pub fn mm_provider_choices(
+        &self,
+    ) -> Vec<crate::ipc::proto::snapshot::settings::ModelProviderChoice> {
+        use crate::ipc::proto::snapshot::settings::ModelProviderChoice;
+        self.providers
+            .iter()
+            .enumerate()
+            .filter(|(i, _)| !self.is_koma_free_at(*i))
+            .map(|(index, p)| ModelProviderChoice {
+                index,
+                id: p.uuid.clone(),
+                label: p.name.clone(),
+            })
+            .chain(
+                self.oauth_drafts
+                    .iter()
+                    .enumerate()
+                    .map(|(i, p)| ModelProviderChoice {
+                        index: self.providers.len() + i,
+                        id: p.uuid.clone(),
+                        label: p.label.clone(),
+                    }),
+            )
+            .collect()
+    }
+
+    /// Shared binding mutation for direct chooser selection and legacy cycling.
+    pub fn mm_choose_provider(&mut self, index: usize) {
+        if !self.mm_provider_choices().iter().any(|p| p.index == index) {
+            return;
+        }
+        if let Some(m) = self.model_modal.as_mut() {
+            if m.provider_idx != index {
+                m.provider_idx = index;
+                m.query.clear();
+                m.result_sel = 0;
+                m.route = None;
+                m.route_sel = 0;
+                m.endpoints = None;
+                m.endpoints_for = None;
+                m.endpoints_loading = false;
+            }
+        }
+        self.model_provider_cursor = None;
+        self.mm_clamp_field();
+    }
+
     /// Move left in the model modal, dispatching on the focused field:
     /// - Provider → cycle provider backward (wrapping, resets search), skipping
     ///   any koma-free provider slot (nav-only — see [`Self::is_koma_free_at`]),
@@ -264,11 +311,7 @@ impl SettingsState {
                         }
                         idx = (idx + n - 1) % n;
                     }
-                    if let Some(m) = self.model_modal.as_mut() {
-                        m.provider_idx = idx;
-                        m.query.clear();
-                        m.result_sel = 0;
-                    }
+                    self.mm_choose_provider(idx);
                 }
                 self.mm_clamp_field();
             }
@@ -312,11 +355,7 @@ impl SettingsState {
                         }
                         idx = (idx + 1) % n;
                     }
-                    if let Some(m) = self.model_modal.as_mut() {
-                        m.provider_idx = idx;
-                        m.query.clear();
-                        m.result_sel = 0;
-                    }
+                    self.mm_choose_provider(idx);
                 }
                 self.mm_clamp_field();
             }

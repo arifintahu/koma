@@ -218,6 +218,12 @@ pub(super) fn drain_oauth(state: &mut AppState, handle: &tokio::runtime::Handle)
                         None => {
                             st.oauth_drafts = drafts.clone();
                             st.oauth_flow = OAuthFlowState::Idle;
+                            if let Some(at) =
+                                st.oauth_drafts.iter().position(|d| d.uuid == conn_uuid)
+                            {
+                                st.oauth_sel = at;
+                                st.jump_to_new_model(st.providers.len() + at);
+                            }
                         }
                     }
                 }

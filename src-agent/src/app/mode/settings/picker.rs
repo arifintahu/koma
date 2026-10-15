@@ -94,50 +94,174 @@ fn last_sep(raw: &str) -> Option<usize> {
 ///
 /// Resolution:
 /// - A leading `@` is stripped.
-/// - If the (stripped) query begins with `/` it is ABSOLUTE; otherwise it is
-///   resolved relative to `cwd`.
-/// - The query is split into `(parent, prefix)` at the last `/`. A query ending
-///   in `/` means "list everything in this directory" (prefix = "").
+/// - `~` and `~/…` (or `~\…`) are the home directory. `./…` (or `.\…`) is `cwd`.
+///   Other queries that begin with `/` (or a Windows drive / UNC prefix) are
+///   absolute. Anything else is relative to `cwd`.
+/// - The query is split into `(parent, prefix)` at the last separator. A query
+///   ending in `/` means "list everything in this directory" (prefix = "").
 /// - `parent` is read with `std::fs::read_dir`; only sub-DIRECTORIES whose file
 ///   name starts with `prefix` (case-insensitive) are kept. Hidden dirs (leading
 ///   `.`) are skipped UNLESS the prefix itself starts with `.`.
-/// - Each kept directory is rendered back in the user's form (absolute → an
-///   absolute path string, relative → a relative string) WITHOUT a trailing
-///   slash, sorted, then capped at `limit`.
+/// - Each kept directory is rendered back in the user's form (`~/`, `./`,
+///   absolute, or relative) WITHOUT a trailing slash, sorted, then capped at
+///   `limit`. Tab descend writes that form back into the query, so the next Tab
+///   enters the next directory in the same spelling.
 ///
-/// Any IO error (unreadable parent, etc.) yields an empty vec — the picker just
-/// shows nothing rather than failing.
+/// Any IO error (unreadable parent, missing home, etc.) yields an empty vec —
+/// the picker just shows nothing rather than failing.
 pub fn list_dirs(query: &str, cwd: &Path, limit: usize) -> Vec<String> {
-    // Strip an optional leading '@'; the rest is the path the user is typing.
+    list_dirs_in(query, cwd, dirs::home_dir().as_deref(), limit)
+}
+
+fn list_dirs_in(query: &str, cwd: &Path, home: Option<&Path>, limit: usize) -> Vec<String> {
     let raw = query.strip_prefix('@').unwrap_or(query);
+    let (display_dir, prefix, parent) = plan_listing(raw, cwd, home);
+    collect_dirs(&display_dir, prefix, &parent, limit)
+}
+
+/// Turn a confirmed picker row into a filesystem path. `~/…` and `./…` stay in
+/// that form while browsing; the saved workspace or allowed-dir entry is the
+/// absolute directory.
+pub(crate) fn materialize_picker_path(chosen: &str, cwd: &Path) -> String {
+    materialize_in(chosen, cwd, dirs::home_dir().as_deref())
+}
+
+fn materialize_in(chosen: &str, cwd: &Path, home: Option<&Path>) -> String {
+    let raw = trim_picker_text(chosen);
+    if raw.is_empty() {
+        return String::new();
+    }
+    let path = filesystem_path(raw, cwd, home);
+    path.canonicalize().unwrap_or(path).display().to_string()
+}
+
+fn trim_picker_text(chosen: &str) -> &str {
+    let raw = chosen.strip_prefix('@').unwrap_or(chosen).trim();
+    if raw == "/" || raw == "\\" {
+        return raw;
+    }
+    let bytes = raw.as_bytes();
+    if bytes.len() == 3 && bytes[1] == b':' && (bytes[2] == b'/' || bytes[2] == b'\\') {
+        return raw;
+    }
+    let trimmed = raw.trim_end_matches(['/', '\\']);
+    if trimmed.is_empty() {
+        raw
+    } else {
+        trimmed
+    }
+}
+
+fn filesystem_path(raw: &str, cwd: &Path, home: Option<&Path>) -> PathBuf {
+    if let Some(home) = home {
+        if raw == "~" {
+            return home.to_path_buf();
+        }
+        if let Some(rest) = raw.strip_prefix("~/").or_else(|| raw.strip_prefix("~\\")) {
+            return home.join(rest);
+        }
+    }
+    if raw == "." {
+        return cwd.to_path_buf();
+    }
+    if let Some(rest) = raw.strip_prefix("./").or_else(|| raw.strip_prefix(".\\")) {
+        return if rest.is_empty() {
+            cwd.to_path_buf()
+        } else {
+            cwd.join(rest)
+        };
+    }
+    if is_abs_path(raw) {
+        PathBuf::from(raw)
+    } else {
+        cwd.join(raw)
+    }
+}
+
+/// `(display directory including its trailing separator, in-progress name, fs parent)`.
+fn plan_listing<'a>(raw: &'a str, cwd: &Path, home: Option<&Path>) -> (String, &'a str, PathBuf) {
+    if let Some(planned) = tilde_listing(raw, home) {
+        return planned;
+    }
+    if let Some(planned) = dot_listing(raw, cwd) {
+        return planned;
+    }
     let is_abs = is_abs_path(raw);
-
-    // Split into the directory part and the in-progress final segment (prefix).
-    // A trailing '/' means the whole thing is the parent and the prefix is empty.
-    let (dir_part, prefix) = match last_sep(raw) {
-        Some(i) => (&raw[..=i], &raw[i + 1..]), // keep the slash on dir_part
-        None => ("", raw),                      // no slash: parent is cwd-relative root
-    };
-
-    // Resolve the parent directory on the real filesystem.
-    let parent: PathBuf = if is_abs {
-        // dir_part always starts with '/' here (raw starts with '/').
+    let (dir_part, prefix) = split_dir_prefix(raw);
+    let parent = if is_abs {
         PathBuf::from(dir_part)
     } else if dir_part.is_empty() {
         cwd.to_path_buf()
     } else {
         cwd.join(dir_part)
     };
+    (dir_part.to_string(), prefix, parent)
+}
 
-    let entries = match std::fs::read_dir(&parent) {
+/// `~`, `~/rest`, and `~\rest`. A `~user` name is not expanded.
+fn tilde_listing<'a>(raw: &'a str, home: Option<&Path>) -> Option<(String, &'a str, PathBuf)> {
+    let home = home?;
+    let (sep, rest) = if raw == "~" {
+        ('/', "")
+    } else if let Some(rest) = raw.strip_prefix("~/") {
+        ('/', rest)
+    } else {
+        let rest = raw.strip_prefix("~\\")?;
+        ('\\', rest)
+    };
+    let (dir, prefix) = split_dir_prefix(rest);
+    let display = if dir.is_empty() {
+        format!("~{sep}")
+    } else {
+        format!("~{sep}{dir}")
+    };
+    let parent = if dir.is_empty() {
+        home.to_path_buf()
+    } else {
+        home.join(dir)
+    };
+    Some((display, prefix, parent))
+}
+
+/// `./rest` and `.\rest`. A bare `.` stays a relative prefix, not "this directory".
+fn dot_listing<'a>(raw: &'a str, cwd: &Path) -> Option<(String, &'a str, PathBuf)> {
+    let (sep, rest) = if let Some(rest) = raw.strip_prefix("./") {
+        ('/', rest)
+    } else {
+        let rest = raw.strip_prefix(".\\")?;
+        ('\\', rest)
+    };
+    let (dir, prefix) = split_dir_prefix(rest);
+    let display = if dir.is_empty() {
+        format!(".{sep}")
+    } else {
+        format!(".{sep}{dir}")
+    };
+    let parent = if dir.is_empty() {
+        cwd.to_path_buf()
+    } else {
+        cwd.join(dir)
+    };
+    Some((display, prefix, parent))
+}
+
+fn split_dir_prefix(rest: &str) -> (&str, &str) {
+    match last_sep(rest) {
+        Some(i) => (&rest[..=i], &rest[i + 1..]),
+        None => ("", rest),
+    }
+}
+
+fn collect_dirs(display_dir: &str, prefix: &str, parent: &Path, limit: usize) -> Vec<String> {
+    if limit == 0 {
+        return Vec::new();
+    }
+    let entries = match std::fs::read_dir(parent) {
         Ok(e) => e,
         Err(_) => return Vec::new(),
     };
-
     let prefix_lower = prefix.to_lowercase();
-    // Honour hidden dirs only when the user is explicitly typing a dotted prefix.
     let want_hidden = prefix.starts_with('.');
-
     let mut out: Vec<String> = Vec::new();
     for entry in entries.flatten() {
         let path = entry.path();
@@ -154,9 +278,8 @@ pub fn list_dirs(query: &str, cwd: &Path, limit: usize) -> Vec<String> {
         if !name.to_lowercase().starts_with(&prefix_lower) {
             continue;
         }
-        out.push(format!("{dir_part}{name}"));
+        out.push(format!("{display_dir}{name}"));
     }
-
     out.sort();
     out.truncate(limit);
     out

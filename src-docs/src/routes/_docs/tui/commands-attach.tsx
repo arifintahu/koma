@@ -7,7 +7,7 @@ export const Route = createFileRoute('/_docs/tui/commands-attach')({
       name="/attach"
       description="Attach a screenshot image to the next message."
       details={
-        <p>Usage: <code className="text-koma-fg">/attach {'<path>'}</code> or <code className="text-koma-fg">/attach</code> (clipboard). Attaches a PNG image from the screenshots directory (or clipboard) to your next chat message. Useful for showing the agent a visual bug or UI state.</p>
+        <p>Not a user command, and not listed in <code className="text-koma-fg">/help</code>. It only pulls a PNG the agent already saved under <code className="text-koma-fg">.screenshoot/</code>. Paste an image with Ctrl+V.</p>
       }
     />
   ),

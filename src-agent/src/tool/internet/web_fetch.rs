@@ -37,8 +37,9 @@ impl Tool for WebFetch {
     }
 
     fn description(&self) -> &'static str {
-        "Fetch a web page by URL and return its main readable content as markdown. \
-        Use when you already have a specific URL to read."
+        "Fetch one specific URL and return its main content as markdown. \
+        A full page is large — do not fetch a set of pages into this turn. \
+        Use web_search to choose the URL first."
     }
 
     fn parameters(&self) -> Value {

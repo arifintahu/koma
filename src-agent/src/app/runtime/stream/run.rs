@@ -28,6 +28,20 @@ pub(crate) const SDLC_LIFECYCLE_TOOLS: &[&str] = &[
     "mission_integrate",
 ];
 
+/// Drop desktop and on-screen browser tools unless that surface is on.
+pub(crate) fn hide_inactive_runtime_tools(
+    names: &mut Vec<String>,
+    computer_on: bool,
+    browser_on: bool,
+) {
+    if !computer_on {
+        names.retain(|name| !name.starts_with("computer_"));
+    }
+    if !browser_on {
+        names.retain(|name| !name.starts_with("screen_browser_"));
+    }
+}
+
 /// Pure, stateless function that returns the mode/phase-specific lifecycle
 /// tool names to *append* to the advertised tool list. The base list is
 /// `main_tool_names()` (+ MCP/security); this function decides which
@@ -387,7 +401,10 @@ over sec_remote (stateful socket).\n",
         state.rest.sessions[sess_idx].session.as_mut().map(|sess| {
             let user = sess.conversation.last_user_content().unwrap_or_default();
             let mission = load_mission_snap(&sess.path);
-            let refresh = refresh_goal_state(&mut sess.settings, Some(&user), mission.as_ref());
+            // Stall and desktop nudges are synthetic user turns. Seeding the
+            // charter from one of them stores the reminder as the session objective.
+            let goal_user = (!super::turn::is_goal_inert_user_text(&user)).then_some(user.as_str());
+            let refresh = refresh_goal_state(&mut sess.settings, goal_user, mission.as_ref());
             if refresh.settings_changed {
                 let _ = sess.save();
             }
@@ -596,13 +613,13 @@ over sec_remote (stateful socket).\n",
     // The same gate sends only the latest computer frame.
     let computer_frames = {
         let computer = &state.rest.sessions[sess_idx].computer;
-        let active =
-            computer.status.enabled && (computer.owner.is_some() || computer.detached_at.is_some());
-        if !active {
-            advertise.retain(|name| !name.starts_with("computer_"));
-        }
-        active
+        computer.status.enabled && (computer.owner.is_some() || computer.detached_at.is_some())
     };
+    hide_inactive_runtime_tools(
+        &mut advertise,
+        computer_frames,
+        state.rest.sessions[sess_idx].screen_browser.status.enabled,
+    );
     // Security daemon tools for the MAIN agent. Gated on BOTH the runtime enable
     // flag (`security_enabled`) AND having a manager, AND NOT being in Plan mode
     // (Plan is read-only; the sec_ toolkit is offensive/mutating by nature, so it
@@ -877,3 +894,24 @@ mod skill_tail_tests;
 #[cfg(test)]
 #[path = "run_lifecycle_tool_matrix_tests.rs"]
 mod lifecycle_tool_matrix_tests;
+
+#[cfg(test)]
+mod hide_runtime_tools_tests {
+    use super::hide_inactive_runtime_tools;
+
+    #[test]
+    fn disabled_browser_drops_screen_browser_tools() {
+        let mut names = vec![
+            "read".into(),
+            "computer_observe".into(),
+            "screen_browser_observe".into(),
+            "screen_browser_act".into(),
+        ];
+        hide_inactive_runtime_tools(&mut names, false, false);
+        assert_eq!(names, vec!["read".to_string()]);
+        names.push("screen_browser_read".into());
+        hide_inactive_runtime_tools(&mut names, false, true);
+        assert!(names.iter().any(|n| n.starts_with("screen_browser_")));
+        assert!(names.iter().all(|n| !n.starts_with("computer_")));
+    }
+}

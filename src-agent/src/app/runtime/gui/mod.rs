@@ -34,12 +34,83 @@ pub(crate) fn allow_webview_navigation(url: &str) -> bool {
 /// WebKitGTK can SIGSEGV in `WebLoaderStrategy::preconnectTo` (custom `koma://`
 /// schemes and some HTTPS early-hints / `<link rel=preconnect>`). Turning off
 /// DNS prefetch keeps the network process off that path. Best-effort.
+///
+/// Also force the hardware-acceleration policy to never, and turn off View
+/// Transitions. WebKitGTK 2.52 still enters accelerated compositing with the
+/// policy set to never, then SIGSEGVs in `AcceleratedBackingStore::update`
+/// (null `this`, fault offset 0x48) the first time a page calls
+/// `document.startViewTransition()`. n8n Execute does that after its run HTTP
+/// returns and the editor swaps in the result. The rust bindings do not wrap
+/// `webkit_settings_set_feature_enabled`; call it directly.
 #[cfg(target_os = "linux")]
 pub(crate) fn linux_disable_webkit_prefetch(webview: &wry::WebView) {
-    use webkit2gtk::{SettingsExt, WebViewExt};
+    use webkit2gtk::glib::translate::ToGlibPtr;
+    use webkit2gtk::{HardwareAccelerationPolicy, SettingsExt, WebViewExt};
     use wry::WebViewExtUnix;
     if let Some(settings) = webview.webview().settings() {
         settings.set_enable_dns_prefetching(false);
+        settings.set_hardware_acceleration_policy(HardwareAccelerationPolicy::Never);
+        linux_disable_crash_features(settings.to_glib_none().0);
+    }
+}
+
+/// View Transitions are the confirmed null-backing-store trigger (WebKit 321683).
+/// Disabling accelerated compositing here freezes scroll on a display with no
+/// DRI3, so only the transition features are turned off.
+#[cfg(target_os = "linux")]
+fn linux_disable_crash_features(settings: *mut webkit2gtk::ffi::WebKitSettings) {
+    use std::ffi::{c_char, c_void, CStr};
+    extern "C" {
+        fn webkit_settings_get_all_features() -> *mut c_void;
+        fn webkit_feature_list_get_length(list: *mut c_void) -> usize;
+        fn webkit_feature_list_get(list: *mut c_void, index: usize) -> *mut c_void;
+        fn webkit_feature_get_identifier(feature: *mut c_void) -> *const c_char;
+        fn webkit_settings_set_feature_enabled(
+            settings: *mut webkit2gtk::ffi::WebKitSettings,
+            feature: *mut c_void,
+            enabled: i32,
+        );
+    }
+    // Safety: settings is the live WebKitSettings from this webview. The feature
+    // list and each feature pointer are owned by WebKit for the process lifetime
+    // (transfer-none). Identifiers are NUL-terminated C strings.
+    unsafe {
+        if settings.is_null() {
+            return;
+        }
+        let list = webkit_settings_get_all_features();
+        if list.is_null() {
+            return;
+        }
+        let n = webkit_feature_list_get_length(list);
+        for i in 0..n {
+            let feature = webkit_feature_list_get(list, i);
+            if feature.is_null() {
+                continue;
+            }
+            let id = webkit_feature_get_identifier(feature);
+            if id.is_null() {
+                continue;
+            }
+            let id = CStr::from_ptr(id);
+            if id == c"ViewTransitions" || id == c"CrossDocumentViewTransitions" {
+                webkit_settings_set_feature_enabled(settings, feature, 0);
+            }
+        }
+    }
+}
+
+/// WebKitGTK rasterizes overflowing scroll layers on a different path. On this
+/// TurboVNC display those tiles never repaint, so the wheel does nothing.
+/// `WEBKIT_DISABLE_COMPOSITING_MODE=1` is the path that scrolls. It SIGSEGVs in
+/// `AcceleratedBackingStore::update` only if a page then calls
+/// `document.startViewTransition()` while that feature is still on (WebKit
+/// 324730). View Transitions are disabled before the page runs, so this stays
+/// on for every Linux display, including ones with no DRI3.
+#[cfg(target_os = "linux")]
+fn linux_software_egl_if_no_dri3() {
+    if std::env::var_os("WEBKIT_DISABLE_COMPOSITING_MODE").is_none() {
+        std::env::set_var("WEBKIT_DISABLE_COMPOSITING_MODE", "1");
     }
 }
 
@@ -64,11 +135,11 @@ fn apply_dock_icon() {
 // compiling unchanged. `dispatch_git`/`dispatch_forward` are `dispatch`'s own
 // split-out git/key routing + generic forwarding helpers (file size).
 mod computer_viewer;
-mod screen_browser_window;
 mod dispatch;
 mod dispatch_forward;
 mod dispatch_git;
 mod proto;
+mod screen_browser_window;
 mod usage_bar;
 use proto::{ClientMsg, UserEvent, WinCmd};
 
@@ -354,18 +425,11 @@ pub fn run_gui(opts: crate::cli::Opts) -> Result<()> {
         }
     }
 
-    // WebKitGTK rasterizes text inside GPU-composited scroll layers through a
-    // different (stem-darkened) path — any overflowing container renders its text
-    // visibly BOLDER than the rest of the app, and the cached layer tile never
-    // repaints (live-confirmed on Linux: scrollbar appears → text bolds; fixed by
-    // this env). Disabling accelerated compositing removes layer promotion
-    // entirely, so all text shares one raster path; for a chat UI the GPU loss is
-    // imperceptible and on old Mesa stacks it is the more stable path anyway.
-    // Must be set BEFORE any gtk/webkit init; respect an explicit user override.
+    // Compositing-off is set before GTK/WebKit init. On a display with no DRI3
+    // it is what makes scroll layers repaint; View Transitions are disabled so
+    // that same setting does not SIGSEGV on `document.startViewTransition()`.
     #[cfg(target_os = "linux")]
-    if std::env::var_os("WEBKIT_DISABLE_COMPOSITING_MODE").is_none() {
-        std::env::set_var("WEBKIT_DISABLE_COMPOSITING_MODE", "1");
-    }
+    linux_software_egl_if_no_dri3();
 
     // --- 1. Event loop + window (frameless, transparent) -----------------------
     // The app-list entry is installed later, off this thread. Doing it here
@@ -676,8 +740,8 @@ pub fn run_gui(opts: crate::cli::Opts) -> Result<()> {
     let mut screen_browser_palette = serde_json::Value::Null;
     // Primary session workdir — keys the per-PWD browser profile (cookies/storage).
     // Updated from SettingsValues; falls back to process cwd until the first push.
-    let mut screen_browser_workdir = std::env::current_dir()
-        .unwrap_or_else(|_| std::path::PathBuf::from("."));
+    let mut screen_browser_workdir =
+        std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
     // Taken on the first loop turn. The install must not run before `run`,
     // and it must not stay on this thread: a folder dialog here is the only
     // thing the user sees.
@@ -1303,7 +1367,9 @@ mod navigation_tests {
             "koma://localhost/index.html#computer-preview"
         ));
         assert!(allow_webview_navigation("http://koma.localhost/index.html"));
-        assert!(allow_webview_navigation("http://koma.extension/panel/index.html"));
+        assert!(allow_webview_navigation(
+            "http://koma.extension/panel/index.html"
+        ));
         assert!(allow_webview_navigation("about:blank"));
     }
 }

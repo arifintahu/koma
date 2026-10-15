@@ -14,6 +14,18 @@ use crate::service::openrouter::OpenRouterClient;
 /// Handle `Action::SaveSettings`: pull all setting drafts from the modal, apply
 /// them to the session and global config, persist, and return to Chat.
 pub(super) fn handle_save_settings(state: &mut AppState) -> Result<()> {
+    // Confirmed terminal edits have already been persisted. Leaving a clean
+    // dashboard must not rewrite an older copy of the provider catalogue.
+    if matches!(state.mode(), Mode::Settings(s) if s.dirty()) {
+        commit_settings(state)?;
+    }
+    *state.mode_mut() = Mode::Chat;
+    Ok(())
+}
+
+/// Persist confirmed settings using the existing save operation, keeping the
+/// dashboard and its navigation open.
+pub(crate) fn commit_settings(state: &mut AppState) -> Result<()> {
     // 1. Pull drafts out of the mode first so the borrow of `state.mode`
     //    is released before we mutate `state.rest` / `state.mode` below.
     let drafts = match state.mode() {
@@ -466,7 +478,9 @@ pub(super) fn handle_save_settings(state: &mut AppState) -> Result<()> {
         //    live-switch without restart).
         crate::app::runtime::actions::apply_mouse_capture(mouse_capture);
     }
-    *state.mode_mut() = Mode::Chat;
+    if let Mode::Settings(s) = state.mode_mut() {
+        s.clean_fingerprint = s.fingerprint();
+    }
     Ok(())
 }
 
@@ -591,4 +605,16 @@ pub(super) fn handle_fetch_model_endpoints(
         };
     });
     Ok(())
+}
+
+/// One binding transition for keyboard and direct provider chooser activation.
+pub(crate) fn choose_model_provider(
+    s: &mut crate::app::mode::SettingsState,
+    rest: &mut crate::app::state::AppStateRest,
+    index: usize,
+) {
+    s.mm_choose_provider(index);
+    if let Some((ep, key)) = s.mm_provider_conn() {
+        rest.request_catalogue(&ep, &key, &s.mm_provider_oauth_uuid());
+    }
 }

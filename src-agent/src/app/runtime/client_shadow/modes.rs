@@ -70,6 +70,8 @@ pub(crate) fn shadow_onboard_provider(s: OnboardProviderSnapshot) -> OnboardProv
 /// Rebuild the first-run wizard form ([`KeyInputForm`]) from its projection.
 pub(crate) fn shadow_key_input(f: KeyInputSnapshot) -> KeyInputForm {
     KeyInputForm {
+        editing: f.editing,
+
         step: f.step,
         field: f.field,
         endpoint: f.endpoint,
@@ -218,6 +220,7 @@ pub(crate) fn shadow_model_cmd(s: ModelCmdSnapshot) -> crate::app::mode::ModelCm
     use crate::model::app_config::ModelRole;
 
     let sub = match s.sub.as_str() {
+        "roles" => ModelCmdSub::RoleList,
         "role_pick" => {
             let role = match s.role.as_deref() {
                 Some("main") => ModelRole::Main,
@@ -238,6 +241,8 @@ pub(crate) fn shadow_model_cmd(s: ModelCmdSnapshot) -> crate::app::mode::ModelCm
     };
 
     crate::app::mode::ModelCmdState {
+        query: s.query,
+        from_roles: s.from_roles,
         sub,
         options: s.options,
         cursor: s.cursor,

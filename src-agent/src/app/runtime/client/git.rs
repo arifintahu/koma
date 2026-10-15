@@ -513,7 +513,10 @@ pub(crate) fn compute_git_diff(path: &str, staged: bool, session: Option<&str>) 
     // Status should never hand us a directory (`-uall` expands untracked trees),
     // but guard anyway so a stale row cannot surface raw "os error 21".
     if abs.is_dir() {
-        return empty(Some("path is a directory — open a file inside it".to_string()), false);
+        return empty(
+            Some("path is a directory — open a file inside it".to_string()),
+            false,
+        );
     }
 
     let show = |spec: &str| -> Vec<u8> {

@@ -114,6 +114,42 @@ fn accepts_session_images_dir_path_and_image_n() {
 }
 
 #[test]
+fn image_marker_label_in_path_resolves_and_a_real_path_still_loads() {
+    let base = std::env::temp_dir().join(format!("koma-load-image-marker-{}", std::process::id()));
+    let ws = base.join("ws");
+    let scratch = base.join("scratch/session-a");
+    let session = base.join("sessions/session-a");
+    let img = session.join("images/01-shot.png");
+    put(&img, PNG);
+    put(&ws.join("real.png"), PNG);
+    std::fs::create_dir_all(&scratch).unwrap();
+    let messages = json!([{
+        "role": "user",
+        "content": "see [Image #1]",
+        "attachments": [{
+            "marker_n": 1,
+            "rel_path": "images/01-shot.png",
+            "mime": "image/png"
+        }]
+    }]);
+    std::fs::write(
+        session.join("messages.json"),
+        serde_json::to_string(&messages).unwrap(),
+    )
+    .unwrap();
+    let ctx = ctx(ws.clone(), vec![ws.clone()], scratch, Some(session));
+
+    let (from_label, _) = read_validated_image(&ctx, "Image #1").unwrap();
+    assert_eq!(from_label, img.canonicalize().unwrap());
+    let (from_brackets, _) =
+        read_validated_image_from_args(&ctx, &json!({"path": "[Image #1]"})).unwrap();
+    assert_eq!(from_brackets, img.canonicalize().unwrap());
+    let (from_path, _) = read_validated_image(&ctx, "real.png").unwrap();
+    assert_eq!(from_path, ws.join("real.png").canonicalize().unwrap());
+    let _ = std::fs::remove_dir_all(base);
+}
+
+#[test]
 fn session_images_resolve_prefers_messages_json_rel_path() {
     let base = std::env::temp_dir().join(format!("koma-load-image-json-{}", std::process::id()));
     let session = base.join("sess");

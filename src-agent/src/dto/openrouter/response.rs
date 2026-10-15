@@ -44,12 +44,16 @@ pub struct Choice {
 /// safeguard classifier) can leave `content` empty while this field is populated.
 /// It is never used as a classifier decision. Defaults to `None` when absent.
 #[derive(Debug, Deserialize)]
+#[serde(from = "ResponseMessageDe")]
 pub struct ResponseMessage {
     #[allow(dead_code)]
     pub role: String,
     #[serde(default)]
     pub content: Option<String>,
-    #[serde(default, alias = "reasoning_content", alias = "thinking")]
+    /// Thinking text. Populated from `reasoning`, `reasoning_content`, or
+    /// `thinking`. A serde alias cannot be used: mlx-vlm sends the same fragment
+    /// under both `reasoning` and `reasoning_content`, and serde rejects that as
+    /// a duplicate field, which drops the whole message.
     #[allow(dead_code)] // Retained in the response DTO; never used as archive evidence.
     pub reasoning: Option<String>,
     /// OpenRouter `reasoning_details` array on a non-streaming assistant message.
@@ -99,6 +103,7 @@ pub struct StreamChoice {
 /// growing assistant bubble. `tool_calls` carries incremental function-call
 /// deltas (id / name / argument fragments) that the caller accumulates by index.
 #[derive(Debug, Deserialize)]
+#[serde(from = "DeltaDe")]
 pub struct Delta {
     #[serde(default)]
     pub content: Option<String>,
@@ -107,7 +112,9 @@ pub struct Delta {
     /// (via `/effort`). Accumulated into the assistant message's display-only
     /// reasoning block; never echoed back to the API. `None` on frames the model
     /// doesn't think on (and absent entirely for non-reasoning models).
-    #[serde(default, alias = "reasoning_content", alias = "thinking")]
+    ///
+    /// Filled from `reasoning`, `reasoning_content`, or `thinking`, including
+    /// when a backend sends more than one of those keys on the same object.
     pub reasoning: Option<String>,
     /// Incremental OpenRouter `reasoning_details` fragments for the current
     /// assistant turn, streamed in chunks carrying an `index`. Merged (by index)
@@ -145,4 +152,105 @@ pub struct ToolCallDelta {
 pub struct FunctionDelta {
     pub name: Option<String>,
     pub arguments: Option<String>,
+}
+
+/// First non-empty thinking channel. Backends disagree on the key name, and
+/// mlx-vlm emits the same text under two of them at once.
+fn coalesce_reasoning(
+    reasoning: Option<String>,
+    reasoning_content: Option<String>,
+    thinking: Option<String>,
+) -> Option<String> {
+    [reasoning, reasoning_content, thinking]
+        .into_iter()
+        .find(|text| matches!(text, Some(value) if !value.is_empty()))
+        .flatten()
+}
+
+#[derive(Deserialize)]
+struct ResponseMessageDe {
+    role: String,
+    #[serde(default)]
+    content: Option<String>,
+    #[serde(default)]
+    reasoning: Option<String>,
+    #[serde(default)]
+    reasoning_content: Option<String>,
+    #[serde(default)]
+    thinking: Option<String>,
+    #[serde(default)]
+    reasoning_details: Option<Vec<crate::dto::chat::ReasoningDetail>>,
+}
+
+impl From<ResponseMessageDe> for ResponseMessage {
+    fn from(raw: ResponseMessageDe) -> Self {
+        Self {
+            role: raw.role,
+            content: raw.content,
+            reasoning: coalesce_reasoning(raw.reasoning, raw.reasoning_content, raw.thinking),
+            reasoning_details: raw.reasoning_details,
+        }
+    }
+}
+
+#[derive(Deserialize)]
+struct DeltaDe {
+    #[serde(default)]
+    content: Option<String>,
+    #[serde(default)]
+    reasoning: Option<String>,
+    #[serde(default)]
+    reasoning_content: Option<String>,
+    #[serde(default)]
+    thinking: Option<String>,
+    #[serde(default)]
+    reasoning_details: Option<Vec<crate::dto::chat::ReasoningDetail>>,
+    #[serde(default)]
+    tool_calls: Option<Vec<ToolCallDelta>>,
+}
+
+impl From<DeltaDe> for Delta {
+    fn from(raw: DeltaDe) -> Self {
+        Self {
+            content: raw.content,
+            reasoning: coalesce_reasoning(raw.reasoning, raw.reasoning_content, raw.thinking),
+            reasoning_details: raw.reasoning_details,
+            tool_calls: raw.tool_calls,
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::StreamChunk;
+
+    #[test]
+    fn mlx_duplicate_reasoning_keys_keep_content() {
+        let raw = r#"{
+            "choices": [{
+                "delta": {
+                    "role": "assistant",
+                    "content": "Online.",
+                    "reasoning": "hi",
+                    "reasoning_content": "hi",
+                    "tool_calls": null,
+                    "tool_call_id": null,
+                    "name": null
+                }
+            }]
+        }"#;
+        let chunk: StreamChunk = serde_json::from_str(raw).expect("both reasoning keys");
+        let delta = &chunk.choices[0].delta;
+        assert_eq!(delta.content.as_deref(), Some("Online."));
+        assert_eq!(delta.reasoning.as_deref(), Some("hi"));
+    }
+
+    #[test]
+    fn reasoning_content_alone_still_maps() {
+        let raw = r#"{"choices":[{"delta":{"content":null,"reasoning_content":"The"}}]}"#;
+        let chunk: StreamChunk = serde_json::from_str(raw).unwrap();
+        let delta = &chunk.choices[0].delta;
+        assert_eq!(delta.content, None);
+        assert_eq!(delta.reasoning.as_deref(), Some("The"));
+    }
 }

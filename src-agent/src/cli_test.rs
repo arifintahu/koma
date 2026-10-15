@@ -36,7 +36,7 @@ fn run_current_drss_and_extension_flags() {
     assert!(run.status);
     assert_eq!(run.short_send, Some(false));
     assert_eq!(run.max_tokens, Some(0));
-    assert_eq!(run.context_window_limit, Some(300_000));
+    assert_eq!(run.context_window_limit, Some(1_000_000));
     assert_eq!(run.context_model_alias.as_deref(), Some("model-alias"));
     assert_eq!(run.extensions, vec!["run.koma.one", "run.koma.two"]);
     assert_eq!(run.unload_extensions, vec!["run.koma.old"]);
@@ -314,6 +314,44 @@ fn unknown_positional_is_not_default_launch() {
 #[test]
 fn bare_koma_has_no_unknown_command() {
     let opts = parse(["koma"].into_iter().map(String::from));
+    assert!(opts.unknown_command.is_none());
+    assert!(!opts.legacy_tui);
+}
+
+#[test]
+fn legacy_prefix_selects_the_current_terminal() {
+    let bare = parse(["koma", "legacy"].into_iter().map(String::from));
+    assert!(bare.legacy_tui);
+    assert!(bare.unknown_command.is_none());
+    assert!(!bare.resume);
+    assert!(!bare.local);
+
+    let agents = parse(["koma", "legacy", "agents"].into_iter().map(String::from));
+    assert!(agents.legacy_tui);
+    assert!(agents.resume);
+    assert!(agents.unknown_command.is_none());
+
+    let alone = parse(["koma", "legacy", "alone"].into_iter().map(String::from));
+    assert!(alone.legacy_tui);
+    assert!(alone.local);
+
+    let flagged = parse(["koma", "legacy", "--resume"].into_iter().map(String::from));
+    assert!(flagged.legacy_tui);
+    assert!(flagged.resume);
+}
+
+#[test]
+fn legacy_prefix_does_not_swallow_daemon_management() {
+    let opts = parse(
+        ["koma", "legacy", "daemon", "status"]
+            .into_iter()
+            .map(String::from),
+    );
+    assert!(opts.legacy_tui);
+    assert!(matches!(
+        opts.subcommand,
+        Some(super::DaemonCli::Run(super::DaemonSub::Status))
+    ));
     assert!(opts.unknown_command.is_none());
 }
 

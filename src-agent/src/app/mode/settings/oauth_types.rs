@@ -57,3 +57,15 @@ pub enum OAuthFlowState {
     /// back to `Idle`.
     Failed(String),
 }
+
+/// Navigation order shared by every OAuth picker and its snapshot.
+pub const OAUTH_OPTIONS: [&str; 8] = [
+    "Codex",
+    "Kilo Code",
+    "koma.run",
+    "xAI",
+    "Claude",
+    "Command Code",
+    "Codex (paste token)",
+    "Command Code (paste key)",
+];

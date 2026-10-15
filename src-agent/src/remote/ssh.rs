@@ -337,6 +337,7 @@ pub(crate) fn connect_command(
     cmd.arg(format!("{}@{}", target.user, target.host));
     cmd.arg(remote_command);
     let mut child = cmd
+        .kill_on_drop(true)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())

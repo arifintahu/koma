@@ -379,6 +379,9 @@ pub(in crate::app::runtime) fn create_session_for_pwd(
     .is_none_or(|r| !r.is_usable());
     let sess_path = sess.path.clone();
     runtime.session = Some(sess);
+    if let Some(tx) = state.rest.version_tx.as_ref() {
+        crate::app::version::spawn_check(tx.clone());
+    }
 
     // Remember the return point if the (creds-less) KeyInput is cancelled, then APPEND
     // + make foreground. The old foreground stays live in its own slot, lock held.
