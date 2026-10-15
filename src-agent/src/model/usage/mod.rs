@@ -10,6 +10,7 @@ mod cache;
 mod export;
 mod ledger;
 mod queries;
+pub(crate) mod reader;
 mod types;
 
 // Re-export the entire public surface so every external path is unchanged.

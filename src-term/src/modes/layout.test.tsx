@@ -68,7 +68,7 @@ const fullScreens: [string, Record<string, unknown>][] = [
   ["SessionPicker", { all: [{ name: "Test session", id: "test" }], selected: 0 }],
   ["SessionHub", { cooking: [{ name: "Test session", kind: "session" }], history: [{ name: "Saved session" }], focus_cooking: true }],
   ["SessionHub", { cooking: [{ name: "Test session", kind: "session" }], history: [{ name: "Saved session" }], focus_cooking: false }],
-  ["Usage", { view: "global", metric: "tokens", data: { totals: { calls: 3, cost: 0.02 }, heatmap_buckets: [{ bucket_epoch: 0, tokens: 42, cost: 0.02 }] } }],
+  ["Usage", { view: "global", metric: "tokens", data: { totals: { calls: 3, cost: 0.02 }, heatmap_buckets: [{ bucket_epoch: Math.floor(Date.now() / 3600000) * 3600, tokens: 42, cost: 0.02 }] } }],
   ["Attachments", { editor: [1, { lines: Array.from({ length: 60 }, (_, i) => `Editor line ${i}`), row: 40, col: 3, scroll: 20 }] }],
 ]
 

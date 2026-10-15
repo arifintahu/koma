@@ -277,6 +277,7 @@ export interface MenuResultEvent {
 
 export interface MenuCapabilitiesEvent {
   version: number
+  usage_reader: boolean
 }
 
 export interface NotificationsEvent {

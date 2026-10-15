@@ -27,7 +27,7 @@ export class DaemonLink {
     private readonly onControl: (control: Control) => void,
     private readonly transport?: DaemonTransport,
   ) {
-    this.events.on("MenuCapabilities", ({ version }) => { this.menuVersion = version })
+    this.events.on("MenuCapabilities", ({ version, usage_reader }) => { this.menuVersion = version; this.usageReader = !!usage_reader && (!this.transport?.remote || !!this.transport.usage); if (this.usageReader) this.send({ SetUsageReader: { enabled: true } }) })
     this.events.on("MenuResult", (result) => this.operations.complete(result))
   }
 
@@ -78,6 +78,9 @@ export class DaemonLink {
     await this.attach(sessionId, true)
   }
 
+  onDisconnect: (() => void) | null = null
+  usageReader = false
+
   private expectHello(): Promise<string | null> {
     return new Promise((resolve) => {
       const timer = setTimeout(() => {
@@ -95,6 +98,7 @@ export class DaemonLink {
   }
 
   private async connect(sessionId: string): Promise<void> {
+    this.usageReader = false
     this.reader = new FrameReader()
     this.seq = -1
     if (this.transport) {
@@ -200,6 +204,7 @@ export class DaemonLink {
   private onClose(): void {
     if (this.detached || this.restarting) return
     this.closed = true
+    this.onDisconnect?.()
     this.operations.close()
     this.socket = null
     this.onControl({ kind: "error", text: this.menuVersion ? "daemon closed the connection" : "The daemon does not support terminal menu protocol v1. Update the host daemon, then reconnect." })

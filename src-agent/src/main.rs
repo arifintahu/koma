@@ -84,6 +84,9 @@ fn open_standalone(opts: cli::Opts) -> anyhow::Result<()> {
 }
 
 fn main() -> anyhow::Result<()> {
+    if std::env::args().nth(1).as_deref() == Some("remote-usage") {
+        return model::usage::reader::run();
+    }
     if std::env::args().nth(1).as_deref() == Some("term-remote") {
         return app::run_term_remote();
     }
@@ -402,9 +405,7 @@ fn main() -> anyhow::Result<()> {
         return app::run_remote_git(opts);
     }
     if opts.remote_usage {
-        anyhow::bail!(
-            "usage history is served via the session daemon when attached; no remote-usage process"
-        );
+        return model::usage::reader::run();
     }
     #[cfg(feature = "linker")]
     if opts.remote_linker {

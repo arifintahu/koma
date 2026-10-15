@@ -112,7 +112,7 @@ function viewOf(name: string, body: Rec, theme: Theme, wide: boolean, onMove: (i
     case "Notifications":
       return notificationsView(body as MenuData["Notifications"] & Rec, theme, onMove, send)
     case "Usage":
-      return usageView(body as MenuData["Usage"] & Rec, theme, wide)
+      return usageView(body as MenuData["Usage"] & Rec, theme, wide, send)
     case "Agents":
       return agentsView(body as MenuData["Agents"] & Rec, theme, wide, onMove, send)
     case "Mcp":

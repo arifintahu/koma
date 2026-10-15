@@ -245,3 +245,31 @@ future image renderer. Keep the existing daemon harness and Rust protocol checks
   including a persisted role swap, empty results, stable filtered pointer targets,
   native paste, direct shortcuts/help and the four terminal sizes. Fixture startup
   notices are dismissed before the short-terminal geometry captures.
+
+## Independent Usage reader (2026-10-15)
+
+- `/usage` in OpenTUI uses `usage-reader.ts` and the framed `koma remote-usage`
+  worker. Start it lazily, retain it for the terminal connection, and poll only
+  while Usage is mounted. One request may be active; scope/range/session changes
+  invalidate old responses. Cost/Tokens and chart selection are local rendering
+  decisions. Keep transient status and the interval detail outside the scrollbox.
+- The reader opens only the resolved `usage.sqlite`, read-only, and gathers each
+  result in one transaction through the fallible connection queries. Never call
+  the writable ledger opener, migrate schemas, or scan session files here.
+  `KOMA_TEST_DATA_DIR` remains the debug fixture override.
+- `GetMenuCapabilities.usage_reader` advertises optional support. Supporting
+  terminals send `SetUsageReader`; the daemon then projects navigation and live
+  counters without collecting ledger data. Keep legacy data for other clients.
+- Remote Usage travels through its own authenticated SSH child in `term_helper`.
+  Usage failures must remain Usage errors, and remote sessions must never create
+  a local ledger reader. Keep worker cleanup tied to helper/terminal lifetime.
+- Today is local midnight to midnight; Week/Year preserve rolling 7/365-day
+  cutoffs. Session is lifetime. Format dates with the reader's UTC offset, fill
+  zero periods, and preserve partial boundary buckets and selected timestamps.
+- Run `scripts/verify-usage.py`, `scripts/verify-remote.py`, and
+  `.tools/bun scripts/verify-usage-ui.tsx` after building Rust.
+  These use isolated ledgers, real framed pipes/daemon sockets, and fake SSH,
+  not live accounts or external hosts. `usage-dashboard.test.tsx` captures all
+  four views at 50×24, 80×18, 100×40 and 160×45, and inspects native color spans
+  for every theme. Review `/tmp/koma-usage-frames.txt` and
+  `/tmp/koma-usage-review.html`. See `docs/implementation/usage-reader.md`.

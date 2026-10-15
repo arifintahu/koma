@@ -63,6 +63,7 @@ pub struct FileSearchItem {
 pub enum ClientRequest {
     /// Direct menu actions, correlated independently from legacy Ack traffic.
     GetMenuCapabilities,
+    SetUsageReader { enabled: bool },
     ReplaceInputTracked { request_id: String, text: String, cursor: usize },
     Menu { request_id: String, mode: String, action: MenuAction },
     Notifications {
@@ -912,7 +913,7 @@ pub struct DaemonFrame {
 #[allow(dead_code)]
 pub enum DaemonEvent {
     MenuResult { request_id: String, error: Option<String> },
-    MenuCapabilities { version: u32 },
+    MenuCapabilities { version: u32, #[serde(default)] usage_reader: bool },
     Notifications {
         reply: crate::model::notifications::Reply,
     },

@@ -3,12 +3,18 @@ local daemon. Exercises SSH lifecycle without an external account or network.
 Build first: cargo build -p agent; python3 src-term/scripts/verify-remote.py
 """
 from pathlib import Path
-import json, os, select, struct, subprocess, tempfile, time
+import json, os, select, sqlite3, struct, subprocess, tempfile, time
 root=Path(__file__).resolve().parents[2]
 binary=root/'target/debug/koma'
 with tempfile.TemporaryDirectory(prefix='koma-ssh-',dir='/private/tmp') as directory:
     data=Path(directory);bin_dir=data/'bin';bin_dir.mkdir()
     (data/'config.json').write_text(json.dumps({"providers":[{"uuid":"offline","name":"Offline","endpoint":"http://127.0.0.1:9/v1","api_key":"test"}],"models":[{"uuid":"model","name":"Offline","model_id":"offline","provider_uuid":"offline","roles":["main"]}]}))
+    remote_data=data/'remote-ledger';remote_data.mkdir()
+    for location, cost in [(data, 999.0), (remote_data, 7.0)]:
+        conn=sqlite3.connect(location/'usage.sqlite')
+        conn.execute('CREATE TABLE usage(id INTEGER PRIMARY KEY,ts INTEGER,model_id TEXT,role TEXT,session_uuid TEXT,pwd_hash TEXT,tokens_in INTEGER,tokens_cached INTEGER,tokens_out INTEGER,cost REAL)')
+        conn.execute('INSERT INTO usage(ts,model_id,role,session_uuid,tokens_in,tokens_cached,tokens_out,cost) VALUES(?,?,?,?,10,3,2,?)',(int(time.time()),'remote-fixture' if location==remote_data else 'local-sentinel','main','fixture',cost))
+        conn.commit();conn.close()
     ssh=bin_dir/'ssh'
     ssh.write_text('''#!/usr/bin/env python3
 import os,sys,json,subprocess,shlex
@@ -31,7 +37,11 @@ if command.startswith('test -d '):print('/workspace\\n/workspace/project');sys.e
 argv=shlex.split(command)
 if argv[0]=='bash':argv=shlex.split(argv[2].rsplit('; exec ',1)[1])
 if argv[0]==koma:
+    if 'remote-usage' in argv:
+        (base/'usage-pid').write_text(str(os.getpid()))
+        os.environ['KOMA_TEST_DATA_DIR']=str(base/'remote-ledger')
     if 'server' in argv:
+        diagnostic=os.open(str(base/'bridge-error.log'),os.O_WRONLY|os.O_CREAT|os.O_APPEND,0o600);os.dup2(diagnostic,2);os.close(diagnostic)
         (base/'bridge-command').write_text(json.dumps(argv));(base/'bridge-pid').write_text(str(os.getpid()))
     os.execv(koma,argv)
 print('Unsupported SSH test command',file=sys.stderr);sys.exit(2)
@@ -75,6 +85,19 @@ print('Unsupported SSH test command',file=sys.stderr);sys.exit(2)
         send({'Frame':{'Attach':{'foreground_id':None,'cwd':None}}});snap=daemon_until('Snapshot')
         assert snap['sessions'][0]['id']==sid
         send({'Frame':'GetMenuCapabilities'});assert daemon_until('MenuCapabilities')['version']==1
+        # Usage uses a dedicated remote process and a fixture distinct from the local ledger.
+        request={'version':1,'request_id':1,'scope':'global','range':'today','session_uuid':sid}
+        send({'Usage':request});usage=until('Usage')
+        assert usage['data']['totals']['cost']==7.0,usage
+        assert usage['data']['top_models'][0]['model_id']=='remote-fixture'
+        # A reader crash has its own error and restart, while daemon traffic continues.
+        os.kill(int((data/'usage-pid').read_text()),15)
+        send({'Usage':dict(request,request_id=2)});assert until('UsageError')['request_id']==2
+        send({'Usage':dict(request,request_id=3)});assert until('Usage')['data']['totals']['cost']==7.0
+        (remote_data/'usage.sqlite').rename(remote_data/'saved.sqlite')
+        send({'Usage':dict(request,request_id=4)});missing=until('Usage')
+        assert missing['missing'] and missing['data'] is None,missing
+        (remote_data/'saved.sqlite').rename(remote_data/'usage.sqlite')
         # Real streamed snapshot updates over the same bridge.
         send({'Frame':{'ReplaceInputTracked':{'request_id':'remote-draft','text':'remote draft','cursor':12}}})
         assert daemon_until('MenuResult')['request_id']=='remote-draft'
@@ -90,9 +113,19 @@ print('Unsupported SSH test command',file=sys.stderr);sys.exit(2)
         assert 'connection lost' in until('Error')['message']
         send('Sessions');assert any(s['session_id']==sid for s in until('Sessions')['live'])
         argv=(data/'ssh-argv.jsonl').read_text();assert 'test-secret' not in argv;assert 'wrong' not in argv
+        usage_pid=int((data/'usage-pid').read_text())
         send('Cancel');child.wait(timeout=5)
-        print('PASS: helper auth retry, bootstrap install/verify/progress, directory/session discovery, real daemon frame updates, detach/reconnect, credentials absent from argv')
+        deadline=time.monotonic()+5
+        while True:
+            try:os.kill(usage_pid,0)
+            except ProcessLookupError:break
+            assert time.monotonic()<deadline,'usage child survived helper cleanup'
+            time.sleep(.02)
+        print('PASS: helper auth/bootstrap/discovery, dedicated remote usage fixture, no local fallback on missing remote ledger, reader crash/restart/cleanup, real daemon input, detach/reconnect, credentials absent from argv')
     finally:
+        if (data/'bridge-error.log').exists():
+            diagnostic=(data/'bridge-error.log').read_text()
+            if diagnostic.strip():print(diagnostic)
         if child.poll() is None:child.terminate();child.wait(timeout=5)
         for sid in ids:subprocess.run([str(binary),'daemon','kill','--session',sid],env=env,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
         log.close()

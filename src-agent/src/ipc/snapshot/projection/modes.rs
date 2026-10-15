@@ -1143,3 +1143,20 @@ pub fn security_snapshot(s: &SecurityState, state: &AppState) -> SecuritySnapsho
         health_frame: s.health_frame,
     }
 }
+
+/// Navigation and live counters only for clients with an independent ledger lane.
+pub fn mode_snapshot_for_reader(state: &AppState) -> ModeSnapshot {
+    if let Mode::Usage(nav) = state.mode() {
+        let rt = state.rest.fg();
+        ModeSnapshot::Usage(Box::new(UsageSnapshot {
+            view: usage_view_token(nav.view).into(),
+            range: nav.range.label().into(),
+            metric: usage_metric_token(nav.metric).into(),
+            session_totals: Some(crate::model::usage::RangeTotals {
+                cost: rt.cost, tokens_in: rt.tokens_in as i64, tokens_cached: rt.tokens_cached as i64,
+                tokens_out: rt.tokens_out as i64, calls: 0,
+            }),
+            data: Default::default(),
+        }))
+    } else { mode_snapshot(state) }
+}

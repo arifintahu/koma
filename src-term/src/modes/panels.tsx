@@ -185,12 +185,12 @@ export function notificationsView(body: MenuData["Notifications"] & Rec, theme: 
   }
 }
 
-export function usageView(body: MenuData["Usage"] & Rec, theme: Theme, _wide: boolean) {
+export function usageView(body: MenuData["Usage"] & Rec, theme: Theme, _wide: boolean, send: (request: unknown) => void) {
   const session = body.view === "session"
   return {
-    title: `Usage / ${session ? "Session" : "Global"} / ${str(body.range) || "today"}`,
-    hint: "tab switch view · 1 today · 2 week · 3 year · m change metric · esc back",
-    children: <UsageBoard body={body} theme={theme} />,
+    title: `Usage / ${session ? "Session / lifetime" : `Global / ${str(body.range) || "today"}`}`,
+    hint: <text fg={theme.dim}>tab scope · 1–3 range · m metric · arrows select · pgup/dn scroll · esc back</text>,
+    children: <UsageBoard body={body} theme={theme} send={send} />,
   }
 }
 

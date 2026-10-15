@@ -4,7 +4,8 @@ import { testRender } from "@opentui/react/test-utils"
 import { ModeSurface } from "./surface.tsx"
 import { themeFor } from "../theme.ts"
 
-const hour = 1_760_400_000
+const offset = -new Date().getTimezoneOffset() * 60
+const hour = Math.floor((Date.now() / 1000 + offset) / 86400) * 86400 - offset
 
 test("the usage screen fills in the ledger, chart, and role split", async () => {
   const mode = { Usage: {
@@ -35,8 +36,9 @@ test("the usage screen fills in the ledger, chart, and role split", async () => 
     expect(frame).toContain("$0.1398")
     expect(frame).toContain("grok-4.7")
     expect(frame).toContain("Cyber-Tiel")
-    expect(frame).toContain("ROLE SPLIT")
-    expect(frame).toContain("HOURLY")
+    expect(frame).toContain("Roles")
+    expect(frame).toContain("Activity")
+    expect(frame).toContain("Summary")
     expect(frame).toContain("█")
     expect(frame).toContain("Main")
     expect(frame).toContain("Subagents")

@@ -1,3 +1,4 @@
+import { LocalUsageLane, UsageContext, UsageReader } from "./usage-reader.ts"
 import { FormGuard } from "./modes/drafts.ts"
 import { Action, Fullscreen, Note } from "./modes/bits.tsx"
 import type { SyntaxStyle } from "@opentui/core"
@@ -22,6 +23,7 @@ import { Toast, type LocalNotice } from "./toast.tsx"
 
 export function SessionScreen({
   id,
+  initialPalette = "dark",
   syntaxStyle,
   onHome,
   onOpen,
@@ -32,6 +34,7 @@ export function SessionScreen({
   transport,
 }: {
   id: string
+  initialPalette?: string
   transport?: import("./transport.ts").DaemonTransport
   syntaxStyle: SyntaxStyle
   onHome: () => void
@@ -41,6 +44,16 @@ export function SessionScreen({
   onPalette: (name: string) => void
   ctrlC?: { current: () => void }
 }) {
+  const usageReaderRef = useRef<UsageReader | null>(null)
+  const [usageReader, setUsageReader] = useState<UsageReader | null>(null)
+  useEffect(() => {
+    // A remote connection can only use its remote lane; never instantiate a local reader.
+    const lane = transport?.remote ? transport.usage : new LocalUsageLane()
+    const reader = lane ? new UsageReader(lane) : null
+    usageReaderRef.current = reader
+    setUsageReader(reader)
+    return () => { reader?.dispose(); if (usageReaderRef.current === reader) usageReaderRef.current = null }
+  }, [id, transport])
   const columns = useColumns()
   const [snap, setSnap] = useState<Snapshot | null>(null)
   const [phase, setPhase] = useState<"connecting" | "live" | "error">("connecting")
@@ -147,6 +160,7 @@ export function SessionScreen({
       },
       transport,
     )
+    link.onDisconnect = () => usageReaderRef.current?.dispose()
     // Domain replies are observable even when no structural snapshot changes.
     link.events.on("ExtensionOpResult", (result) => { if (!dead && !result.ok && result.error) report(result.error) })
     link.events.on("AgentOp", (result) => { if (!dead && !result.ok && result.error) report(result.error) })
@@ -184,7 +198,7 @@ export function SessionScreen({
     }
   }, [ctrlC, send])
 
-  const theme = themeFor(snap?.global.palette)
+  const theme = themeFor(snap?.global.palette ?? initialPalette)
   const session = snap ? foregroundSession(snap) : null
   const mode = snap ? modeName(snap.global.mode) : ""
   const quit = snap ? quitState(snap.global.mode) : null
@@ -299,6 +313,7 @@ export function SessionScreen({
       return
     }
     if (menuKeys && phase === "live" && !quit) {
+      if (modeName(snapRef.current?.global.mode) === "Usage" && ["left", "right", "up", "down", "home", "end", "pageup", "pagedown", "r"].includes(key.name)) return
       if (nativeMenuInput.current) {
         const navigation = ["escape", "tab", "return", "enter"].includes(key.name) || nativeMenuInput.multiline && key.ctrl && key.name === "x" || nativeMenuInput.listNavigation && (["up", "down"].includes(key.name) || key.ctrl && ["r", "x", "f"].includes(key.name))
         if (!navigation || nativeMenuInput.multiline && ["return", "enter", "tab"].includes(key.name)) return
@@ -345,7 +360,7 @@ export function SessionScreen({
     return <Fullscreen title="Unsaved changes" theme={theme} hint={<box flexDirection="row"><Action label="Save (s)" primary={leaveSelected === 0} theme={theme} onPress={() => decideLeave("Save")} /><Action label="Discard (d)" primary={leaveSelected === 1} theme={theme} onPress={() => decideLeave({ Key: { code: "Esc", mods: 0 } })} /><Action label="Keep editing (esc)" primary={leaveSelected === 2} theme={theme} onPress={() => setLeavePrompt(false)} /></box>}><Note text="Save these changes before leaving?" color={theme.warn} theme={theme} /></Fullscreen>
   }
   if (place === "full") {
-    return <box flexDirection="column" flexGrow={1} minHeight={0}>{notice ? <Toast id={notice.id} kind={notice.kind ?? "error"} text={notice.text} theme={theme} onDismiss={() => setNotice((current) => current?.id === notice.id ? null : current)} /> : null}{pending ? <text fg={theme.info}>Waiting for daemon…</text> : null}<ModeSurface mode={snap.global.mode} theme={theme} columns={columns} onMove={moveTo} disabled={approval} send={approval ? () => {} : send} />{approval && session ? <Approval session={session} theme={theme} send={send} /> : null}</box>
+    return <box flexDirection="column" flexGrow={1} minHeight={0}>{notice ? <Toast id={notice.id} kind={notice.kind ?? "error"} text={notice.text} theme={theme} onDismiss={() => setNotice((current) => current?.id === notice.id ? null : current)} /> : null}{pending ? <text fg={theme.info}>Waiting for daemon…</text> : null}<UsageContext.Provider value={usageReader && linkRef.current?.usageReader ? { reader: usageReader, session: id } : null}><ModeSurface mode={snap.global.mode} theme={theme} columns={columns} onMove={moveTo} disabled={approval} send={approval ? () => {} : send} /></UsageContext.Provider>{approval && session ? <Approval session={session} theme={theme} send={send} /> : null}</box>
   }
   if (viewer) {
     return <box flexDirection="column" flexGrow={1} minHeight={0}><AgentViewer agent={agentAt(session?.subagents, snap.global.agent_viewer)} theme={theme} />{approval && session ? <Approval session={session} theme={theme} send={send} /> : null}</box>

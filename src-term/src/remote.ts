@@ -1,3 +1,4 @@
+import type { UsageRequest, UsageResponse } from "./usage-reader.ts"
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process"
 import { encodeFrame, FrameReader, type RemoteHandoff } from "./protocol.ts"
 import { komaBin } from "./paths.ts"
@@ -26,8 +27,16 @@ export class RemoteBridge {
   private daemonClose: (() => void) | null = null
   private daemonError: ((error: unknown) => void) | null = null
   private disposed = false
+  private usagePending = new Map<number, { resolve: (r: UsageResponse) => void; reject: (e: Error) => void }>()
   readonly transport: DaemonTransport = {
     remote: true,
+    usage: {
+      request: (request: UsageRequest) => new Promise<UsageResponse>((resolve, reject) => {
+        this.usagePending.set(request.request_id, { resolve, reject })
+        this.write({ Usage: request })
+      }),
+      dispose: () => { for (const pending of this.usagePending.values()) pending.reject(new Error("Remote usage reader closed")); this.usagePending.clear() },
+    },
     open: async (_id, receive, close, error) => {
       this.daemonReceive = receive
       this.daemonClose = close
@@ -54,7 +63,15 @@ export class RemoteBridge {
     this.child.stdout.on("data", (bytes: Buffer) => {
       try {
         for (const raw of this.reader.push(bytes)) {
-          if (raw && typeof raw === "object" && "Daemon" in raw) {
+          if (raw && typeof raw === "object" && "Usage" in raw) {
+            const result = (raw as { Usage: UsageResponse }).Usage
+            this.usagePending.get(result.request_id)?.resolve(result)
+            this.usagePending.delete(result.request_id)
+          } else if (raw && typeof raw === "object" && "UsageError" in raw) {
+            const result = (raw as { UsageError: { request_id: number; message: string } }).UsageError
+            this.usagePending.get(result.request_id)?.reject(new Error(result.message))
+            this.usagePending.delete(result.request_id)
+          } else if (raw && typeof raw === "object" && "Daemon" in raw) {
             this.daemonReceive?.(encodeFrame((raw as { Daemon: unknown }).Daemon))
           } else {
             const event = raw as RemoteEvent
@@ -75,6 +92,7 @@ export class RemoteBridge {
   private write(value: unknown): void { if (this.child?.stdin.writable && !this.child.stdin.destroyed) this.child.stdin.write(encodeFrame(value)) }
   dispose(): void {
     this.disposed = true
+    this.transport.usage?.dispose()
     this.write("Cancel")
     // The helper and its SSH children share a private process group. Cancellation
     // stops provisioning/discovery promptly without killing the remote daemon.

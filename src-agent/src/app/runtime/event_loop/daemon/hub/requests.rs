@@ -103,6 +103,7 @@ impl DaemonHub {
                     stream_subagent: None,
                     stream_bash: None,
                     stream_session: None,
+                    usage_reader: false,
                 });
             }
             HubInbound::Request { client_id, req } => {
@@ -188,7 +189,8 @@ impl DaemonHub {
         handle: &tokio::runtime::Handle,
     ) {
         match req {
-            ClientRequest::GetMenuCapabilities => self.send_to(idx, DaemonEvent::MenuCapabilities { version: 1 }),
+            ClientRequest::SetUsageReader { enabled } => { self.clients[idx].usage_reader = enabled; self.clients[idx].mode_snapshot_cache = None; },
+            ClientRequest::GetMenuCapabilities => self.send_to(idx, DaemonEvent::MenuCapabilities { version: 1, usage_reader: true }),
             ClientRequest::ReplaceInputTracked { request_id, text, cursor } => {
                 self.replace_input(idx, state, text, cursor);
                 self.send_to(idx, DaemonEvent::MenuResult { request_id, error: None });
@@ -431,7 +433,8 @@ impl DaemonHub {
         handle: &tokio::runtime::Handle,
     ) {
         match req {
-            ClientRequest::GetMenuCapabilities => self.send_to(idx, DaemonEvent::MenuCapabilities { version: 1 }),
+            ClientRequest::SetUsageReader { enabled } => { self.clients[idx].usage_reader = enabled; self.clients[idx].mode_snapshot_cache = None; },
+            ClientRequest::GetMenuCapabilities => self.send_to(idx, DaemonEvent::MenuCapabilities { version: 1, usage_reader: true }),
             ClientRequest::ReplaceInputTracked { request_id, text, cursor } => {
                 self.replace_input(idx, state, text, cursor);
                 self.send_to(idx, DaemonEvent::MenuResult { request_id, error: None });

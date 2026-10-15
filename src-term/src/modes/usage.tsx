@@ -1,10 +1,10 @@
-import { useEffect, useState } from "react"
-import { useRenderer } from "@opentui/react"
+import { useContext, useEffect, useRef, useState, useSyncExternalStore } from "react"
+import type { BoxRenderable, ScrollBoxRenderable } from "@opentui/core"
+import { UsageContext } from "../usage-reader.ts"
+import { useKeyboard, useRenderer } from "@opentui/react"
 import type { Theme } from "../theme.ts"
-import { Document } from "./bits.tsx"
+import { Action, InputSuspendedContext } from "./bits.tsx"
 import { num, rec, rows, str, type Rec } from "./read.ts"
-
-const BARS = [" ", "▁", "▂", "▃", "▄", "▅", "▆", "▇", "█"]
 
 export function money(value: number): string {
   if (!Number.isFinite(value)) return "$0.0000"
@@ -50,192 +50,185 @@ export function chartCells(values: number[], rows: number): string[][] {
   })
 }
 
-export function UsageBoard({ body, theme }: { body: Rec; theme: Theme }) {
-  const width = useWidth()
-  const height = useHeight()
-  const data = rec(body.data)
-  const session = body.view === "session"
-  const metric = body.metric === "tokens" ? "tokens" : "cost"
-  const range = str(body.range) || "today"
-  const models = rows(session ? data.session_models : data.top_models)
-  const heat = rows(session ? data.session_hourly : data.heatmap_buckets)
-  const totals = session
-    ? body.session_totals
-      ? rec(body.session_totals)
-      : {
-          cost: models.reduce((sum, row) => sum + num(row.total_cost), 0),
-          calls: num(data.session_calls),
-          tokens_in: models.reduce((sum, row) => sum + num(row.tokens_in), 0),
-          tokens_cached: models.reduce((sum, row) => sum + num(row.tokens_cached), 0),
-          tokens_out: models.reduce((sum, row) => sum + num(row.tokens_out), 0),
-        }
-    : rec(data.totals)
-  const role = rec(data.role_split)
-  const cost = num(totals.cost)
-  const calls = num(totals.calls)
-  const tokensIn = num(totals.tokens_in)
-  const tokensOut = num(totals.tokens_out)
-  const cached = num(totals.tokens_cached)
-  const values = heat.map((bucket) => num(bucket[metric]))
-  const epochs = heat.map((bucket) => num(bucket.bucket_epoch))
-  const chartWidth = Math.max(12, width - 6)
-  const series = fitSeries(values, epochs, chartWidth)
-  const chartHeight = height >= 42 ? 10 : height >= 30 ? 8 : 5
-  const cells = chartCells(series.values, chartHeight)
-  const max = Math.max(0, ...series.values)
-  const peakAt = series.values.reduce((best, value, index) => (value > (series.values[best] ?? -1) ? index : best), 0)
-  const active = values.filter((value) => value > 0)
-  const average = values.length ? values.reduce((sum, value) => sum + value, 0) / values.length : 0
-  const modelCost = models.reduce((sum, row) => sum + num(row.total_cost), 0)
-  const mainCost = num(role.main_cost)
-  const subCost = num(role.sub_cost)
-  const roleTotal = mainCost + subCost
-  const barWidth = Math.max(10, Math.min(36, width - 28))
-  const mainWidth = roleTotal > 0 ? Math.round((mainCost / roleTotal) * barWidth) : 0
-
-  return (
-    <box flexDirection="column" flexGrow={1} flexBasis={0} minHeight={0} gap={1}>
-      <box flexShrink={0} flexDirection="row" justifyContent="space-between">
-        <text>
-          {["today", "week", "year"].map((name) => name === range
-            ? <span key={name} fg={theme.selFg} bg={theme.selBg}>{` ${name} `}</span>
-            : <span key={name} fg={theme.dim}>{` ${name} `}</span>)}
-          <span fg={theme.dim}>{session ? "   session ledger" : "   global ledger"}</span>
-        </text>
-        <text fg={theme.accent}>{`metric ${metric}`}</text>
-      </box>
-      <box flexShrink={0} flexDirection="row" flexWrap="wrap" gap={1}>
-        <Stat label="COST" value={money(cost)} hint={`${money(calls ? cost / calls : 0)} / call`} theme={theme} color={theme.accent} />
-        <Stat label="CALLS" value={groupInt(calls)} hint={`${groupInt(active.length)} active buckets`} theme={theme} color={theme.fg} />
-        <Stat label="IN" value={groupInt(tokensIn)} hint={`${money(tokensIn ? cost / (tokensIn / 1_000_000) : 0)} / 1M`} theme={theme} color={theme.info} />
-        <Stat label="CACHED" value={groupInt(cached)} hint={`${pct(cached, tokensIn)} of input`} theme={theme} color={theme.success} />
-        <Stat label="OUT" value={groupInt(tokensOut)} hint={`${pct(tokensOut, tokensIn)} of input`} theme={theme} color={theme.warn} />
-      </box>
-      <box flexShrink={0} flexDirection="column">
-        <text>
-          <span fg={theme.accent}>{session ? "SESSION ACTIVITY" : range === "today" ? "HOURLY" : range === "week" ? "DAILY" : "RANGE"}</span>
-          <span fg={theme.dim}>{`  ${metric}  peak ${formatMetric(series.values[peakAt] ?? 0, metric)}`}</span>
-        </text>
-        {series.values.length ? cells.map((row, rowIndex) => (
-          <text key={rowIndex} wrapMode="none">
-            {row.map((cell, index) => <span key={index} fg={heatColor(series.values[index] ?? 0, max, theme)}>{cell}</span>)}
-          </text>
-        )) : <text fg={theme.dim}>No activity recorded in this range.</text>}
-        {series.epochs.length ? <text fg={theme.dim} wrapMode="none">{axisLine(series.epochs, range, series.values.length)}</text> : null}
-        <text fg={theme.dim}>{`avg ${formatMetric(average, metric)} · peak ${stamp(epochs[values.indexOf(Math.max(0, ...values))] ?? series.epochs[peakAt] ?? 0, range)} · ${heat.length ? `${stamp(epochs[0] ?? 0, "day")} – ${stamp(epochs[epochs.length - 1] ?? 0, "day")}` : "no span"}`}</text>
-        <text>
-          <span fg={theme.dim}>less </span>
-          {theme.heat.map((color, index) => <span key={index} fg={color}>{BARS[2 + index] ?? "█"}</span>)}
-          <span fg={theme.dim}>{` more · ${metric === "tokens" ? `${groupInt(heat.reduce((sum, bucket) => sum + num(bucket.tokens), 0))} tokens` : money(heat.reduce((sum, bucket) => sum + num(bucket.cost), 0))}`}</span>
-        </text>
-      </box>
-      <Document>
-        <text fg={theme.accent}>{`MODELS  ${models.length}`}</text>
-        {models.length ? models.map((row, index) => {
-          const modelCostValue = num(row.total_cost)
-          const share = modelCost > 0 ? modelCostValue / modelCost : 0
-          const shareWidth = Math.round(share * Math.min(24, barWidth))
-          return (
-            <box key={`${str(row.model_id)}-${index}`} flexDirection="column" flexShrink={0}>
-              <text wrapMode="none">
-                <span fg={theme.dim}>{`${String(index + 1).padStart(2, " ")} `}</span>
-                <span fg={theme.fg}>{clipName(str(row.model_id), Math.max(12, width > 100 ? 32 : 18))}</span>
-                <span fg={theme.accent}>{`  ${money(modelCostValue)}`}</span>
-                <span fg={theme.info}>{`  ${pct(modelCostValue, modelCost)}`}</span>
-                <span fg={theme.dim}>{`  ${groupInt(num(row.call_count))} calls  ${money(num(row.call_count) ? modelCostValue / num(row.call_count) : 0)}/call`}</span>
-              </text>
-              <text wrapMode="none">
-                <span fg={theme.accent}>{"█".repeat(shareWidth).padEnd(Math.min(24, barWidth), "·")}</span>
-                <span fg={theme.info}>{` ${groupInt(num(row.tokens_in))} in`}</span>
-                <span fg={theme.success}>{`  ${groupInt(num(row.tokens_cached))} cached`}</span>
-                <span fg={theme.warn}>{`  ${groupInt(num(row.tokens_out))} out`}</span>
-              </text>
-            </box>
-          )
-        }) : <text fg={theme.dim}>No model usage recorded in this range.</text>}
-        {!session ? (
-          <box flexDirection="column" flexShrink={0}>
-            <text fg={theme.accent}>ROLE SPLIT</text>
-            <text wrapMode="none">
-              <span fg={theme.info}>{"█".repeat(mainWidth)}</span>
-              <span fg={theme.success}>{"█".repeat(Math.max(0, barWidth - mainWidth))}</span>
-            </text>
-            <text>
-              <span fg={theme.info}>{`Main ${money(mainCost)} · ${groupInt(num(role.main_calls))} calls · ${pct(mainCost, roleTotal)}`}</span>
-              <span fg={theme.dim}>{"   "}</span>
-              <span fg={theme.success}>{`Subagents ${money(subCost)} · ${groupInt(num(role.sub_calls))} calls · ${pct(subCost, roleTotal)}`}</span>
-            </text>
-          </box>
-        ) : null}
-      </Document>
-    </box>
-  )
+export function barLine(value: number, max: number, width: number): string {
+  const size = Math.max(1, width)
+  if (!(max > 0) || value <= 0) return "·".repeat(size)
+  const filled = Math.max(1, Math.min(size, Math.round((value / max) * size)))
+  return `${"█".repeat(filled)}${"·".repeat(size - filled)}`
 }
 
-function Stat({ label, value, hint, theme, color }: { label: string; value: string; hint: string; theme: Theme; color: string }) {
-  return (
-    <box width={22} height={5} flexShrink={0} border borderStyle="rounded" borderColor={theme.dim} paddingLeft={1} paddingRight={1} flexDirection="column">
-      <text fg={theme.dim}>{label}</text>
-      <text fg={color} wrapMode="none">{value}</text>
-      <text fg={theme.dim} wrapMode="none">{hint}</text>
-    </box>
-  )
+export type Period = { start: number; end: number; cost: number; tokens: number; future: boolean }
+export function periods(buckets: Rec[], start: number, end: number, step: number, offset: number, now: number): Period[] {
+  const first = Math.floor((start + offset) / step) * step - offset
+  const byTime = new Map(buckets.map(b => [num(b.bucket_epoch), b]))
+  const result: Period[] = []
+  for (let epoch = first; epoch < end; epoch += step) {
+    const row = byTime.get(epoch)
+    result.push({ start: Math.max(start, epoch), end: Math.min(end, epoch + step), cost: num(row?.cost), tokens: num(row?.tokens), future: epoch > now })
+  }
+  return result
 }
-
-function heatColor(value: number, max: number, theme: Theme): string {
-  if (!(max > 0) || value <= 0) return theme.heat[0]
-  const step = Math.min(theme.heat.length - 1, Math.ceil((value / max) * (theme.heat.length - 1)))
-  return theme.heat[step] ?? theme.accent
+export function foldPeriods(points: Period[], count: number): Period[] {
+  count = Math.max(1, count)
+  if (points.length <= count) return points
+  return Array.from({ length: count }, (_, i) => {
+    const group = points.slice(Math.floor(i * points.length / count), Math.floor((i + 1) * points.length / count))
+    return { start: group[0]!.start, end: group.at(-1)!.end, cost: group.reduce((s, p) => s + p.cost, 0), tokens: group.reduce((s, p) => s + p.tokens, 0), future: group.every(p => p.future) }
+  })
 }
-
-function formatMetric(value: number, metric: string): string {
-  return metric === "tokens" ? groupInt(value) : money(value)
-}
-
-function stamp(epoch: number, range: string): string {
-  if (!epoch) return "—"
-  const date = new Date(epoch * 1000)
-  if (range === "today") return `${String(date.getHours()).padStart(2, "0")}:00`
-  const month = String(date.getMonth() + 1).padStart(2, "0")
-  const day = String(date.getDate()).padStart(2, "0")
-  return range === "day" ? `${date.getFullYear()}-${month}-${day}` : `${month}-${day}`
-}
-
-function axisLine(epochs: number[], range: string, columns: number): string {
-  if (!epochs.length || columns <= 0) return ""
-  const marks = [0, Math.floor((epochs.length - 1) / 2), epochs.length - 1]
-  const labels = marks.map((index) => stamp(epochs[index] ?? 0, range))
-  if (columns < 12) return labels[0] ?? ""
-  const left = labels[0] ?? ""
-  const mid = labels[1] ?? ""
-  const right = labels[2] ?? ""
-  const gap = Math.max(1, Math.floor((columns - left.length - mid.length - right.length) / 2))
-  return `${left}${" ".repeat(gap)}${mid}${" ".repeat(gap)}${right}`
-}
-
-function clipName(value: string, max: number): string {
-  if ([...value].length <= max) return value
-  return `${[...value].slice(0, Math.max(1, max - 1)).join("")}…`
-}
-
-function useWidth(): number {
+export function UsageBoard({ body, theme, send = () => {} }: { body: Rec; theme: Theme; send?: (request: unknown) => void }) {
   const renderer = useRenderer()
+  const ref = useRef<BoxRenderable | null>(null)
   const [width, setWidth] = useState(renderer.width)
   useEffect(() => {
-    const read = () => setWidth((current) => current === renderer.width ? current : renderer.width)
+    const read = () => { const next = Math.max(1, Math.floor(ref.current?.width ?? renderer.width)); setWidth(current => current === next ? current : next) }
     renderer.on("frame", read)
     return () => { renderer.off("frame", read) }
   }, [renderer])
-  return width
-}
-
-function useHeight(): number {
-  const renderer = useRenderer()
-  const [height, setHeight] = useState(renderer.height)
+  const scroll = useRef<ScrollBoxRenderable | null>(null)
+  const suspended = useContext(InputSuspendedContext)
+  const context = useContext(UsageContext)
+  const empty = useRef({ result: null, refreshing: false, error: "", missing: false }).current
+  const state = useSyncExternalStore(context?.reader.subscribe ?? (() => () => {}), () => context?.reader.state ?? empty)
+  const session = body.view === "session", range = str(body.range).toLowerCase() || "today"
+  const metric = body.metric === "tokens" ? "tokens" : "cost"
   useEffect(() => {
-    const read = () => setHeight((current) => current === renderer.height ? current : renderer.height)
-    renderer.on("frame", read)
-    return () => { renderer.off("frame", read) }
-  }, [renderer])
-  return height
+    context?.reader.select({ scope: session ? "session" : "global", range, session_uuid: context.session })
+    return () => context?.reader.select(null)
+  }, [context?.reader, context?.session, session, range])
+  const result = state.result && state.result.scope === (session ? "session" : "global") && state.result.range === range && state.result.session_uuid === context?.session ? state.result : null
+  const data = rec(context ? result?.data : body.data)
+  const models = rows(session ? data.session_models : data.top_models), heat = rows(session ? data.session_hourly : data.heatmap_buckets)
+  const totals = session && !context ? {
+    cost: models.reduce((s, r) => s + num(r.total_cost), 0), calls: num(data.session_calls),
+    tokens_in: models.reduce((s, r) => s + num(r.tokens_in), 0), tokens_cached: models.reduce((s, r) => s + num(r.tokens_cached), 0), tokens_out: models.reduce((s, r) => s + num(r.tokens_out), 0),
+  } : rec(data.totals)
+  const cost = num(totals.cost), calls = num(totals.calls), input = num(totals.tokens_in), cached = num(totals.tokens_cached), output = num(totals.tokens_out)
+  const offset = result?.utc_offset ?? -new Date().getTimezoneOffset() * 60, now = result?.collected_at ?? Date.now() / 1000
+  const midnight = Math.floor((now + offset) / 86400) * 86400 - offset
+  const start = result?.window_start ?? (session ? num(heat[0]?.bucket_epoch) || midnight : range === "today" ? midnight : now - (range === "week" ? 7 : 365) * 86400)
+  const end = result?.window_end ?? (range === "today" && !session ? midnight + 86400 : now + 1)
+  const year = !session && range === "year", side = width >= 116 && !year, chartWidth = side ? Math.floor((width - 1) * .4) : width - 1
+  const points = periods(heat, start, end, year || !session && range === "week" ? 86400 : 3600, offset, now)
+  const series = session ? foldPeriods(points, chartWidth - 4) : points
+  const selectionKey = `${session}/${range}`
+  const selections = useRef(new Map<string, number>())
+  const [, redraw] = useState(0)
+  const selectedAt = selections.current.get(selectionKey)
+  let selected = series.findIndex(p => selectedAt != null && selectedAt >= p.start && selectedAt < p.end)
+  if (selected < 0) selected = selectedAt != null && selectedAt < (series[0]?.start ?? 0) ? 0 : Math.max(0, series.findLastIndex(p => !p.future))
+  const point = series[selected]
+  if (point && selectedAt == null && (!context || result)) selections.current.set(selectionKey, point.start)
+  const selectAt = (index: number) => {
+    const p = series[Math.max(0, Math.min(series.length - 1, index))]
+    if (p) { selections.current.set(selectionKey, p.start); redraw(n => n + 1) }
+  }
+  useKeyboard(key => {
+    if (suspended || key.eventType === "release") return
+    const delta = key.name === "left" ? year ? -7 : -1 : key.name === "right" ? year ? 7 : 1 : year && key.name === "up" ? -1 : year && key.name === "down" ? 1 : 0
+    if (delta) { key.preventDefault(); selectAt(selected + delta) }
+    if (key.name === "home") { key.preventDefault(); selectAt(0) }
+    if (key.name === "end") { key.preventDefault(); selectAt(series.findLastIndex(p => !p.future)) }
+    if (key.name === "pageup" || key.name === "pagedown") { key.preventDefault(); scroll.current?.scrollBy(key.name === "pageup" ? -1 : 1, "viewport") }
+    if (key.name === "r") context?.reader.refresh()
+  })
+  const key = (code: unknown) => { if (!suspended) send({ SendKey: { code, mods: 0 } }) }
+  const role = rec(data.role_split), live = rec(body.session_totals)
+  const chart = <box border borderStyle="rounded" borderColor={theme.dim} title={` Activity / ${year ? "Year" : session ? "Session lifetime" : range} `} flexDirection="column" flexShrink={0} width={side ? chartWidth : "100%"} alignSelf="flex-start">
+    {year ? <Calendar points={points} offset={offset} width={chartWidth - 2} selected={selected} metric={metric} theme={theme} onSelect={selectAt} /> : <Bars points={series} selected={selected} offset={offset} width={chartWidth - 2} metric={metric} theme={theme} onSelect={selectAt} />}
+  </box>
+  const table = <box border borderStyle="rounded" borderColor={theme.dim} title={` Models / ${models.length} `} flexDirection="column" flexGrow={side ? 1 : 0} flexShrink={0} minWidth={0}>
+    <ModelTable models={models} width={side ? width - chartWidth - 3 : width - 3} theme={theme} metric={metric} total={metric === "cost" ? cost : input + output} />
+    {!session ? <><text fg={theme.accent}>Roles · share of all recorded cost</text>{[["Main", "main"], ["Subagents", "sub"]].map(([label, roleKey]) => <text key={roleKey} fg={theme.fg} wrapMode="none">{`${label!.padEnd(10)} ${groupInt(num(role[`${roleKey}_calls`]))} calls  ${money(num(role[`${roleKey}_cost`]))}  ${pct(num(role[`${roleKey}_cost`]), cost)}`}</text>)}</> : null}
+  </box>
+  return <box ref={ref} flexDirection="column" flexGrow={1} flexBasis={0} minHeight={0} minWidth={0}>
+    <box flexDirection="row" flexWrap="wrap" flexShrink={0}>
+      {[false, true].map(s => <box key={String(s)} backgroundColor={s === session ? theme.selBg : undefined}><Action label={`${s ? "Session" : "Global"}${s === session ? " ●" : ""}`} theme={theme} onPress={() => { if (s !== session) key("Tab") }} /></box>)}
+      {!session ? ["today", "week", "year"].map((r, i) => <box key={r} backgroundColor={r === range ? theme.selBg : undefined}><Action label={`${r}${r === range ? " ●" : ""}`} theme={theme} onPress={() => key({ Char: String(i + 1) })} /></box>) : null}
+      <Action label={metric === "cost" ? "Cost ● / Tokens" : "Cost / Tokens ●"} theme={theme} onPress={() => key({ Char: "m" })} />
+      <Action label="Back (esc)" theme={theme} onPress={() => key("Esc")} />
+    </box>
+    <box flexShrink={0} flexDirection="column">
+      <text fg={theme.accent}>{`Summary · recorded ${money(cost)} · ${groupInt(calls)} calls`}</text>
+      <text fg={theme.fg}>{`In ${groupInt(input)} · cached ${groupInt(cached)} (${pct(cached, input)}) · out ${groupInt(output)} · avg ${money(calls ? cost / calls : 0)}/call`}</text>
+      {session && body.session_totals ? <text fg={theme.dim}>{`Live session ${money(num(live.cost))} · ${groupInt(num(live.tokens_in) + num(live.tokens_out))} tokens · ledger updates after calls`}</text> : null}
+    </box>
+    <scrollbox ref={scroll} flexGrow={1} flexBasis={0} minHeight={0} scrollbarOptions={{ trackOptions: { backgroundColor: theme.panel, foregroundColor: theme.dim } }}>
+      <box flexDirection={side ? "row" : "column"} gap={0} flexShrink={0} minWidth={0}>{chart}{table}</box>
+    </scrollbox>
+    <box height={width < 75 ? 2 : 1} flexShrink={0} flexDirection="column">
+      <text fg={theme.fg} wrapMode="none">{point ? `${stamp(point.start, offset, year)} – ${stamp(point.end, offset, year)}${width >= 75 ? `  ${money(point.cost)} · ${groupInt(point.tokens)} tokens${point.future ? " · future" : ""}` : ""}` : "No recorded intervals"}</text>
+      {width < 75 ? <text fg={theme.fg} wrapMode="none">{point ? `${money(point.cost)} · ${groupInt(point.tokens)} tokens${point.future ? " · future" : ""}` : ""}</text> : null}
+    </box>
+    <box height={1} flexShrink={0} flexDirection="row" justifyContent="space-between">
+      <text flexGrow={1} flexBasis={0} minWidth={0} fg={state.error ? theme.warn : theme.dim} wrapMode="none">{!context ? "Snapshot refresh · older peer" : state.error ? `${state.result ? "Stale · " : ""}${state.error}` : state.refreshing ? "Refreshing…" : result ? `Collected ${stamp(result.collected_at, offset, false)} · UTC${offset >= 0 ? "+" : "−"}${Math.floor(Math.abs(offset) / 3600)}:${String(Math.abs(offset) / 60 % 60).padStart(2, "0")}` : "Loading ledger…"}</text>
+      {context ? <Action label="Retry (r)" theme={theme} onPress={context.reader.refresh} /> : null}
+    </box>
+  </box>
+}
+function Bars({ points, selected, width, offset, metric, theme, onSelect }: { points: Period[]; selected: number; width: number; offset: number; metric: "cost" | "tokens"; theme: Theme; onSelect: (i: number) => void }) {
+  const cells = chartCells(points.map(p => p[metric]), 5)
+  return <box flexDirection="column" flexShrink={0}>
+    <box flexDirection="row" height={5} flexShrink={0}>{points.map((p, i) => { const cellWidth = Math.max(1, Math.floor((i + 1) * width / points.length) - Math.floor(i * width / points.length)); return <box key={p.start} width={cellWidth} height={5} onMouseDown={() => onSelect(i)} backgroundColor={i === selected ? theme.selBg : undefined}><text fg={i === selected ? theme.selFg : p.future ? theme.dim : theme.accent}>{cells[i]!.map((c, row) => (p.future ? row === 4 ? "·" : " " : c === " " && row === 4 ? "▁" : c).repeat(cellWidth)).join("\n")}</text></box> })}</box>
+    <box flexDirection="row" justifyContent="space-between"><text fg={theme.dim}>{points[0] ? stamp(points[0].start, offset, false) : "Empty"}</text><text fg={theme.dim}>{points.at(-1) ? stamp(points.at(-1)!.end, offset, false) : ""}</text></box>
+  </box>
+}
+function Calendar({ points, selected, width, offset, metric, theme, onSelect }: { points: Period[]; selected: number; width: number; offset: number; metric: "cost" | "tokens"; theme: Theme; onSelect: (i: number) => void }) {
+  const first = points[0]?.start ?? 0, weekday = new Date((first + offset) * 1000).getUTCDay(), weeks = Math.ceil((points.length + weekday) / 7)
+  const cellWidth = width >= weeks * 2 + 4 ? 2 : 1, visible = Math.max(1, Math.min(weeks, Math.floor((width - 4) / cellWidth)))
+  const from = Math.min(Math.max(0, Math.floor((selected + weekday) / 7) - visible + 1), weeks - visible)
+  const max = Math.max(0, ...points.map(p => p[metric]))
+  const labels = Array.from({ length: visible * cellWidth }, () => " ")
+  for (let i = 0; i < visible; i++) {
+    const index = (from + i) * 7 - weekday
+    const d = new Date(((points[index]?.start ?? first + index * 86400) + offset + 6 * 86400) * 1000)
+    if (i === 0 && d.getUTCDate() <= 21 || d.getUTCDate() <= 7) {
+      const month = d.toLocaleString("en", { month: "short", timeZone: "UTC" })
+      const position = Math.max(0, Math.min(i * cellWidth, labels.length - 3))
+      for (let j = 0; j < 3 && position + j < labels.length; j++) labels[position + j] = month[j]!
+    }
+  }
+  return <box flexDirection="column" flexShrink={0}>
+    <text fg={theme.dim} wrapMode="none">{`    ${labels.join("")}`}</text>
+    {Array.from({ length: 7 }, (_, day) => <box key={day} flexDirection="row" height={1} flexShrink={0}>
+      <text width={4} fg={theme.dim}>{["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"][day]}</text>
+      {Array.from({ length: visible }, (_, col) => {
+        const index = (from + col) * 7 + day - weekday, p = points[index]
+        const level = !p || p[metric] <= 0 || max <= 0 ? 0 : Math.max(1, Math.ceil(p[metric] / max * 4))
+        return <box key={col} width={cellWidth} height={1} onMouseDown={() => { if (p) onSelect(index) }}><text bg={index === selected ? theme.selBg : p ? theme.heat[level] : undefined} fg={index === selected ? theme.selFg : theme.dim}>{index === selected ? "◆".padEnd(cellWidth) : !p ? (index < 0 ? " " : "·").repeat(cellWidth) : p.future ? "·".repeat(cellWidth) : " ".repeat(cellWidth)}</text></box>
+      })}
+    </box>)}
+    <text fg={theme.dim}>Less {theme.heat.map((color, i) => <span key={i} bg={color}>  </span>)} More{visible < weeks ? `  weeks ${from + 1}–${from + visible}/${weeks} ↔` : ""}</text>
+  </box>
+}
+function ModelTable({ models, width, metric, total, theme }: { models: Rec[]; width: number; metric: "cost" | "tokens"; total: number; theme: Theme }) {
+  const [selected, setSelected] = useState<string | null>(null), narrow = width < 85, nameWidth = Math.max(8, width - 69)
+  return <box flexDirection="column" flexShrink={0} minWidth={0}>
+    <text fg={theme.dim} wrapMode="none">{narrow ? "Model / Cost / Calls / Share · in / cached / out" : `${pad("Model", nameWidth)} ${pad("Cost", 11)} ${pad("Calls", 7)} ${pad("Input", 12)} ${pad("Cached", 12)} ${pad("Output", 12)} Share`}</text>
+    {!models.length ? <text fg={theme.dim}>No model usage recorded.</text> : models.map((row, i) => {
+      const name = str(row.model_id) || "unknown", value = metric === "cost" ? num(row.total_cost) : num(row.tokens_in) + num(row.tokens_out)
+      const amount = money(num(row.total_cost)), calls = groupInt(num(row.call_count)), share = pct(value, total)
+      const narrowName = pad(name, Math.max(4, width - amount.length - calls.length - share.length - 3))
+      return <box key={`${name}/${i}`} flexDirection="column" flexShrink={0} backgroundColor={name === selected ? theme.selBg : undefined} onMouseDown={() => setSelected(name)}>
+        <text fg={name === selected ? theme.selFg : theme.fg} wrapMode="none" selectable>{narrow ? `${narrowName} ${amount} ${calls} ${share}` : `${pad(name, nameWidth)} ${pad(money(num(row.total_cost)), 11)} ${pad(groupInt(num(row.call_count)), 7)} ${pad(groupInt(num(row.tokens_in)), 12)} ${pad(groupInt(num(row.tokens_cached)), 12)} ${pad(groupInt(num(row.tokens_out)), 12)} ${pct(value, total)}`}</text>
+        {narrow ? <text fg={theme.dim} wrapMode="none">{`in ${groupInt(num(row.tokens_in))}  cache ${groupInt(num(row.tokens_cached))}  out ${groupInt(num(row.tokens_out))}`}</text> : null}
+        {name === selected ? <text fg={theme.selFg} wrapMode="word" selectable>{name}</text> : null}
+      </box>
+    })}
+  </box>
+}
+function stamp(epoch: number, offset: number, dayOnly: boolean): string {
+  const d = new Date((epoch + offset) * 1000), day = d.toISOString().slice(0, 10)
+  return `${dayOnly ? day : day.slice(5)} ${d.toISOString().slice(11, 16)}`
+}
+const graphemes = new Intl.Segmenter(undefined, { granularity: "grapheme" })
+function pad(value: string, width: number): string {
+  const size = Bun.stringWidth(value)
+  if (size <= width) return value + " ".repeat(width - size)
+  let clipped = ""
+  for (const { segment } of graphemes.segment(value)) {
+    if (Bun.stringWidth(clipped + segment) > width - 1) break
+    clipped += segment
+  }
+  return clipped + "…" + " ".repeat(Math.max(0, width - Bun.stringWidth(clipped) - 1))
 }

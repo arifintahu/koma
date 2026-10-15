@@ -213,6 +213,7 @@ pub(super) struct HubClient {
     /// matches. Set atomically with the two ids in the `SetStreamView` handler; `None` until
     /// then (and whenever both ids are `None`).
     pub(super) stream_session: Option<String>,
+    pub(super) usage_reader: bool,
 }
 
 /// The sync-loop <-> per-client-task bridge + the render-state streaming engine
@@ -406,7 +407,9 @@ impl DaemonHub {
                 return snap.clone();
             }
         }
-        let snap = crate::ipc::snapshot::mode_snapshot(state);
+        let snap = if self.clients[idx].usage_reader {
+            crate::ipc::snapshot::projection::mode_snapshot_for_reader(state)
+        } else { crate::ipc::snapshot::mode_snapshot(state) };
         self.clients[idx].mode_snapshot_cache = Some((disc, Instant::now(), snap.clone()));
         snap
     }

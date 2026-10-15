@@ -259,7 +259,7 @@ impl UsageData {
         } else {
             UsageData {
                 totals: range_totals(since),
-                top_models: top_models_in_range(since, 8),
+                top_models: top_models_in_range(since, -1),
                 role_split: role_split(since),
                 heatmap_buckets: spend_buckets(since, heat_bucket, heat_n, local_utc_offset_secs()),
                 ..Default::default()

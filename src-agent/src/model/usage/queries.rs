@@ -125,11 +125,17 @@ pub fn range_totals_scoped(since_ts: i64, session_uuid: Option<&str>) -> RangeTo
     let Some(conn) = open() else {
         return RangeTotals::default();
     };
-    let clause = if session_uuid.is_some() {
-        " AND session_uuid = ?2"
-    } else {
-        ""
-    };
+    range_totals_scoped_on(&conn, since_ts, session_uuid, i64::MAX).unwrap_or_default()
+}
+
+/// Fallible read on the caller's connection/transaction. Never opens or migrates a ledger.
+pub(super) fn range_totals_scoped_on(
+    conn: &rusqlite::Connection,
+    since_ts: i64,
+    session_uuid: Option<&str>,
+    until: i64,
+) -> rusqlite::Result<RangeTotals> {
+    let clause = " AND (?2 IS NULL OR session_uuid = ?2) AND ts <= ?3";
     let sql = format!(
         "SELECT
             COALESCE(SUM(cost), 0.0),
@@ -140,10 +146,7 @@ pub fn range_totals_scoped(since_ts: i64, session_uuid: Option<&str>) -> RangeTo
          FROM usage
          WHERE ts >= ?1{clause}"
     );
-    let mut stmt = match conn.prepare(&sql) {
-        Ok(s) => s,
-        Err(_) => return RangeTotals::default(),
-    };
+    let mut stmt = conn.prepare(&sql)?;
     let mapper = |r: &rusqlite::Row| {
         Ok(RangeTotals {
             cost: r.get(0)?,
@@ -153,11 +156,7 @@ pub fn range_totals_scoped(since_ts: i64, session_uuid: Option<&str>) -> RangeTo
             calls: r.get(4)?,
         })
     };
-    match session_uuid {
-        Some(uuid) => stmt.query_row(rusqlite::params![since_ts, uuid], mapper),
-        None => stmt.query_row(rusqlite::params![since_ts], mapper),
-    }
-    .unwrap_or_default()
+    stmt.query_row(rusqlite::params![since_ts, session_uuid, until], mapper)
 }
 
 /// Top models by spend within a time window (`ts >= since_ts`), with full
@@ -182,13 +181,21 @@ pub fn top_models_in_range_scoped(
     session_uuid: Option<&str>,
 ) -> Vec<ModelCostRange> {
     let Some(conn) = open() else {
-        return Vec::new();
+        return Vec::default();
     };
-    let clause = if session_uuid.is_some() {
-        " AND session_uuid = ?3"
-    } else {
-        ""
-    };
+    top_models_in_range_scoped_on(&conn, since_ts, limit, session_uuid, i64::MAX)
+        .unwrap_or_default()
+}
+
+/// Fallible read on the caller's connection/transaction. Never opens or migrates a ledger.
+pub(super) fn top_models_in_range_scoped_on(
+    conn: &rusqlite::Connection,
+    since_ts: i64,
+    limit: i64,
+    session_uuid: Option<&str>,
+    until: i64,
+) -> rusqlite::Result<Vec<ModelCostRange>> {
+    let clause = " AND (?3 IS NULL OR session_uuid = ?3) AND ts <= ?4";
     let sql = format!(
         "SELECT
             COALESCE(model_id, ''),
@@ -203,10 +210,7 @@ pub fn top_models_in_range_scoped(
          ORDER BY SUM(cost) DESC
          LIMIT ?2"
     );
-    let mut stmt = match conn.prepare(&sql) {
-        Ok(s) => s,
-        Err(_) => return Vec::new(),
-    };
+    let mut stmt = conn.prepare(&sql)?;
     let mapper = |r: &rusqlite::Row| {
         Ok(ModelCostRange {
             model_id: r.get(0)?,
@@ -217,13 +221,13 @@ pub fn top_models_in_range_scoped(
             call_count: r.get(5)?,
         })
     };
-    let rows = match session_uuid {
-        Some(uuid) => stmt.query_map(rusqlite::params![since_ts, limit, uuid], mapper),
-        None => stmt.query_map(rusqlite::params![since_ts, limit], mapper),
-    };
+    let rows = stmt.query_map(
+        rusqlite::params![since_ts, limit, session_uuid, until],
+        mapper,
+    );
     match rows {
-        Ok(r) => r.flatten().collect(),
-        Err(_) => Vec::new(),
+        Ok(r) => r.collect(),
+        Err(error) => Err(error),
     }
 }
 
@@ -246,11 +250,17 @@ pub fn role_split_scoped(since_ts: i64, session_uuid: Option<&str>) -> RoleSplit
     let Some(conn) = open() else {
         return RoleSplit::default();
     };
-    let clause = if session_uuid.is_some() {
-        " AND session_uuid = ?2"
-    } else {
-        ""
-    };
+    role_split_scoped_on(&conn, since_ts, session_uuid, i64::MAX).unwrap_or_default()
+}
+
+/// Fallible read on the caller's connection/transaction. Never opens or migrates a ledger.
+pub(super) fn role_split_scoped_on(
+    conn: &rusqlite::Connection,
+    since_ts: i64,
+    session_uuid: Option<&str>,
+    until: i64,
+) -> rusqlite::Result<RoleSplit> {
+    let clause = " AND (?2 IS NULL OR session_uuid = ?2) AND ts <= ?3";
     let sql = format!(
         "SELECT
             COALESCE(SUM(CASE WHEN role = 'main' THEN cost ELSE 0 END), 0.0),
@@ -260,10 +270,7 @@ pub fn role_split_scoped(since_ts: i64, session_uuid: Option<&str>) -> RoleSplit
          FROM usage
          WHERE ts >= ?1{clause}"
     );
-    let mut stmt = match conn.prepare(&sql) {
-        Ok(s) => s,
-        Err(_) => return RoleSplit::default(),
-    };
+    let mut stmt = conn.prepare(&sql)?;
     let mapper = |r: &rusqlite::Row| {
         Ok(RoleSplit {
             main_cost: r.get(0)?,
@@ -272,11 +279,7 @@ pub fn role_split_scoped(since_ts: i64, session_uuid: Option<&str>) -> RoleSplit
             sub_calls: r.get(3)?,
         })
     };
-    match session_uuid {
-        Some(uuid) => stmt.query_row(rusqlite::params![since_ts, uuid], mapper),
-        None => stmt.query_row(rusqlite::params![since_ts], mapper),
-    }
-    .unwrap_or_default()
+    stmt.query_row(rusqlite::params![since_ts, session_uuid, until], mapper)
 }
 
 /// Time-bucketed spend and token totals for rows where `ts >= since_ts`,
@@ -307,16 +310,26 @@ pub fn spend_buckets_scoped(
     session_uuid: Option<&str>,
 ) -> Vec<SpendBucket> {
     let Some(conn) = open() else {
-        return Vec::new();
+        return Vec::default();
     };
+    spend_buckets_scoped_on(&conn, since_ts, bucket, _n, tz, session_uuid, i64::MAX)
+        .unwrap_or_default()
+}
+
+/// Fallible read on the caller's connection/transaction. Never opens or migrates a ledger.
+pub(super) fn spend_buckets_scoped_on(
+    conn: &rusqlite::Connection,
+    since_ts: i64,
+    bucket: BucketSize,
+    _n: usize,
+    tz: i64,
+    session_uuid: Option<&str>,
+    until: i64,
+) -> rusqlite::Result<Vec<SpendBucket>> {
     let secs = bucket.secs();
     // Bucket size is injected as a literal; SQLite does not accept arithmetic
     // expressions in GROUP BY via parameter substitution.
-    let clause = if session_uuid.is_some() {
-        " AND session_uuid = ?2"
-    } else {
-        ""
-    };
+    let clause = " AND (?2 IS NULL OR session_uuid = ?2) AND ts <= ?3";
     let sql = format!(
         "SELECT
             ((ts + {tz}) - (ts + {tz}) % {secs} - {tz}) AS bucket_epoch,
@@ -327,10 +340,7 @@ pub fn spend_buckets_scoped(
          GROUP BY bucket_epoch
          ORDER BY bucket_epoch ASC"
     );
-    let mut stmt = match conn.prepare(&sql) {
-        Ok(s) => s,
-        Err(_) => return Vec::new(),
-    };
+    let mut stmt = conn.prepare(&sql)?;
     let mapper = |r: &rusqlite::Row| {
         Ok(SpendBucket {
             bucket_epoch: r.get(0)?,
@@ -338,13 +348,10 @@ pub fn spend_buckets_scoped(
             tokens: r.get(2)?,
         })
     };
-    let rows = match session_uuid {
-        Some(uuid) => stmt.query_map(rusqlite::params![since_ts, uuid], mapper),
-        None => stmt.query_map(rusqlite::params![since_ts], mapper),
-    };
+    let rows = stmt.query_map(rusqlite::params![since_ts, session_uuid, until], mapper);
     match rows {
-        Ok(r) => r.flatten().collect(),
-        Err(_) => Vec::new(),
+        Ok(r) => r.collect(),
+        Err(error) => Err(error),
     }
 }
 
