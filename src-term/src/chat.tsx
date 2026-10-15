@@ -1112,7 +1112,7 @@ function Composer({
         titleColor={theme.accent}
         height={boxHeight}
         flexDirection="row"
-        paddingLeft={2}
+        paddingLeft={0}
         paddingRight={2}
       >
       <text fg={theme.accent}>[$] </text>
