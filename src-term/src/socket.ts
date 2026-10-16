@@ -1,15 +1,16 @@
+import { createConnection, type Socket } from "node:net"
 import type { DaemonTransport } from "./transport.ts"
 import { EventDispatcher, PendingOperations } from "./events.ts"
 import { controlOf, encodeFrame, fold, FrameReader, needsRestart, type Control, type Snapshot } from "./protocol.ts"
 import { ensureDaemon, killSession, socketPath } from "./paths.ts"
 
-type BunSocket = {
-  write(data: Uint8Array): number
+type ClientSocket = {
+  write(data: Uint8Array): number | boolean
   end(): void
 }
 
 export class DaemonLink {
-  private socket: BunSocket | null = null
+  private socket: ClientSocket | null = null
   private reader = new FrameReader()
   private seq = -1
   private closed = false
@@ -108,23 +109,19 @@ export class DaemonLink {
       this.send("GetMenuCapabilities")
       return
     }
-    const socket = await Bun.connect({
-      unix: socketPath(sessionId),
-      socket: {
-        data: (_socket, data) => this.onData(data),
-        open() {},
-        close: () => this.onClose(),
-        error: (_socket, error) => this.fail(error),
-        connectError: (_socket, error) => this.fail(error),
-      },
+    const socket = await new Promise<Socket>((resolve, reject) => {
+      const connection = createConnection({ path: socketPath(sessionId) })
+      let connected = false
+      connection.once("connect", () => { connected = true; resolve(connection) })
+      connection.on("data", (data: Buffer) => this.onData(data))
+      connection.on("error", (error) => { if (connected) this.fail(error); else reject(error) })
+      connection.once("close", () => { if (connected) this.onClose() })
     })
     if (this.closed) {
       socket.end()
       return
     }
     this.socket = socket
-    this.reader = new FrameReader()
-    this.seq = -1
     this.send({
       Attach: { foreground_id: null, cwd: process.cwd() },
     })

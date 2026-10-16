@@ -1,3 +1,4 @@
+import { createConnection } from "node:net"
 import { spawn } from "node:child_process"
 import { createHash } from "node:crypto"
 import { existsSync, readFileSync, realpathSync } from "node:fs"
@@ -28,10 +29,21 @@ export interface SessionsFile {
   history: HistorySession[]
 }
 
+/** The launcher passes Rust's resolved root, including Windows folder redirection. */
+export function dataDir(): string {
+  const supplied = process.env.KOMA_DATA_DIR || process.env.KOMA_TEST_DATA_DIR
+  if (supplied) return supplied
+  if (process.platform === "win32") {
+    const local = process.env.LOCALAPPDATA
+    if (!local) throw new Error("cannot resolve %LOCALAPPDATA%")
+    return join(local, "koma")
+  }
+  return join(homedir(), ".koma")
+}
+
 /** Palette saved in the data directory. The hub stays dark; a session uses this before its snapshot arrives. */
 export function savedPalette(): string {
-  const override = process.env.KOMA_TEST_DATA_DIR
-  const dir = override && override.length > 0 ? override : join(homedir(), ".koma")
+  const dir = dataDir()
   try {
     const raw = JSON.parse(readFileSync(join(dir, "config.json"), "utf8")) as { palette?: unknown }
     return typeof raw.palette === "string" && raw.palette.trim() ? raw.palette : "dark"
@@ -53,8 +65,9 @@ export function komaBin(): string {
   return fromEnv && fromEnv.length > 0 ? fromEnv : "koma"
 }
 
-export function socketPath(sessionId: string): string {
-  return join(homedir(), ".koma", "run", `${sessionId}.sock`)
+export function socketPath(sessionId: string, platform = process.platform): string {
+  if (platform === "win32") return String.raw`\\.\pipe\koma-${sessionId}`
+  return join(dataDir(), "run", `${sessionId}.sock`)
 }
 
 /** UUID v5, simple hex, matching Rust `Uuid::new_v5(...).simple()`. */
@@ -66,7 +79,7 @@ export function uuidV5Simple(namespaceUuid: string, name: string): string {
   return digest.subarray(0, 16).toString("hex")
 }
 
-/** `~/.koma/sessions/<pwd_hash>/<id>`, the same bucket `model::store::pwd_hash` uses. */
+/** The same data root and working-directory bucket used by the daemon. */
 export function sessionDir(cwd: string, sessionId: string): string {
   let path = cwd
   try {
@@ -74,7 +87,7 @@ export function sessionDir(cwd: string, sessionId: string): string {
   } catch {
     // Missing dirs hash as given, same as the daemon.
   }
-  return join(homedir(), ".koma", "sessions", uuidV5Simple(NAMESPACE_OID, path), sessionId)
+  return join(dataDir(), "sessions", uuidV5Simple(NAMESPACE_OID, path), sessionId)
 }
 
 export function attachmentFile(cwd: string, sessionId: string, relPath: string): string {
@@ -146,20 +159,12 @@ export async function ensureDaemon(sessionId: string): Promise<void> {
 }
 
 async function probeSocket(path: string): Promise<boolean> {
-  if (!existsSync(path)) return false
-  try {
-    const socket = await Bun.connect({
-      unix: path,
-      socket: {
-        data() {},
-        open() {},
-        close() {},
-        error() {},
-      },
-    })
-    socket.end()
-    return true
-  } catch {
-    return false
-  }
+  if (process.platform !== "win32" && !existsSync(path)) return false
+  return new Promise((resolve) => {
+    const socket = createConnection({ path })
+    const finish = (connected: boolean) => { socket.destroy(); resolve(connected) }
+    socket.once("connect", () => finish(true))
+    socket.once("error", () => finish(false))
+    socket.setTimeout(500, () => finish(false))
+  })
 }

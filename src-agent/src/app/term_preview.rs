@@ -48,6 +48,7 @@ pub fn run_term_preview(start: TermStart) -> Result<()> {
     }
     // Hello.version is this fingerprint. The client restarts a session daemon
     // that was built from an older binary, which would reject ReplaceInput.
+    cmd.env("KOMA_DATA_DIR", crate::model::store::base_dir()?);
     cmd.env("KOMA_BUILD", crate::model::store::build_fingerprint());
     cmd.env("KOMA_VERSION", crate::model::store::current_version());
     match start {
