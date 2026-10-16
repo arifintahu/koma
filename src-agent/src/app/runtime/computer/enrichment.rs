@@ -72,12 +72,14 @@ pub fn enrich(reply: &mut Reply, cancelled: &AtomicBool) {
 #[cfg(not(target_os = "macos"))]
 fn ocr(png: &[u8], obs: &Observation, cancelled: &AtomicBool) -> Result<Vec<Element>> {
     let dir = std::env::temp_dir().join(format!("koma-ocr-{}", uuid::Uuid::new_v4()));
-    let mut builder = std::fs::DirBuilder::new();
+    let builder = std::fs::DirBuilder::new();
     #[cfg(unix)]
-    {
+    let builder = {
         use std::os::unix::fs::DirBuilderExt;
+        let mut builder = builder;
         builder.mode(0o700);
-    }
+        builder
+    };
     builder.create(&dir)?;
     let _cleanup = scopeguard::guard(dir, |p| {
         let _ = std::fs::remove_dir_all(p);
