@@ -9,6 +9,7 @@
 target/
 node_modules/
 src-term/.tools/
+src-term/.deps-stamp
 dist/
 .tanstack/
 

@@ -62,6 +62,41 @@ irm https://koma.run/install.ps1 | iex
 
 The MSI is the canonical Windows package. Security tools and full-internet/research mode are not supported on Windows.
 
+### Offline terminal and source builds
+
+Official binaries include Bun 1.4.3, OpenTUI's native library, parser worker,
+web-tree-sitter, and all shipped grammar/query assets. First launch extracts and
+verifies them under Koma's user data directory (`~/.koma/term` on Unix,
+`%LOCALAPPDATA%\koma\term` on Windows). No Bun installation, package manager,
+checkout, or internet connection is needed to open the terminal. Provider requests
+still need the provider's connection. Missing or corrupt cached files are restored
+from the executable; new payload versions use separate cache directories.
+
+The OpenTUI terminal requires macOS 13+, Linux glibc 2.35+ for official Koma
+binaries, or Windows 10 version 1809+. See [Bun's platform requirements](https://bun.sh/docs/installation).
+Existing GUI system-library requirements remain. `koma legacy` stays available;
+the Rust macOS deployment setting remains 11.0 for other entrypoints.
+
+Source builds require Python 3, Rust, and network access during payload preparation:
+
+```sh
+python3 scripts/prepare-terminal.py
+cargo build --locked --release -p agent
+# Or use ./build.sh, which prepares the payload before building.
+```
+
+Preparation downloads checksum-pinned Bun archives and installs production
+packages from `src-term/bun.lock` in a fresh staging directory. For cross builds,
+pass `--target <Rust target triple>` to preparation and Cargo. Cargo rejects
+missing, stale, corrupt, or wrong-target payloads, including headless builds.
+Build outputs live under `target/terminal`; retain this directory for offline
+rebuilds of unchanged terminal inputs. Python is a build prerequisite only.
+
+For terminal development, install development packages with
+`cd src-term && bun install --frozen-lockfile` using Bun 1.4.3, then explicitly set
+`KOMA_TERM_DIR` to that directory. The launcher still uses its embedded Bun.
+Ordinary launches always use the embedded terminal, even inside a checkout.
+
 ### Desktop GUI (optional)
 
 The `koma gui` desktop client (a wry webview hosting xterm.js) is behind the `gui` cargo feature at build time, but you don't need to build it yourself on most platforms:
@@ -75,10 +110,11 @@ Grab the platform installer from the [latest release](https://github.com/aula-id
 Building the GUI from source yourself (e.g. a gui-featured Linux binary):
 
 ```sh
-cargo build -p agent --features gui
+python3 scripts/prepare-terminal.py
+cargo build --locked -p agent --features gui
 ```
 
-Linux build prerequisite: `webkit2gtk-4.1` and its dev headers (e.g. `libwebkit2gtk-4.1-dev` on Debian/Ubuntu), plus GTK3 and libsoup3. macOS and Windows use the system-provided webview (WebKit / WebView2) — no extra deps. The default `cargo install` / build pulls none of these — the GUI deps (`wry`, `tao`, `portable-pty`) are optional and only compiled with `--features gui`.
+Linux build prerequisite: `webkit2gtk-4.1` and its dev headers (e.g. `libwebkit2gtk-4.1-dev` on Debian/Ubuntu), plus GTK3 and libsoup3. macOS and Windows use the system-provided webview (WebKit / WebView2) — no extra deps. The default build enables the GUI; use `--no-default-features` for a terminal-only build. The complete terminal payload is included in both.
 
 More at **[koma.run](https://koma.run)**.
 

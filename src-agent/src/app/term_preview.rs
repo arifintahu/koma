@@ -3,15 +3,9 @@
 //! starts a session daemon only when a session is opened. `koma legacy` is the
 //! ratatui client.
 
-use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
 use anyhow::{anyhow, Context, Result};
-
-#[cfg(windows)]
-const BUN_NAME: &str = "bun.exe";
-#[cfg(not(windows))]
-const BUN_NAME: &str = "bun";
 
 /// Where the new terminal lands on launch.
 pub enum TermStart {
@@ -33,18 +27,12 @@ pub enum TermStart {
 /// process group so Ctrl-C reaches OpenTUI, which restores the screen, instead
 /// of killing this process mid-frame.
 pub fn run_term_preview(start: TermStart) -> Result<()> {
-    let term_dir = find_term_dir().ok_or_else(|| {
-        anyhow!(
-            "the new terminal is not in this build.\n  \
-             The current terminal is `koma legacy`."
-        )
-    })?;
-    let bun = find_bun(&term_dir).ok_or_else(|| {
-        anyhow!(
-            "the new terminal needs bun 1.3.14 or newer on PATH (https://bun.sh).\n  \
-             The current terminal is `koma legacy`."
-        )
-    })?;
+    let launch = super::term_bundle::prepare().context(
+        "the new terminal could not be prepared on this machine.\n  \
+         Use `koma legacy` to open the legacy terminal.",
+    )?;
+    let term_dir = launch.dir;
+    let bun = launch.bun;
 
     let mut cmd = Command::new(&bun);
     // Absolute entry so the client keeps the user's working directory.
@@ -120,55 +108,6 @@ pub fn run_term_preview(start: TermStart) -> Result<()> {
         Some(code) => std::process::exit(code),
         None => std::process::exit(1),
     }
-}
-
-fn find_term_dir() -> Option<PathBuf> {
-    term_dir_candidates()
-        .into_iter()
-        .find(|dir| dir.join("package.json").is_file())
-}
-
-fn term_dir_candidates() -> Vec<PathBuf> {
-    let mut out = Vec::new();
-    if let Some(dir) = std::env::var_os("KOMA_TERM_DIR") {
-        out.push(PathBuf::from(dir));
-    }
-    if let Ok(exe) = std::env::current_exe() {
-        push_src_term(&mut out, exe.parent());
-    }
-    if let Ok(cwd) = std::env::current_dir() {
-        push_src_term(&mut out, Some(cwd.as_path()));
-    }
-    out.push(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../src-term"));
-    out
-}
-
-fn push_src_term(out: &mut Vec<PathBuf>, mut dir: Option<&Path>) {
-    for _ in 0..8 {
-        let Some(current) = dir else {
-            break;
-        };
-        out.push(current.join("src-term"));
-        dir = current.parent();
-    }
-}
-
-fn find_bun(term_dir: &Path) -> Option<PathBuf> {
-    if let Some(explicit) = std::env::var_os("KOMA_BUN") {
-        let path = PathBuf::from(explicit);
-        if path.is_file() {
-            return Some(path);
-        }
-    }
-    let vendored = term_dir.join(".tools").join(BUN_NAME);
-    if vendored.is_file() {
-        return Some(vendored);
-    }
-    let paths = std::env::var_os("PATH")?;
-    std::env::split_paths(&paths).find_map(|dir| {
-        let candidate = dir.join(BUN_NAME);
-        candidate.is_file().then_some(candidate)
-    })
 }
 
 #[cfg(unix)]

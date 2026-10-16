@@ -20,6 +20,7 @@ name: release
 # older systems. Building on ubuntu-latest (24.04 / glibc 2.39) would produce
 # binaries that crash with "GLIBC_2.38/2.39 not found" on Jammy.
 on:
+  workflow_dispatch:
   push:
     tags:
       - "v*"
@@ -101,8 +102,15 @@ jobs:
         with:
           node-version: 24
 
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.3
+
+      - name: Prepare offline terminal payload
+        run: python scripts/prepare-terminal.py --target ${{ matrix.target }}
+
       - name: Build release binary
-        run: cargo build --release -p agent --target ${{ matrix.target }} ${{ matrix.buildflags }}
+        run: cargo build --locked --release -p agent --target ${{ matrix.target }} ${{ matrix.buildflags }}
 
       # The bin is named "koma" (see src-agent/Cargo.toml [[bin]]); rename to the
       # per-platform asset name so install.sh can fetch it directly.
@@ -111,10 +119,11 @@ jobs:
         run: |
           cp "target/${{ matrix.target }}/release/koma" "${{ matrix.asset }}"
 
-      - name: Upload to release
-        uses: softprops/action-gh-release@v2
+      - uses: actions/upload-artifact@v4
         with:
-          files: ${{ matrix.asset }}
+          name: ${{ matrix.asset }}
+          path: ${{ matrix.asset }}
+          if-no-files-found: error
 
   # ---------------------------------------------------------------------------
   # Windows: the .msi installer (WiX), including the GUI (default = ["gui"]).
@@ -147,12 +156,25 @@ jobs:
         with:
           node-version: 24
 
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.3
+
+      - name: Prepare offline terminal payload
+        run: python scripts/prepare-terminal.py --target x86_64-pc-windows-msvc
+
       - name: Install cargo-packager
         run: cargo install cargo-packager --version 0.11.8 --locked
 
       # Build the GUI-enabled executable that WiX embeds in the MSI.
       - name: Build release binary
-        run: cargo build --release -p agent
+        run: cargo build --locked --release -p agent
+
+      - name: Verify offline executable
+        shell: pwsh
+        run: |
+          python -m pip install pywinpty
+          python scripts/verify-terminal-release.py target/release/koma.exe
 
       # cargo-packager reads [package.metadata.packager] from src-agent/Cargo.toml
       # via `cargo metadata`, auto-detects the single `koma` bin, locates it at
@@ -174,6 +196,10 @@ jobs:
         shell: pwsh
         run: ./scripts/check_windows_ocr.ps1
 
+      - name: Verify MSI executable matches the tested binary
+        shell: pwsh
+        run: ./scripts/check_windows_terminal.ps1
+
       - name: Verify packaged Windows shell
         shell: pwsh
         run: ./scripts/check_windows_shell.ps1
@@ -191,8 +217,83 @@ jobs:
           echo "msi $msi  ->  koma-x64.msi"
           cp "$msi" koma-x64.msi
 
-      - name: Upload to release
-        uses: softprops/action-gh-release@v2
+      - uses: actions/upload-artifact@v4
+        with:
+          name: koma-windows
+          path: |
+            koma-x64.msi
+            target/release/koma.exe
+          if-no-files-found: error
+
+  verify:
+    name: offline execution (${{ matrix.asset }})
+    needs: build
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-22.04
+            asset: koma-linux-x64
+          - os: ubuntu-24.04-arm
+            asset: koma-linux-arm64
+          - os: macos-latest
+            asset: koma-darwin-arm64
+          - os: macos-26-intel
+            asset: koma-darwin-x64
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: ${{ matrix.asset }}
+          path: release-check
+      - name: Install GUI system libraries
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libwebkit2gtk-4.1-0 libgtk-3-0
+      - name: Verify copied executable offline
+        shell: bash
+        run: |
+          chmod +x release-check/${{ matrix.asset }}
+          python3 scripts/verify-terminal-release.py release-check/${{ matrix.asset }}
+
+  terminal-tests:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-22.04, ubuntu-24.04-arm, macos-latest, macos-26-intel, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.3
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: python scripts/prepare-terminal.py
+      - run: python -m unittest discover -s scripts -p 'test_terminal_payload.py'
+      - run: cargo test --locked -p agent --no-default-features --bin koma term_bundle
+      - working-directory: src-term
+        run: bun install --frozen-lockfile
+      - working-directory: src-term
+        run: bun test
+      - working-directory: src-term
+        run: bun node_modules/typescript/bin/tsc --noEmit
+
+  publish:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [build, windows-package, verify, terminal-tests]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: release-assets
+          merge-multiple: true
+      - uses: softprops/action-gh-release@v2
         with:
           files: |
-            koma-x64.msi
+            release-assets/koma-linux-x64
+            release-assets/koma-linux-arm64
+            release-assets/koma-darwin-arm64
+            release-assets/koma-darwin-x64
+            release-assets/koma-x64.msi
+          fail_on_unmatched_files: true

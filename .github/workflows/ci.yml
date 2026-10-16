@@ -42,6 +42,16 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.3
+
+      - name: Prepare offline terminal
+        run: python scripts/prepare-terminal.py
+
+      - name: Validate payload preparation gates
+        run: python -m unittest discover -s scripts -p test_terminal_payload.py
+
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@2c7215f132e9ebf062739d9130488b56d53c060c # master
         with:
@@ -72,6 +82,53 @@ jobs:
         working-directory: src-extension
         run: cargo test --workspace --all-targets
 
+  # The OpenTUI client is TypeScript plus a native library. Cargo embeds the
+  # complete payload; this job tests frozen dependencies on every release OS. linux-arm64 is native here (the release job cross-builds it).
+  term:
+    name: terminal (${{ matrix.name }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: linux-x64
+            os: ubuntu-latest
+          - name: linux-arm64
+            os: ubuntu-24.04-arm
+          - name: macos-arm64 (darwin)
+            os: macos-latest
+          - name: macos-x64 (intel)
+            os: macos-26-intel
+          - name: windows-x64
+            os: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.3
+
+      - name: Prepare offline terminal
+        run: python scripts/prepare-terminal.py
+
+      - name: Cache terminal dependencies
+        uses: actions/cache@v4
+        with:
+          path: src-term/node_modules
+          key: term-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('src-term/bun.lock') }}
+
+      - name: Install terminal dependencies
+        working-directory: src-term
+        run: bun install --frozen-lockfile
+
+      - name: Test terminal client
+        working-directory: src-term
+        run: bun test
+
+      - name: Type check terminal client
+        working-directory: src-term
+        run: bun node_modules/typescript/bin/tsc --noEmit
+
   macos-gui-link:
     name: GUI release link (${{ matrix.target }})
     runs-on: ${{ matrix.os }}
@@ -86,6 +143,13 @@ jobs:
             target: x86_64-apple-darwin
     steps:
       - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.3
+
+      - name: Prepare offline terminal
+        run: python scripts/prepare-terminal.py
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@2c7215f132e9ebf062739d9130488b56d53c060c
@@ -136,6 +200,13 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.3
+
+      - name: Prepare offline terminal
+        run: python scripts/prepare-terminal.py
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@2c7215f132e9ebf062739d9130488b56d53c060c # master
