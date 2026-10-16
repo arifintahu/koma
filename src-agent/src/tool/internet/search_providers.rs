@@ -324,20 +324,16 @@ mod tests {
         }
         let server = TcpListener::bind("127.0.0.1:0").unwrap();
         let endpoint = format!("http://{}", server.local_addr().unwrap());
-        let task = std::thread::spawn(move || {
-            let (_s, _) = server.accept().unwrap();
-            std::thread::sleep(Duration::from_millis(100));
-        });
+        // Keep the listener open without responding until perform returns. A
+        // sleeping server can close first when the client thread is descheduled.
         let mut c = WebSearchConfig {
             provider: SearchProvider::Exa,
             ..Default::default()
         };
         c.exa_key.0 = "key".into();
-        assert!(
-            perform(c, "hello".into(), endpoint, Duration::from_millis(20))
-                .unwrap_err()
-                .contains("timed out")
-        );
-        task.join().unwrap();
+        assert!(perform(c, "hello".into(), endpoint, Duration::from_secs(2))
+            .unwrap_err()
+            .contains("timed out"));
+        drop(server);
     }
 }

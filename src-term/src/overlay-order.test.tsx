@@ -1,3 +1,5 @@
+import { tmpdir } from "node:os"
+import { join } from "node:path"
 import { expect, test } from "bun:test"
 import { act, useMemo, type ReactNode } from "react"
 import { useRenderer } from "@opentui/react"
@@ -47,4 +49,4 @@ for(const [width,height] of [[50,24],[80,18],[100,40],[160,45]])for(const name o
   if(name==="commands"||name==="quit")frames.push(`${name} ${width}×${height}\n${frame}`)
  }finally{await act(async()=>{await view.dispose()})}
 })
-test("capture overlay order renders",()=>{writeFileSync("/tmp/koma-overlay-order-frames.txt",frames.join("\n\n"))})
+test("capture overlay order renders",()=>{writeFileSync(join(tmpdir(), "koma-overlay-order-frames.txt"),frames.join("\n\n"))})

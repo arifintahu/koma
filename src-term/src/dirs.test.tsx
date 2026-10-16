@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test"
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
-import { join } from "node:path"
+import { join, parse, resolve } from "node:path"
 import { act } from "react"
 import { testRender } from "@opentui/react/test-utils"
 import { addDirArgument, directoryToList, guideFolders, listChildFolders } from "./dirs.ts"
@@ -18,14 +18,17 @@ test("the adddir guide reads the path and lists that directory", () => {
   expect(addDirArgument("/adddir /home")).toBe("/home")
   expect(addDirArgument("/adddir ~/")).toBe("~/")
   expect(addDirArgument("/adddir ./")).toBe("./")
-  expect(directoryToList("~/Project", "/work", "/Users/me")).toBe("/Users/me/Project")
-  expect(directoryToList("~/", "/work", "/Users/me")).toBe("/Users/me")
-  expect(directoryToList("~", "/work", "/Users/me")).toBe("/Users/me")
-  expect(directoryToList("~other", "/work", "/Users/me")).toBeNull()
-  expect(directoryToList("./", "/work", "/Users/me")).toBe("/work")
-  expect(directoryToList("src", "/work", "/Users/me")).toBe("/work/src")
-  expect(directoryToList("/", "/work", "/Users/me")).toBe("/")
-  expect(directoryToList("/home", "/work", "/Users/me")).toBe("/home")
+  const work = resolve(tmpdir(), "koma guide work")
+  const home = resolve(tmpdir(), "koma guide home")
+  const root = parse(work).root
+  expect(directoryToList("~/Project", work, home)).toBe(join(home, "Project"))
+  expect(directoryToList("~/", work, home)).toBe(home)
+  expect(directoryToList("~", work, home)).toBe(home)
+  expect(directoryToList("~other", work, home)).toBeNull()
+  expect(directoryToList("./", work, home)).toBe(work)
+  expect(directoryToList("src", work, home)).toBe(join(work, "src"))
+  expect(directoryToList(root, work, home)).toBe(root)
+  expect(directoryToList(join(root, "home"), work, home)).toBe(join(root, "home"))
 })
 
 test("a directory guide lists folders inside the typed path and skips files", async () => {
