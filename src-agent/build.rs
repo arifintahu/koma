@@ -2,6 +2,7 @@ use std::process::Command;
 
 fn main() {
     println!("cargo:rerun-if-changed=../src-misc/help");
+    prepare_terminal();
     embed_windows_resource();
 
     // Only build the web UI when the gui feature is enabled.
@@ -154,4 +155,35 @@ fn embed_windows_resource() {
             );
         }
     }
+}
+
+fn prepare_terminal() {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .unwrap();
+    let target = std::env::var("TARGET").unwrap();
+    for input in [
+        "src-term/src",
+        "src-term/assets",
+        "src-term/package.json",
+        "src-term/bun.lock",
+        "src-term/tsconfig.json",
+        "scripts/prepare-terminal.py",
+    ] {
+        println!("cargo:rerun-if-changed={}", root.join(input).display());
+    }
+    let payload = root.join("target/terminal").join(&target);
+    println!("cargo:rerun-if-changed={}", payload.display());
+    let output = Command::new(if cfg!(windows) { "python" } else { "python3" })
+        .arg(root.join("scripts/prepare-terminal.py"))
+        .args(["--check", "--target", &target])
+        .output()
+        .expect("Python 3 is required to validate the terminal payload");
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    println!("cargo:rustc-env=KOMA_TERM_PAYLOAD={}", payload.display());
+    println!("cargo:rustc-env=KOMA_TERM_TARGET={target}");
 }

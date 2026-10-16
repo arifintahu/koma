@@ -1,3 +1,5 @@
+import { tmpdir } from "node:os"
+import { join } from "node:path"
 import { afterAll, expect, test } from "bun:test"
 import { act, useMemo, useState } from "react"
 import { useRenderer } from "@opentui/react"
@@ -89,4 +91,4 @@ test("code tokens preserve indentation, empty/unknown blocks, long Unicode lines
     expect(contents).toContain('def hello():\n    return "``` literal"')
   } finally {await act(async()=>{await view.dispose()})}
 })
-afterAll(()=>{writeFileSync(process.env.KOMA_CODE_PREVIEW_PATH??"/tmp/koma-code-frames.txt",frames.join("\n\n"))})
+afterAll(()=>{writeFileSync(process.env.KOMA_CODE_PREVIEW_PATH??join(tmpdir(), "koma-code-frames.txt"),frames.join("\n\n"))})

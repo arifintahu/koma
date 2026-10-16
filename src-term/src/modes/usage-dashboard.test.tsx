@@ -1,3 +1,5 @@
+import { tmpdir } from "node:os"
+import { join } from "node:path"
 import { afterAll, expect, test } from "bun:test"
 import { act } from "react"
 import { testRender } from "@opentui/react/test-utils"
@@ -58,8 +60,8 @@ for (const [width, height] of [[50, 24], [80, 18], [100, 40], [160, 45]] as cons
   }
 }
 afterAll(async () => {
-  await Bun.write("/tmp/koma-usage-frames.txt", frames.join("\n"))
-  await Bun.write("/tmp/koma-usage-review.html", `<!doctype html><meta charset="utf-8"><title>Koma Usage frames</title><style>body{background:#161616;color:#eee}pre{font:14px/1.15 monospace;white-space:pre}</style>${html.join("\n")}`)
+  await Bun.write(join(tmpdir(), "koma-usage-frames.txt"), frames.join("\n"))
+  await Bun.write(join(tmpdir(), "koma-usage-review.html"), `<!doctype html><meta charset="utf-8"><title>Koma Usage frames</title><style>body{background:#161616;color:#eee}pre{font:14px/1.15 monospace;white-space:pre}</style>${html.join("\n")}`)
 })
 
 test("metric, refresh and resize retain the selected timestamp; header controls send daemon keys", async () => {

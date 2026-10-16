@@ -4,7 +4,7 @@
 # Why this exists: flake.nix uses pkgs.fetchNpmDeps so the GUI build can
 # `npm install` offline in the sandbox. That hash is NOT app version — it
 # fingerprints the lockfile-resolved tarball cache. Every package-lock.json
-# change needs a new hash or CI's `nix flake check` dies with a mismatch.
+# change needs a new hash or CI's npm-deps check dies with a mismatch.
 #
 # Usage:
 #   ./scripts/update-webgui-npm-deps.sh          # write src-webgui/npm-deps-hash

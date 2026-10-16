@@ -92,6 +92,9 @@ fn main() -> anyhow::Result<()> {
     if std::env::args().nth(1).as_deref() == Some("remote-usage") {
         return model::usage::reader::run();
     }
+    if std::env::args().nth(1).as_deref() == Some("--terminal-self-test") {
+        return app::term_bundle::self_test();
+    }
     if std::env::args().nth(1).as_deref() == Some("term-remote") {
         return app::run_term_remote();
     }

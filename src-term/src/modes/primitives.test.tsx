@@ -46,7 +46,16 @@ for (const [width, height] of [[50, 24], [80, 18], [100, 40], [160, 45]]) {
       expect(spans.some((span) => span.text.includes("[━●]") && rgbToHex(span.fg).toLowerCase() === theme.success)).toBe(true)
       expect(spans.some((span) => span.text.includes("[●─]") && rgbToHex(span.fg).toLowerCase() === theme.dim)).toBe(true)
       const lines = text.split("\n")
-      expect(lines.find((line) => line.includes("Awareness"))!.indexOf("[━●]")).toBe(lines.find((line) => line.includes("Harness"))!.indexOf("[●─]"))
+      const switchAfter = (label: string, value: string) => {
+        const line = lines.find((line) => line.includes(label))
+        expect(line).toBeDefined()
+        const labelAt = line!.indexOf(label)
+        expect(labelAt).toBeGreaterThanOrEqual(0)
+        const switchAt = line!.indexOf(value, labelAt + label.length)
+        expect(switchAt).toBeGreaterThan(labelAt)
+        return switchAt
+      }
+      expect(switchAfter("Awareness", "[━●]")).toBe(switchAfter("Harness", "[●─]"))
       const html = frame.lines.map((line) => line.spans.map((span) => `<span style="color:${rgbToHex(span.fg)};background:${rgbToHex(span.bg)}">${escape(span.text)}</span>`).join("")).join("\n")
       frames.push({name,width,height,lines:frame.lines.map((line)=>line.spans.map((span)=>({text:span.text,fg:rgbToHex(span.fg),bg:rgbToHex(span.bg),width:span.width})))})
       previews.push(`<article><h2>${escape(name)} · ${width}×${height}</h2><pre style="background:${theme.bg}">${html}</pre></article>`)

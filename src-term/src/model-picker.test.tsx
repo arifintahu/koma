@@ -1,12 +1,12 @@
 import { expect, test } from "bun:test"
 import { act, useState } from "react"
-import { rgbToHex } from "@opentui/core"
+import { rgbToHex, type RGBA } from "@opentui/core"
 import { testRender } from "@opentui/react/test-utils"
 import { ModeSurface } from "./modes/surface.tsx"
 import { nativeMenuInput } from "./modes/bits.tsx"
 import { themeFor } from "./theme.ts"
 
-function spanAt(spans: { text: string; fg: unknown }[], index: number) {
+function spanAt(spans: { text: string; fg: RGBA }[], index: number) {
   let offset = 0
   for (const span of spans) {
     const end = offset + span.text.length

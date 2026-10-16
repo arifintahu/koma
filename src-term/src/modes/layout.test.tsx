@@ -167,7 +167,7 @@ test("chat keeps its composer, command palette and compact model overlay", async
       await act(async () => { await view.waitForVisualIdle() })
       const frame = view.captureCharFrame()
       expect(frame).toContain("Terminal review")
-      expect(frame).toContain("[$]")
+      expect(frame).toContain("[/]")
       expect(frame).toContain(overlay ? "Second model" : "Manage settings")
       const lines = frame.split("\n")
       const top = lines.findIndex((line) => line.includes(overlay ? "choose" : "commands"))

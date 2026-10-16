@@ -52,7 +52,7 @@ case "$_os" in
         ;;
     Darwin)
         case "$_arch" in
-            # Apple Silicon (M-series) only — Intel Macs are not a supported host.
+            x86_64) target="x86_64-apple-darwin" ;;
             arm64|aarch64)  target="aarch64-apple-darwin" ;;
         esac
         ;;
@@ -91,7 +91,12 @@ fi
 # ---------------------------------------------------------------------------
 echo "Building koma (cargo build --release -p agent)..."
 echo "  this is a from-source native build; first run can take a few minutes."
-cargo build --release -p agent
+python3 scripts/prepare-terminal.py --target "$target"
+if [ "$target" = "x86_64-apple-darwin" ]; then
+    RUST_MIN_STACK="${RUST_MIN_STACK:-33554432}" cargo build --locked --release -p agent
+else
+    cargo build --locked --release -p agent
+fi
 
 bin="target/release/koma"
 if [ ! -f "$bin" ]; then
