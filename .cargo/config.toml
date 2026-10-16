@@ -4,7 +4,3 @@
 # while rustc links for an older OS. Non-Apple targets ignore this variable.
 # Computer observation remains runtime-gated to macOS 14+.
 MACOSX_DEPLOYMENT_TARGET = { value = "11.0", force = false }
-
-# rustc recommends this stack size after the Intel macOS LLVM/ThinLTO crash.
-# Keep it shared by CI, release jobs, and source builds; allow explicit overrides.
-RUST_MIN_STACK = { value = "33554432", force = false }

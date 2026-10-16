@@ -171,6 +171,14 @@ jobs:
       # cargo check and the headless test matrix cannot detect missing GUI FFI
       # archives/frameworks. Link the real executable without opening a desktop.
       - name: Link GUI release executable
+        if: matrix.target != 'x86_64-apple-darwin'
+        run: cargo build --locked --release -p agent --bin koma --target ${{ matrix.target }}
+
+      # Only the failing Intel release compiler needs the stack workaround.
+      - name: Link Intel macOS GUI release executable
+        if: matrix.target == 'x86_64-apple-darwin'
+        env:
+          RUST_MIN_STACK: "33554432"
         run: cargo build --locked --release -p agent --bin koma --target ${{ matrix.target }}
 
   nix:

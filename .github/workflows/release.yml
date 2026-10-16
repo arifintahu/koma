@@ -110,6 +110,13 @@ jobs:
         run: python scripts/prepare-terminal.py --target ${{ matrix.target }}
 
       - name: Build release binary
+        if: matrix.target != 'x86_64-apple-darwin'
+        run: cargo build --locked --release -p agent --target ${{ matrix.target }} ${{ matrix.buildflags }}
+
+      - name: Build Intel macOS release binary
+        if: matrix.target == 'x86_64-apple-darwin'
+        env:
+          RUST_MIN_STACK: "33554432"
         run: cargo build --locked --release -p agent --target ${{ matrix.target }} ${{ matrix.buildflags }}
 
       # The bin is named "koma" (see src-agent/Cargo.toml [[bin]]); rename to the
