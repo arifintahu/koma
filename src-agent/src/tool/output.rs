@@ -60,6 +60,7 @@ fn output_caps(name: &str) -> (usize, usize) {
 #[derive(Default)]
 pub struct CallTrack {
     counts: Mutex<HashMap<String, u32>>,
+    pub(crate) inspections: Mutex<super::recovery::Inspections>,
 }
 
 impl CallTrack {
@@ -99,7 +100,7 @@ fn canonical_json(value: &Value) -> String {
             keys.sort();
             let inner = keys
                 .into_iter()
-                .map(|k| format!("{}:{}", k, canonical_json(&map[k])))
+                .map(|k| format!("{}:{}", Value::String(k.clone()), canonical_json(&map[k])))
                 .collect::<Vec<_>>()
                 .join(",");
             format!("{{{inner}}}")
@@ -112,7 +113,7 @@ fn canonical_json(value: &Value) -> String {
                 .join(",");
             format!("[{inner}]")
         }
-        Value::String(s) => format!("\"{s}\""),
+        Value::String(_) => value.to_string(),
         other => other.to_string(),
     }
 }
@@ -174,6 +175,33 @@ fn clip_tool_output(name: &str, raw: String, spill: Option<&Path>) -> String {
 pub fn finish_tool_output(ctx: &ToolCtx, name: &str, args: &Value, raw: String) -> String {
     if is_subagent_output(name) {
         return raw;
+    }
+    if let Some(at) = raw.rfind(super::recovery::MARKER) {
+        let (evidence, guidance) = raw.split_at(at);
+        let (max_chars, max_lines) = output_caps(name);
+        let truncated = evidence.chars().count() > max_chars || line_count(evidence) > max_lines;
+        let spill = if truncated {
+            existing_full_output(evidence)
+                .or_else(|| spill_full_output(ctx.session_dir.as_deref(), name, &raw))
+        } else {
+            None
+        };
+        let mut out = clip_tool_output(name, evidence.to_string(), spill.as_deref());
+        if truncated {
+            // Shell status and full-output pointers are at the end of its
+            // evidence. Keep that tail as well as the bounded diagnostic.
+            let tail: String = evidence
+                .chars()
+                .rev()
+                .take(1024)
+                .collect::<Vec<_>>()
+                .into_iter()
+                .rev()
+                .collect();
+            out.push_str(&format!("\nEnd of original failure evidence:\n{tail}"));
+        }
+        out.push_str(guidance);
+        return out;
     }
     let count = ctx.call_track.hit(name, args, &raw);
     if repeat_tracked(name) && count >= 2 && !raw.starts_with("MEDIA_WORKDIR:") {

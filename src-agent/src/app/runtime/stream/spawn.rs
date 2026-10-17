@@ -198,6 +198,9 @@ pub(crate) fn apply_workspace_change(
     client: &Option<Arc<OpenRouterClient>>,
     handle: &tokio::runtime::Handle,
 ) {
+    state.rest.sessions[sess_idx]
+        .call_track
+        .invalidate_inspections();
     // 1. Repoint the live cwd.
     state.rest.sessions[sess_idx].active_cwd = Some(new_cwd.clone());
 

@@ -592,7 +592,7 @@ impl Tool for Bash {
         "bash"
     }
     fn description(&self) -> &'static str {
-        "Run a shell command in the workspace for builds, tests, and other non-git work. \
+        "Run a shell command for builds, tests, and shell-specific behavior. Use dir_list for directory contents and glob/grep for file discovery. \
          A command that itself runs git is rejected. \
          Output is capped at 90k chars / 2000 lines — narrow the command or pipe through head/grep; do not dump huge logs. \
          Known noisy commands (cargo, npm, pip, docker, make) may be auto-compressed; a [filter: <name>, N -> M lines] marker shows when. \
@@ -660,12 +660,20 @@ impl Tool for Bash {
         // Same execution primitive as the `!` user-shell shortcut
         // (`run_shell_capture`), but with the session's saving/tee settings
         // applied — `run_shell_capture` itself always runs with saving off.
-        let (raw, exit) = capture_raw(command, &ctx.workspace, timeout_ms);
-        let opts = OutputOpts {
-            saving: ctx.bash_saving,
-            log_dir: ctx.bash_log_dir.clone(),
+        let run = || {
+            let (raw, exit) = capture_raw(command, &ctx.workspace, timeout_ms);
+            let failed = !matches!(exit, ShellExit::Code(Some(0)));
+            let opts = OutputOpts {
+                saving: ctx.bash_saving,
+                log_dir: ctx.bash_log_dir.clone(),
+            };
+            (finalize_output(command, raw, exit, &opts), failed)
         };
-        Ok(finalize_output(command, raw, exit, &opts))
+        if super::recovery::listing_command(args) {
+            super::recovery::shell_listing(ctx, args, run)
+        } else {
+            Ok(run().0)
+        }
     }
 }
 

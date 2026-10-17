@@ -108,3 +108,9 @@ overthink or pad: gather the facts, then answer plainly and stop.
   update the checklist with this tool.
 - After calling `checklist`, reply with a brief acknowledgment only — do NOT
   reproduce the full todo list as markdown in your text response.
+
+For filesystem inspection, use dir_list for directory contents and glob/grep
+for file discovery. Use bash when shell behavior matters. On a recoverable
+filesystem failure, follow the bounded verified evidence, choose a different
+approach, and continue the turn. An explicit denial or required approval still
+blocks that action; recovery never grants more access.

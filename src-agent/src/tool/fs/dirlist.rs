@@ -1,10 +1,10 @@
-//! `dir_list` tool — list directory contents from the indexed file tree.
+//! `dir_list` tool — list directory contents directly from the filesystem.
 
 use crate::tool::{resolve, Tool, ToolCtx};
 use anyhow::Result;
 use serde_json::{json, Value};
 
-/// List directory contents from the indexed file tree (cache-backed, multi-path).
+/// List directory contents directly from the filesystem (one level deep, multi-path).
 pub struct DirList;
 
 impl Tool for DirList {
@@ -12,7 +12,7 @@ impl Tool for DirList {
         "dir_list"
     }
     fn description(&self) -> &'static str {
-        "List the contents of one or more workspace directories from the indexed file tree (folders end with '/'). Pass `paths` (an array) to list several directories in one call — prefer this over many separate calls."
+        "List the contents of one or more workspace directories directly from the filesystem (folders end with '/'). Pass `paths` (an array) to list several directories in one call — prefer this over many separate calls."
     }
     fn parameters(&self) -> Value {
         json!({
@@ -46,42 +46,51 @@ impl Tool for DirList {
 
         const MAX_ENTRIES: usize = 500;
 
-        let cache = ctx
-            .dir_cache
-            .read()
-            .map_err(|_| anyhow::anyhow!("dir cache unavailable"))?;
         let mut out = String::new();
         let mut total_entries = 0usize;
-        let mut truncated = false;
-        'outer: for dir in &dirs {
-            // sandbox the path even though we read from the cache, to reject escapes
-            let _ = resolve(&ctx.workspaces, dir)?;
-            let (ws_idx, bare) = super::super::parse_ws_prefix(dir);
-            let children = cache.children(bare, ws_idx);
-            let label = if bare.is_empty() || bare == "." {
-                crate::tool::model_display_path(&ctx.workspaces, &ctx.workspaces[ws_idx])
-            } else {
-                crate::tool::model_display_path(&ctx.workspaces, &ctx.workspaces[ws_idx].join(bare))
-            };
-            out.push_str(&format!("{label}:\n"));
-            if children.is_empty() {
-                out.push_str("  (empty or not indexed)\n");
-            } else {
-                for c in &children {
-                    if total_entries >= MAX_ENTRIES {
-                        truncated = true;
-                        break 'outer;
+        for dir in &dirs {
+            let resolved = resolve(&ctx.workspaces, dir)?;
+            let label = crate::tool::model_display_path(&ctx.workspaces, &resolved);
+            let label = if label.is_empty() { "." } else { &label };
+            let remaining = MAX_ENTRIES - total_entries;
+            let mut listed = 0;
+            let mut truncated = false;
+            let result = crate::tool::recovery::inspect(
+                ctx,
+                self.name(),
+                &json!({"path": dir}),
+                dir,
+                &resolved,
+                || {
+                    let (children, capped, excluded) =
+                        crate::tool::recovery::visible_entries(&resolved, remaining)?;
+                    listed = children.len();
+                    truncated = capped;
+                    let mut listing = String::new();
+                    if children.is_empty() && !capped {
+                        listing.push_str(if excluded {
+                            "  (entries excluded by visibility rules)\n"
+                        } else {
+                            "  (empty directory)\n"
+                        });
                     }
-                    out.push_str("  ");
-                    out.push_str(c);
-                    out.push('\n');
-                    total_entries += 1;
-                }
+                    for child in children {
+                        listing.push_str(&format!("  {child}\n"));
+                    }
+                    if capped {
+                        listing
+                            .push_str("... (truncated at 500 entries; use a more specific path)\n");
+                    }
+                    Ok(listing)
+                },
+            )?;
+            out.push_str(&format!("{label}:\n"));
+            total_entries += listed;
+            out.push_str(&result);
+            if truncated {
+                break;
             }
             out.push('\n');
-        }
-        if truncated {
-            out.push_str("... (truncated at 500 entries; use a more specific path)");
         }
         Ok(out.trim_end().to_string())
     }

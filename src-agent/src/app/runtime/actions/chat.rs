@@ -101,6 +101,7 @@ pub(super) fn handle_submit(
         // something, even though it's queued as a mid-turn steer rather than
         // starting fresh. Mirrors the reset below for the immediate-kickoff path.
         state.rest.fg_mut().ext_injected_turns = 0;
+        state.rest.fg().call_track.invalidate_inspections();
         let attachments = state.rest.take_attachments(&steer_text);
         state
             .rest
@@ -124,6 +125,7 @@ pub(super) fn handle_submit(
     // (`event_loop::sessions::deferred`) call `start_stream_task` directly and never
     // go through this handler.
     state.rest.fg_mut().ext_injected_turns = 0;
+    state.rest.fg().call_track.invalidate_inspections();
     // Prompt-classifier (PC): keep a copy of the user's prompt to
     // classify in the background once the turn is kicked off.
     let pc_prompt = text.clone();
