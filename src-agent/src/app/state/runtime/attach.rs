@@ -154,6 +154,7 @@ impl SessionRuntime {
             self.pending_steer = steers;
             return;
         };
+        self.call_track.invalidate_inspections();
         let text = steers
             .iter()
             .map(|s| s.text.as_str())

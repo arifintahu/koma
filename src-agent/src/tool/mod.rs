@@ -34,6 +34,7 @@ pub mod output;
 pub mod plan;
 mod plan_policy;
 pub mod pong;
+pub mod recovery;
 mod screen_browser;
 pub mod sdlc;
 pub mod search;
@@ -769,6 +770,18 @@ pub fn main_tool_names() -> Vec<String> {
     out
 }
 
+// Native Windows separators preserve verbatim and UNC path prefixes.
+fn normalize_tool_path(path: &str) -> String {
+    #[cfg(windows)]
+    {
+        path.replace('/', "\\")
+    }
+    #[cfg(not(windows))]
+    {
+        path.replace('\\', "/")
+    }
+}
+
 /// Resolve a path and enforce containment.
 ///
 /// Absolute paths under the process-global scratch root are accepted when
@@ -781,6 +794,8 @@ pub fn resolve(workspaces: &[PathBuf], rel: &str) -> Result<PathBuf> {
 
 /// Like [`resolve`], with an explicit scratch-root policy.
 pub fn resolve_in(workspaces: &[PathBuf], rel: &str, allow_scratch: bool) -> Result<PathBuf> {
+    let normalized = normalize_tool_path(rel);
+    let rel = normalized.as_str();
     let as_path = Path::new(rel);
     if as_path.is_absolute() {
         let candidate = partial_canonicalize(as_path);
@@ -813,6 +828,11 @@ pub fn resolve_in(workspaces: &[PathBuf], rel: &str, allow_scratch: bool) -> Res
         )
     })?;
     let ws = base.canonicalize().unwrap_or_else(|_| base.to_path_buf());
+    let bare = if rel.starts_with('[') {
+        bare.trim_start_matches(['/', '\\'])
+    } else {
+        bare
+    };
     let joined = ws.join(bare);
     let candidate = partial_canonicalize(&joined);
     if !candidate.starts_with(&ws) {
@@ -838,13 +858,15 @@ fn outside_workspace_message(path: &str, ws_idx: usize) -> String {
     }
 }
 
-/// Resolve a path for READ-ONLY tools, forgiving a dropped [N] prefix.
+/// Resolve a path for read-only tools without guessing a different workspace.
 pub fn resolve_read(
     workspaces: &[PathBuf],
     rel: &str,
     session_dir: Option<&Path>,
     active_skill_dirs: &[PathBuf],
 ) -> Result<PathBuf> {
+    let normalized = normalize_tool_path(rel);
+    let rel = normalized.as_str();
     let as_path = Path::new(rel);
     if as_path.is_absolute() {
         let scratch = partial_canonicalize(&crate::model::store::scratch_root());
@@ -898,21 +920,7 @@ pub fn resolve_read(
         }
     }
 
-    if rel.starts_with('[') {
-        return resolve(workspaces, rel);
-    }
-    let primary = resolve(workspaces, rel)?;
-    if primary.exists() {
-        return Ok(primary);
-    }
-    for idx in 1..workspaces.len() {
-        if let Ok(p) = resolve(workspaces, &format!("[{idx}]{rel}")) {
-            if p.exists() {
-                return Ok(p);
-            }
-        }
-    }
-    Ok(primary)
+    resolve(workspaces, rel)
 }
 
 /// Canonicalize a path, falling back to verbatim if the OS can't resolve it.

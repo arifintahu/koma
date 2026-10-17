@@ -82,15 +82,29 @@ pub fn base_dir() -> Result<PathBuf> {
     }
     #[cfg(windows)]
     {
-        let data =
-            dirs::data_local_dir().ok_or_else(|| anyhow!("cannot resolve %LOCALAPPDATA%"))?;
-        Ok(data.join("koma"))
+        windows_base_dir(
+            std::env::var_os("LOCALAPPDATA").map(PathBuf::from),
+            dirs::data_local_dir,
+        )
     }
     #[cfg(not(windows))]
     {
         let home = dirs::home_dir().ok_or_else(|| anyhow!("cannot resolve home directory"))?;
         Ok(home.join(APP_DIR_NAME))
     }
+}
+
+#[cfg(any(windows, test))]
+fn windows_base_dir(
+    local_app_data: Option<PathBuf>,
+    known_folder: impl FnOnce() -> Option<PathBuf>,
+) -> Result<PathBuf> {
+    let data = local_app_data
+        .filter(|path| !path.as_os_str().is_empty())
+        .or_else(known_folder)
+        .ok_or_else(|| anyhow!("cannot resolve %LOCALAPPDATA%"))?;
+    anyhow::ensure!(data.is_absolute(), "LOCALAPPDATA must be an absolute path");
+    Ok(data.join("koma"))
 }
 
 /// Root of koma's throwaway scratch space (`<temp>/koma`). Bash + file tools
@@ -1066,5 +1080,31 @@ pub(crate) fn slugify(name: &str) -> Result<String> {
         Err(anyhow!("name contains no usable characters"))
     } else {
         Ok(slug)
+    }
+}
+
+#[cfg(test)]
+mod windows_data_tests {
+    use super::*;
+
+    #[test]
+    fn local_app_data_override_precedes_known_folder() {
+        let local = std::env::temp_dir().join("isolated user data");
+        let resolved =
+            windows_base_dir(Some(local.clone()), || panic!("must use LOCALAPPDATA")).unwrap();
+        assert_eq!(resolved, local.join("koma"));
+    }
+
+    #[test]
+    fn missing_or_empty_override_uses_known_folder() {
+        let local = std::env::temp_dir().join("known folder");
+        for value in [None, Some(PathBuf::new())] {
+            assert_eq!(
+                windows_base_dir(value, || Some(local.clone())).unwrap(),
+                local.join("koma")
+            );
+        }
+        assert!(windows_base_dir(None, || None).is_err());
+        assert!(windows_base_dir(Some(PathBuf::from("relative")), || None).is_err());
     }
 }

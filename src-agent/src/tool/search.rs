@@ -4,7 +4,7 @@
 //! Paths are sandboxed via [`super::resolve`]; file walks use the `ignore` crate
 //! (gitignore-aware), matching [`super::dircache`].
 
-use super::{resolve_read, Tool, ToolCtx};
+use super::{Tool, ToolCtx};
 use anyhow::Result;
 use serde_json::{json, Value};
 
@@ -40,6 +40,21 @@ impl Tool for Grep {
         })
     }
     fn run(&self, ctx: &ToolCtx, args: &Value) -> Result<String> {
+        let requested = args.get("path").and_then(Value::as_str).unwrap_or(".");
+        let target = crate::tool::resolve_read(
+            &ctx.workspaces,
+            requested,
+            ctx.session_dir.as_deref(),
+            &ctx.active_skill_dirs,
+        )?;
+        crate::tool::recovery::inspect(ctx, self.name(), args, requested, &target, || {
+            self.inspect(ctx, args, &target)
+        })
+    }
+}
+
+impl Grep {
+    fn inspect(&self, ctx: &ToolCtx, args: &Value, base: &std::path::Path) -> Result<String> {
         let pattern = args
             .get("pattern")
             .and_then(Value::as_str)
@@ -51,14 +66,7 @@ impl Tool for Grep {
             Err(e) => return Ok(format!("invalid regex: {e}")),
         };
 
-        let search_path = args.get("path").and_then(Value::as_str).unwrap_or(".");
-        let base = resolve_read(
-            &ctx.workspaces,
-            search_path,
-            ctx.session_dir.as_deref(),
-            &ctx.active_skill_dirs,
-        )?;
-
+        crate::tool::recovery::check_search_target(base)?;
         // Optional glob filter.
         let glob_matcher: Option<globset::GlobMatcher> =
             match args.get("glob").and_then(Value::as_str) {
@@ -76,8 +84,9 @@ impl Tool for Grep {
         let mut matches: Vec<String> = Vec::new();
         let mut truncated = false;
 
-        let walk = ignore::WalkBuilder::new(&base).build();
-        'outer: for entry in walk.flatten() {
+        let walk = ignore::WalkBuilder::new(base).build();
+        'outer: for entry in walk {
+            let entry = entry.map_err(super::recovery::walk_error)?;
             if !entry.file_type().is_some_and(|t| t.is_file()) {
                 continue;
             }
@@ -104,7 +113,10 @@ impl Tool for Grep {
             // Skip binary files: try reading as UTF-8.
             let content = match std::fs::read_to_string(abs_path) {
                 Ok(s) => s,
-                Err(_) => continue, // binary or unreadable
+                Err(e) if abs_path == base && e.kind() != std::io::ErrorKind::InvalidData => {
+                    return Err(e.into())
+                }
+                Err(_) => continue, // binary or unreadable child
             };
 
             let rel_display = ctx
@@ -175,19 +187,27 @@ impl Tool for Glob {
         })
     }
     fn run(&self, ctx: &ToolCtx, args: &Value) -> Result<String> {
+        let requested = args.get("path").and_then(Value::as_str).unwrap_or(".");
+        let target = crate::tool::resolve_read(
+            &ctx.workspaces,
+            requested,
+            ctx.session_dir.as_deref(),
+            &ctx.active_skill_dirs,
+        )?;
+        crate::tool::recovery::inspect(ctx, self.name(), args, requested, &target, || {
+            self.inspect(ctx, args, &target)
+        })
+    }
+}
+
+impl Glob {
+    fn inspect(&self, ctx: &ToolCtx, args: &Value, base_abs: &std::path::Path) -> Result<String> {
         let pattern = args
             .get("pattern")
             .and_then(Value::as_str)
             .ok_or_else(|| anyhow::anyhow!("missing required string argument 'pattern'"))?;
 
-        let base_rel = args.get("path").and_then(Value::as_str).unwrap_or(".");
-        let base_abs = resolve_read(
-            &ctx.workspaces,
-            base_rel,
-            ctx.session_dir.as_deref(),
-            &ctx.active_skill_dirs,
-        )?;
-
+        crate::tool::recovery::check_search_target(base_abs)?;
         let matcher = globset::Glob::new(pattern)
             .map_err(|e| anyhow::anyhow!("invalid glob '{pattern}': {e}"))?
             .compile_matcher();
@@ -214,15 +234,28 @@ impl Tool for Glob {
             Vec::new()
         };
 
+        let cache_roots: Vec<_> = ctx
+            .workspaces
+            .iter()
+            .map(|ws| ws.canonicalize().unwrap_or_else(|_| ws.clone()))
+            .collect();
         let mut results: Vec<String> = if base_in_workspace && !cache_files.is_empty() {
             cache_files
                 .into_iter()
-                .filter(|f| matcher.is_match(f.as_str()))
+                .filter(|f| {
+                    let (idx, bare) = super::parse_ws_prefix(f);
+                    cache_roots
+                        .get(idx)
+                        .is_some_and(|ws| ws.join(bare).starts_with(base_abs))
+                        && matcher.is_match(super::model_path_from_entry(&ctx.workspaces, f))
+                })
+                .map(|f| super::model_path_from_entry(&ctx.workspaces, &f))
                 .collect()
         } else {
             // Cache empty or base outside workspace: walk from base_abs.
             let mut v: Vec<String> = Vec::new();
-            for entry in ignore::WalkBuilder::new(&base_abs).build().flatten() {
+            for entry in ignore::WalkBuilder::new(base_abs).build() {
+                let entry = entry.map_err(super::recovery::walk_error)?;
                 if entry.file_type().is_some_and(|t| t.is_file()) {
                     let abs = entry.path();
                     let rel = ctx

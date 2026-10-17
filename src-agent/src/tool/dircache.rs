@@ -19,7 +19,7 @@ const MAX_INDEXED_FILES: usize = 50_000;
 /// Directory basenames pruned from the walk regardless of .gitignore. These are
 /// well-known heavy/generated trees that never belong in `@`-file autocomplete
 /// and would otherwise dominate the index.
-const PRUNE_DIRS: &[&str] = &[
+pub(crate) const PRUNE_DIRS: &[&str] = &[
     "node_modules",
     "target",
     ".git",
@@ -51,7 +51,7 @@ struct SearchMemo {
 }
 
 /// Workspace file index (relative paths), refreshed in the background. Feeds
-/// `@`-file autocomplete and the DirList tool.
+/// `@`-file autocomplete and file discovery.
 #[derive(Default)]
 pub struct DirCache {
     pub files: Vec<String>,
@@ -340,6 +340,7 @@ impl Tool for DirCacheUpdate {
         json!({ "type": "object", "properties": {} })
     }
     fn run(&self, ctx: &ToolCtx, _args: &Value) -> Result<String> {
+        ctx.call_track.invalidate_inspections();
         reindex(ctx.workspaces.clone(), ctx.dir_cache.clone());
         Ok("Re-indexing the workspace in the background.".into())
     }

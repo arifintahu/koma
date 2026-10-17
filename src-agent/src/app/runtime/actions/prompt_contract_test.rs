@@ -253,7 +253,11 @@ fn always_on_prompt_files_under_volume_budget() {
 
     // Hard invariants must remain after the cut.
     for needle in [
-        "If a tool is denied or fails, stop",
+        "Explicit denials and approval requirements remain binding",
+        "bounded",
+        "unchanged failed inspection",
+        "Use dir_list for directory contents",
+        "for shell-specific behavior",
         "Do not claim a file was created",
         "git_operator",
         "graph_query",

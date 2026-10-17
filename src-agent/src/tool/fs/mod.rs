@@ -33,6 +33,7 @@ use std::path::Path;
 /// have `session_dir == None`): a DB hiccup must never fail the fs op, which has
 /// already succeeded by the time we're called.
 pub(crate) fn record_change(ctx: &ToolCtx, path: &Path, status: &str) {
+    ctx.call_track.invalidate_inspections();
     let Some(session_dir) = ctx.session_dir.as_ref() else {
         return;
     };

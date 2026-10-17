@@ -132,6 +132,13 @@ pub(in crate::app::runtime::stream::tools) fn intercept_bash_background(
         return InterceptFlow::Continue;
     }
 
+    // Short foreground listings use the same serialized recovery path as
+    // delegates/direct execution. User shortcuts and background jobs stay here.
+    if crate::tool::recovery::listing_command(&args) {
+        crate::app::runtime::stream::dispatch_deferred(state, sess_idx, call);
+        return InterceptFlow::Return;
+    }
+
     // Lazily create THIS session's completion channel once, then reuse it
     // (mirrors the deferred tool-task channel).
     if state.rest.sessions[sess_idx].bash_done_tx.is_none() {
@@ -406,5 +413,42 @@ mod computer_policy_tests {
             assert_eq!(result["executed"], false);
             assert_eq!(result["recovery"]["kind"], "computer_tools_required");
         }
+    }
+    #[test]
+    fn foreground_interception_uses_the_shared_recovery_without_ending_the_turn() {
+        use crate::{
+            app::{mode::Mode, state::AppState},
+            dto::chat::{FunctionCall, ToolCall},
+        };
+        let root = std::env::temp_dir().join(format!("koma-intercept-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&root).unwrap();
+        let mut state = AppState::new(Mode::Chat);
+        state.rest.sessions[0].active_cwd = Some(root.clone());
+        let ctx = crate::app::runtime::stream::build_tool_ctx(&state, 0);
+        let args = serde_json::json!({"command":"ls"});
+        crate::tool::recovery::shell_listing(&ctx, &args, || {
+            ("original shell failure\nexit code: 127".into(), true)
+        })
+        .unwrap();
+        let call = ToolCall {
+            id: "listing".into(),
+            kind: "function".into(),
+            function: FunctionCall {
+                name: "bash".into(),
+                arguments: args.to_string(),
+            },
+        };
+        assert!(matches!(
+            intercept_bash_background(&mut state, 0, &call),
+            InterceptFlow::Return
+        ));
+        let rt = &mut state.rest.sessions[0];
+        let (id, output) = rt.tool_task_rx.as_mut().unwrap().blocking_recv().unwrap();
+        assert_eq!(id, "listing");
+        assert!(output.contains("No new inspection ran"));
+        assert!(output.contains("exit code: 127"));
+        assert!(rt.awaiting_tool_tasks);
+        assert!(rt.bash_jobs.is_empty());
+        std::fs::remove_dir_all(root).unwrap();
     }
 }

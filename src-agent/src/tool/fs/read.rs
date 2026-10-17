@@ -1,8 +1,8 @@
 //! `read` tool — read a workspace-relative file with line numbers.
 
-use super::helpers::{arg_str, not_found_help};
-use crate::tool::{resolve_read, Tool, ToolCtx};
-use anyhow::{bail, Context, Result};
+use super::helpers::arg_str;
+use crate::tool::{Tool, ToolCtx};
+use anyhow::{Context, Result};
 use serde_json::{json, Value};
 
 /// Read a workspace-relative file, returning line-numbered content.
@@ -35,21 +35,25 @@ impl Tool for Read {
         })
     }
     fn run(&self, ctx: &ToolCtx, args: &Value) -> Result<String> {
-        let rel = arg_str(args, "path")?;
-        let path = resolve_read(
+        let requested = args.get("path").and_then(Value::as_str).unwrap_or(".");
+        let target = crate::tool::resolve_read(
             &ctx.workspaces,
-            rel,
+            requested,
             ctx.session_dir.as_deref(),
             &ctx.active_skill_dirs,
         )?;
-        if path.is_dir() {
-            bail!("'{rel}' is a directory, not a file");
-        }
-        if !path.exists() {
-            bail!("{}", not_found_help(ctx, &path, rel));
-        }
+        crate::tool::recovery::inspect(ctx, self.name(), args, requested, &target, || {
+            self.inspect(args, &target)
+        })
+    }
+}
+
+impl Read {
+    fn inspect(&self, args: &Value, path: &std::path::Path) -> Result<String> {
+        let rel = arg_str(args, "path")?;
+        crate::tool::recovery::require_file(path)?;
         let content =
-            std::fs::read_to_string(&path).with_context(|| format!("reading file '{rel}'"))?;
+            std::fs::read_to_string(path).with_context(|| format!("reading file '{rel}'"))?;
 
         const MAX_LINES: usize = crate::config::MAX_READ_LINES;
         const MAX_BYTES: usize = crate::config::MAX_READ_CHARS;
@@ -102,7 +106,7 @@ impl Tool for Read {
             ));
         }
         // L3: auto-neighborhood footer (best-effort, daemon may not be running).
-        super::append_neighborhood_footer(&mut out, &path);
+        super::append_neighborhood_footer(&mut out, path);
         Ok(out)
     }
 }
