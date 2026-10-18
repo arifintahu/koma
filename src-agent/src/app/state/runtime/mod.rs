@@ -129,6 +129,10 @@ pub struct SessionRuntime {
     /// critique #2). Purely additive; the single-process TUI ignores it for now.
     #[allow(dead_code)] // read by the daemon IPC layer in stage 2+
     pub id: String,
+    /// Runtime policy is independent of persisted Settings.
+    pub policy: crate::ipc::proto::turn::SessionPolicy,
+    pub active_turn: Option<crate::ipc::proto::turn::TurnRecord>,
+    pub last_turn: Option<crate::ipc::proto::turn::TurnRecord>,
     /// This session's CURRENT UI mode (C3): the screen it shows — `Chat` or one of the
     /// slash overlays / pickers (`Settings`, `Help`, `SessionHub`, `Loading`, …) with its
     /// form/picker data. Moved OUT of [`super::AppState`] and onto the session so each
@@ -720,6 +724,9 @@ impl SessionRuntime {
             // session in `AppStateRest::new` and each `/new` spawn) routes
             // through here, so every session is uniquely keyed automatically.
             id: uuid::Uuid::new_v4().to_string(),
+            policy: Default::default(),
+            active_turn: None,
+            last_turn: None,
             // Fresh session default (C3): a brand-new live session lands in Chat. The
             // spawn/startup flows (KeyInput on a creds-less spawn, Loading on a warming
             // startup session, SessionPicker on --resume) overwrite this on the RIGHT

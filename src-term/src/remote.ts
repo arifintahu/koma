@@ -12,6 +12,7 @@ export type RemoteEvent =
   | { Directories: { path: string; entries: string[] } }
   | { Connected: { session_id: string } }
   | { Error: { message: string } }
+  | { ConnectionLost: { message: string } }
   | "Disconnected"
 export type RemoteCommand =
   | { Password: { value: string } }
@@ -56,7 +57,16 @@ export class RemoteBridge {
     if (remote.hostId) args.push("--host", remote.hostId)
     if (remote.sessionId) args.push("--session", remote.sessionId)
     if (remote.newSession) args.push("--new")
-    this.child = spawn(komaBin(), args, { stdio: "pipe", detached: process.platform !== "win32" })
+    const executable = komaBin()
+    const launchError = (error: unknown) => {
+      if (!this.disposed) this.onEvent({ ConnectionLost: { message: `${executable}: ${error instanceof Error ? error.message : String(error)}` } })
+    }
+    try {
+      this.child = spawn(executable, args, { stdio: "pipe", detached: process.platform !== "win32" })
+    } catch (error) {
+      launchError(error)
+      return
+    }
     this.child.stdin.on("error", () => {})
     let diagnostic = ""
     this.child.stderr.on("data", (bytes: Buffer) => { diagnostic = (diagnostic + bytes.toString()).slice(-2000) })
@@ -79,13 +89,14 @@ export class RemoteBridge {
             this.onEvent(event)
           }
         }
-      } catch (error) { this.onEvent({ Error: { message: String(error) } }) }
+      } catch (error) { this.daemonError?.(error); this.onEvent({ ConnectionLost: { message: String(error) } }) }
     })
-    this.child.on("error", (error) => this.onEvent({ Error: { message: error.message } }))
+    this.child.on("error", launchError)
     this.child.on("close", () => {
       if (this.disposed) return
-      this.daemonClose?.()
-      this.onEvent({ Error: { message: diagnostic.trim() || "Remote helper disconnected. Retry to reconnect." } })
+      const message = diagnostic.trim() || "Remote helper disconnected."
+      this.daemonError?.(new Error(message))
+      this.onEvent({ ConnectionLost: { message } })
     })
   }
   command(command: RemoteCommand): void { this.write(command) }

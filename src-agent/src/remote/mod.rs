@@ -21,6 +21,8 @@
 //! `ssh::exit_multiplex`; session detach does not.
 
 pub(crate) mod auth;
+#[cfg(windows)]
+pub(crate) mod auth_windows;
 pub(crate) mod bootstrap;
 pub(crate) mod client;
 pub(crate) mod hosts;

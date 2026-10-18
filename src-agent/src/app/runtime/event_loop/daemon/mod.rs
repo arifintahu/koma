@@ -481,6 +481,7 @@ pub(in crate::app::runtime) fn daemon_loop(
         //     `Relaxed` is sufficient: this is a single boolean flag with no other
         //     memory it must publish/acquire — teardown reads only owned `state`.
         if hub.should_shutdown() || shutting_down.load(Ordering::Relaxed) {
+            hub.flush_exit_response();
             let hub_reason = hub.should_shutdown();
             let sig_reason = shutting_down.load(Ordering::Relaxed);
             crate::model::store::append_global_error_log(

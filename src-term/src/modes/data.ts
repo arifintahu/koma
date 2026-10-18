@@ -273,6 +273,7 @@ export interface NotificationsState {
 export interface MenuResultEvent {
   request_id: string
   error: string | null
+  exit: boolean
 }
 
 export interface MenuCapabilitiesEvent {

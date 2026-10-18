@@ -473,13 +473,15 @@ function buildTour(id: TourId): BuiltTour | null {
             targets: ['[data-tour="provider-form-pick"]', '[data-tour="provider-form"]'],
             title: 'Choose a preset',
             description:
-              'Pick OpenRouter, OpenAI, Groq, … or Custom. Next opens a common preset form.',
+              'Pick Koma, NetraRuntime, GismaPro, OpenRouter, or Custom. Next opens a common preset form.',
             side: 'left',
             onNext: async () => {
               if (qs('[data-tour="provider-form-pick"]')) {
                 const pref =
+                  qs<HTMLElement>('[data-tour="provider-preset-koma"]') ||
+                  qs<HTMLElement>('[data-tour="provider-preset-netraruntime"]') ||
+                  qs<HTMLElement>('[data-tour="provider-preset-gismapro"]') ||
                   qs<HTMLElement>('[data-tour="provider-preset-openrouter"]') ||
-                  qs<HTMLElement>('[data-tour="provider-preset-openai"]') ||
                   qs<HTMLElement>('[data-tour="provider-preset-custom"]')
                 pref?.click()
                 await waitFor('[data-tour="provider-form"]', 2500)

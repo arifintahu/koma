@@ -114,7 +114,7 @@ where
         }
         match frame_rx.recv_timeout(remaining) {
             Ok(frame) => match frame.event {
-                DaemonEvent::Hello { version } => {
+                DaemonEvent::Hello { version, .. } => {
                     daemon_version = Some(version);
                     break;
                 }

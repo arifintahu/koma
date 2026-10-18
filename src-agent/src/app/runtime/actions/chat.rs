@@ -117,17 +117,56 @@ pub(super) fn handle_submit(
         state.rest.pending_steer_sel = n.saturating_sub(1);
         return Ok(());
     }
-    // Real user activity (immediate-kickoff path): reset the extension-injection
-    // budget counter (cost-DoS guard, review finding — see
-    // `SessionRuntime::ext_injected_turns`) now that we know this submit is a real,
-    // non-steer user turn proceeding past the busy guards above. NEVER reset from a
-    // synthetic kickoff — bash/subagent/ext-nudge auto-wakes
-    // (`event_loop::sessions::deferred`) call `start_stream_task` directly and never
-    // go through this handler.
-    state.rest.fg_mut().ext_injected_turns = 0;
-    state.rest.fg().call_track.invalidate_inspections();
-    // Prompt-classifier (PC): keep a copy of the user's prompt to
-    // classify in the background once the turn is kicked off.
+    // Legacy submit retains its status/toast behavior; tracked callers use the
+    // fallible fresh-only helper directly and receive an accurate disposition.
+    let _ = kickoff_fresh_turn(text, state, client, handle);
+    Ok(())
+}
+
+/// Match the send route; unknown or stale capability data remains fail-open.
+pub(crate) fn model_accepts_images(state: &AppState) -> bool {
+    // Resolve the SAME route the send will use so the capability guard checks the
+    // model that actually receives the image.
+    let main = state.rest.fg().session.as_ref().and_then(|sess| {
+        crate::app::resolve::resolve_role_dispatch(
+            &state.rest.config,
+            &sess.settings,
+            crate::model::app_config::ModelRole::Main,
+        )
+    });
+    match (state.rest.models_cache.as_deref(), main.as_ref()) {
+        // Codex Responses models are image-capable and have no static
+        // catalogue to consult, so never block on a lookup that must miss.
+        (_, Some(m)) if m.api_type == crate::model::app_config::ApiType::Codex => true,
+        // Only trust the catalogue when it was fetched for THIS model's
+        // endpoint. After a mid-session provider/model swap the cache may
+        // still hold the old endpoint's models (missing the new model) —
+        // treating that as "can't see images" wrongly blocks the send. If
+        // the cache is cold or for a different endpoint, assume capable and
+        // never wrongly block (a fresh catalogue re-fetch corrects it).
+        (Some(models), Some(m))
+            if state.rest.models_cache_endpoint.as_deref() == Some(m.endpoint.as_str()) =>
+        {
+            use crate::service::openrouter::ImageCapability;
+            matches!(
+                crate::service::openrouter::model_image_capability(models, &m.model_id),
+                ImageCapability::Supports | ImageCapability::Unknown
+            )
+        }
+        _ => true,
+    }
+}
+
+/// Start one fresh logical user turn. Never enqueue or steer. Callers validate
+/// fresh-turn preconditions (tracked callers reject empty/busy/closed). The caller selects
+/// the foreground session before calling; the returned id survives tool rounds.
+pub(crate) fn kickoff_fresh_turn(
+    text: String,
+    state: &mut AppState,
+    client: &mut Option<Arc<OpenRouterClient>>,
+    handle: &tokio::runtime::Handle,
+) -> Result<String> {
+    anyhow::ensure!(client.is_some() && state.rest.fg().session.is_some(), "no active session");
     let pc_prompt = text.clone();
     // Send-time @-scan backstop (Slice 3): before finalising the user message,
     // scan the typed text for hand-typed `@path/to/image.png` tokens that were
@@ -151,6 +190,38 @@ pub(super) fn handle_submit(
     // attachment instead of shipping a marker-less record.
     let mut attachments = state.rest.take_attachments(&text);
     attachments.extend(scan_attachments);
+    execute_prepared_turn(super::turn_input::PreparedTurnInput { text, attachments }, pc_prompt, state, client, handle)
+}
+
+/// Shared execution tail: consumes only prepared, owned input.
+pub(crate) fn kickoff_prepared_turn(
+    input: super::turn_input::PreparedTurnInput,
+    state: &mut AppState,
+    client: &mut Option<Arc<OpenRouterClient>>,
+    handle: &tokio::runtime::Handle,
+) -> Result<String> {
+    let pc_prompt = input.text.clone();
+    execute_prepared_turn(input, pc_prompt, state, client, handle)
+}
+
+fn execute_prepared_turn(
+    input: super::turn_input::PreparedTurnInput,
+    pc_prompt: String,
+    state: &mut AppState,
+    client: &mut Option<Arc<OpenRouterClient>>,
+    handle: &tokio::runtime::Handle,
+) -> Result<String> {
+    anyhow::ensure!(client.is_some() && state.rest.fg().session.is_some(), "no active session");
+    let super::turn_input::PreparedTurnInput { text, attachments } = input;
+    // Real user activity (immediate-kickoff path): reset the extension-injection
+    // budget counter (cost-DoS guard, review finding — see
+    // `SessionRuntime::ext_injected_turns`) now that we know this submit is a real,
+    // non-steer user turn proceeding past the busy guards above. NEVER reset from a
+    // synthetic kickoff — bash/subagent/ext-nudge auto-wakes
+    // (`event_loop::sessions::deferred`) call `start_stream_task` directly and never
+    // go through this handler.
+    state.rest.fg_mut().ext_injected_turns = 0;
+    state.rest.fg().call_track.invalidate_inspections();
     let had_image = attachments.iter().any(|a| a.is_image());
     // Expand `[Pasted Text #N]` → machine fences BEFORE msglog / push, using the
     // session dir so disk is SoT for body bytes.
@@ -165,14 +236,14 @@ pub(super) fn handle_submit(
             "chat",
             "BUG: fg session missing in handle_submit",
         );
-        return Ok(());
+        anyhow::bail!("no active session");
     };
     let _ = msglog::append(&sess.path, Role::User, &text, None, None);
     sess.conversation
         .push_user_with_attachments(text, attachments);
     if let Err(e) = sess.save() {
         state.rest.fg_mut().status = format!("error: {e}");
-        return Ok(());
+        return Err(e);
     }
     let history = sess.conversation.history();
     // Image-capability guard: if this message carries images and the resolved Main
@@ -181,41 +252,12 @@ pub(super) fn handle_submit(
     // Uses the tri-state `model_image_capability` so an unknown/missing/stale
     // catalogue never wrongly blocks (fail-open: `Unknown` => allow).
     if had_image {
-        // Resolve the SAME route the send will use so the capability guard checks the
-        // model that actually receives the image.
-        let main = state.rest.fg().session.as_ref().and_then(|sess| {
-            crate::app::resolve::resolve_role_dispatch(
-                &state.rest.config,
-                &sess.settings,
-                crate::model::app_config::ModelRole::Main,
-            )
-        });
-        let capable = match (state.rest.models_cache.as_deref(), main.as_ref()) {
-            // Codex Responses models are image-capable and have no static
-            // catalogue to consult, so never block on a lookup that must miss.
-            (_, Some(m)) if m.api_type == crate::model::app_config::ApiType::Codex => true,
-            // Only trust the catalogue when it was fetched for THIS model's
-            // endpoint. After a mid-session provider/model swap the cache may
-            // still hold the old endpoint's models (missing the new model) —
-            // treating that as "can't see images" wrongly blocks the send. If
-            // the cache is cold or for a different endpoint, assume capable and
-            // never wrongly block (a fresh catalogue re-fetch corrects it).
-            (Some(models), Some(m))
-                if state.rest.models_cache_endpoint.as_deref() == Some(m.endpoint.as_str()) =>
-            {
-                use crate::service::openrouter::ImageCapability;
-                matches!(
-                    crate::service::openrouter::model_image_capability(models, &m.model_id),
-                    ImageCapability::Supports | ImageCapability::Unknown
-                )
-            }
-            _ => true,
-        };
+        let capable = model_accepts_images(state);
         if !capable {
             crate::app::runtime::stream::push_image_unsupported_notice(&mut state.rest);
             state.rest.reset_scroll();
             state.rest.fg_mut().status = "ready".into();
-            return Ok(());
+            anyhow::bail!("model does not support image input");
         }
     }
     state.rest.reset_scroll();
@@ -248,7 +290,17 @@ pub(super) fn handle_submit(
     // Active session this submit drives (always foreground; captured into a local
     // before the call so it isn't read while a `&mut state.rest` is live).
     let fgi = state.rest.foreground;
+    let turn_id = state.rest.fg_mut().begin_turn();
     start_stream_task(history, state, fgi, client, handle);
+    if !state.rest.fg().waiting {
+        let error = state.rest.fg().toast.as_ref()
+            .map(|(message, _, _)| message.clone())
+            .unwrap_or_else(|| "stream kickoff failed".into());
+        let rt = state.rest.fg_mut();
+        rt.take_stream();
+        rt.complete_turn(crate::ipc::proto::turn::TurnState::Failed, Some(error.clone()));
+        anyhow::bail!(error);
+    }
 
     // Prompt-classifier (PC), advisory + non-blocking: once per turn, if
     // the harness is enabled, classify the user prompt on a background
@@ -277,7 +329,7 @@ pub(super) fn handle_submit(
             });
         });
     }
-    Ok(())
+    Ok(turn_id)
 }
 
 /// Handle `Action::Shell`: run a `!`-prefixed command in the foreground session's
@@ -645,6 +697,7 @@ pub(super) fn handle_deny_tool(state: &mut AppState) -> Result<()> {
         let _ = sess.save();
     }
     // Reset the agentic-loop state and end the turn.
+    state.rest.fg_mut().complete_turn(crate::ipc::proto::turn::TurnState::Interrupted, None);
     state.rest.fg_mut().pending_tool_calls.clear();
     state.rest.fg_mut().tool_idx = 0;
     state.rest.fg_mut().tool_results.clear();

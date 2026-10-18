@@ -18,6 +18,8 @@
 //! - `koma run --prompt '…'|--prompt-file PATH` — headless one-shot against the
 //!   default session-daemon (optional `--name`, `--workdir`, `--once`, `--timeout`).
 //!   Not standalone / `alone`.
+//! - `koma sdk serve` — SDK stdio adapter (no flags); `koma sdk --help` for
+//!   dedicated help. Routed separately before this permissive legacy parser.
 //! - `--internet-fullmode-install` — provision the Python full-mode (browser) environment and exit.
 //! - `--internet-fullmode-uninstall` — remove the Python full-mode environment and exit.
 //! - `--force`                     — modifier for `--internet-fullmode-install`: force a reinstall
@@ -371,6 +373,7 @@ pub fn print_help() -> i32 {
          \x20 server                         headless daemon over stdio (for remote dev via SSH)\n\
          \x20 remote <user@host>              SSH-connect to a remote machine and run koma\n\
          \x20 run                            headless one-shot against the session daemon\n\
+         \x20 sdk serve                      SDK stdio adapter (no flags; see `koma sdk --help`)\n\
          \n\
          flags:\n\
          \x20 --resume                       open the resume hub\n\

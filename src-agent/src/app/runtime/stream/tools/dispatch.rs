@@ -379,6 +379,7 @@ pub(super) fn finish_tool_round(
         state.rest.sessions[sess_idx].current_task = None;
         state.rest.sessions[sess_idx].agent_steps = 0;
         state.rest.sessions[sess_idx].status = "no active session".into();
+        state.rest.sessions[sess_idx].complete_turn(crate::ipc::proto::turn::TurnState::Failed, Some("no active session".into()));
         return;
     };
     // The tool round is done; this re-stream is a model wait, so label it the same
@@ -451,6 +452,7 @@ pub(crate) fn deny_all_pending(state: &mut AppState, sess_idx: usize, reason: &s
     rt.approval_reason = None;
     rt.waiting = false;
     rt.current_task = None;
+    rt.complete_turn(crate::ipc::proto::turn::TurnState::Failed, Some(reason.into()));
     // Kill every BLOCKING running sub-agent and drop the pending queue so a
     // killed WC turn can't ghost-restart via orphaned tasks or stale flags.
     // Detached background agents are preserved (include_detached = false),

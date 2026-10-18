@@ -15,6 +15,7 @@
 //! | `koma legacy alone` | current standalone no-daemon TUI ([`app::run`]); REFUSES if a daemon is already alive. |
 //! | `koma daemon <status\|kill\|restart\|clean\|delete>` | daemon management CLI then exit. |
 //! | `koma ext install --dev <zip\|dir>` | sideload an unsigned local extension (offline, no koma.run account) then exit. |
+//! | `koma sdk serve` | SDK stdio adapter on a Tokio runtime (no flags; `koma sdk --help` for dedicated help). |
 //! | `koma doctor [-v\|--verbose]` | flutter-doctor-style readiness report, then exit. Read-only. |
 //! | `koma gui` | feature-gated (`--features gui`) desktop client — a wry webview hosting xterm.js that renders the real koma terminal client spawned in a PTY. |
 //! | `koma --internet-fullmode-install [--force]` | provision Python full-mode (browser) env then exit. |
@@ -43,6 +44,7 @@
 
 mod app;
 mod cli;
+mod cli_sdk;
 mod coding;
 mod config;
 mod controller;
@@ -89,6 +91,14 @@ fn open_standalone(opts: cli::Opts) -> anyhow::Result<()> {
 }
 
 fn main() -> anyhow::Result<()> {
+    #[cfg(windows)]
+    if std::env::var_os(remote::auth_windows::PIPE_ENV).is_some() {
+        return remote::auth_windows::run_helper();
+    }
+    #[cfg(windows)]
+    if std::env::args().nth(1).as_deref() == Some("--ssh-askpass-self-test") {
+        return remote::auth_windows::self_test();
+    }
     if std::env::args().nth(1).as_deref() == Some("remote-usage") {
         return model::usage::reader::run();
     }
@@ -149,6 +159,28 @@ fn main() -> anyhow::Result<()> {
 
     if let Some(result) = app::git_editor_helper() {
         return result;
+    }
+
+    // SDK owns its complete argument tail, including help/version-like tokens.
+    // Dispatch before the global all-args scan, config migration, catalogue refresh,
+    // launcher rewriting, or terminal initialization. Stdout belongs to the protocol.
+    if let Some(command) = cli_sdk::parse(std::env::args()) {
+        return match command {
+            cli_sdk::SdkCli::Serve => {
+                let runtime = tokio::runtime::Builder::new_multi_thread()
+                    .enable_all()
+                    .build()?;
+                let result = runtime.block_on(crate::app::runtime::sdk::serve());
+                // Tokio stdin may have an uncancellable blocking read pending.
+                // Detach must not wait for the parent to write another line.
+                runtime.shutdown_timeout(std::time::Duration::from_millis(250));
+                result
+            },
+            cli_sdk::SdkCli::Help => std::process::exit(cli_sdk::print_help()),
+            cli_sdk::SdkCli::Usage(error) => {
+                std::process::exit(cli_sdk::print_usage(&error));
+            }
+        };
     }
 
     // --- short-circuit: `--version`/`-V`/`--help`/`-h` (#75) ---

@@ -52,6 +52,10 @@ koma run --prompt 'ping' --once --timeout 120
 koma run --prompt-file ./instructions.txt --name batch-1 --workdir "$PWD"
 ```
 
+Partner integrations can use the [Python and JavaScript/TypeScript SDKs](src-core-sdk/README.md)
+over `koma sdk serve`. The SDKs use an installed Koma binary; they do not download or
+build the engine. See the SDK guide for local/artifact installation and compatibility checks.
+
 Unknown commands (e.g. `koma docker`) print help and exit 1.
 
 Works on Linux, macOS, and Windows. On Windows, use the PowerShell installer — it downloads and runs the MSI directly. A separate Git Bash install is not required: the MSI uses Git for Windows when it is already present, and otherwise ships a fallback shell:

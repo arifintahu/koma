@@ -10,7 +10,7 @@ use crate::app::mode::Mode;
 use crate::app::state::AppState;
 use crate::controller::input::{handle_key, handle_paste, Action};
 use crate::dto::chat::Role;
-use crate::ipc::proto::{DaemonEvent, KeyWire};
+use crate::ipc::proto::{DaemonEvent, KeyWire, TurnAttachmentInput};
 use crate::service::openrouter::OpenRouterClient;
 
 use crate::app::runtime::actions::apply_action;
@@ -19,7 +19,148 @@ use crate::app::runtime::commands::compact::handle_compact;
 
 use super::core::DaemonHub;
 
+pub(super) struct OwnedTurn {
+    pub request_id: String,
+    pub text: String,
+    pub attachments: Vec<TurnAttachmentInput>,
+    pub enqueue: bool,
+    pub expected: Option<String>,
+}
+
 impl DaemonHub {
+    /// Owned submission, enqueue, and atomic targeted replacement share preflight.
+    pub(super) fn owned_turn(
+        &mut self,
+        idx: usize,
+        state: &mut AppState,
+        client: &mut Option<Arc<OpenRouterClient>>,
+        handle: &tokio::runtime::Handle,
+        call: OwnedTurn,
+    ) {
+        let OwnedTurn {
+            request_id,
+            text,
+            attachments,
+            enqueue,
+            expected,
+        } = call;
+        use crate::ipc::proto::TurnDisposition;
+        let mut interrupted_turn_id = None;
+        let result = (|| -> anyhow::Result<(TurnDisposition, Option<String>)> {
+            let rt = state.rest.fg();
+            if let Some(id) = expected.as_ref() {
+                anyhow::ensure!(rt.active_turn.as_ref().is_some_and(|t| &t.id == id), "stale_turn");
+            }
+            anyhow::ensure!(!rt.closed && rt.session.is_some(), "no active session");
+            anyhow::ensure!(client.is_some(), "no active client");
+            if enqueue {
+                anyhow::ensure!(rt.waiting && rt.active_turn.is_some(), "no active waiting turn");
+                anyhow::ensure!(!rt.awaiting_shell && rt.compact_anim_start.is_none() && rt.compact_pending.is_none() && rt.compact_apply_at.is_none(), "session busy");
+                anyhow::ensure!(rt.pending_steer.len() < 5, "queue_full");
+            } else if expected.is_none() {
+                anyhow::ensure!(!rt.is_ui_busy() && rt.active_turn.is_none() && rt.compact_anim_start.is_none() && rt.compact_pending.is_none() && rt.compact_apply_at.is_none(), "session busy");
+            }
+            let prepared = crate::app::runtime::actions::turn_input::prepare(state, text, attachments)?;
+            if enqueue {
+                let rt = state.rest.fg_mut();
+                rt.ext_injected_turns = 0;
+                rt.call_track.invalidate_inspections();
+                rt.pending_steer.push(crate::app::state::FollowUp { text: prepared.text, attachments: prepared.attachments });
+                state.rest.pending_steer_sel = state.rest.fg().pending_steer.len().saturating_sub(1);
+                return Ok((TurnDisposition::Queued, None));
+            }
+            if let Some(id) = expected.as_ref() {
+                apply_action(Action::Interrupt, state, client, handle)?;
+                interrupted_turn_id = Some(id.clone());
+                self.force_resync = true;
+            }
+            let id = crate::app::runtime::actions::chat::kickoff_prepared_turn(prepared, state, client, handle)?;
+            Ok((TurnDisposition::Started, Some(id)))
+        })();
+        let (disposition, turn_id, reason) = match result {
+            Ok((d, id)) => (d, id, None),
+            Err(e) => (TurnDisposition::Rejected, None, Some(format!("{e:#}"))),
+        };
+        let event = if expected.is_some() {
+            DaemonEvent::InterruptAndSubmitResult { request_id, disposition, interrupted_turn_id, turn_id, reason }
+        } else {
+            DaemonEvent::TurnResult { request_id, disposition, turn_id, reason }
+        };
+        self.send_to(idx, event);
+    }
+
+    /// Tracked submission never enters the legacy mid-turn steering path.
+    pub(super) fn submit_turn(
+        &mut self,
+        idx: usize,
+        state: &mut AppState,
+        client: &mut Option<Arc<OpenRouterClient>>,
+        handle: &tokio::runtime::Handle,
+        request_id: String,
+        text: String,
+    ) {
+        use crate::ipc::proto::turn::TurnDisposition;
+        let rt = state.rest.fg();
+        let rejection = if rt.closed || rt.session.is_none() {
+            Some("no active session")
+        } else if client.is_none() {
+            Some("no active client")
+        } else if rt.is_ui_busy() || rt.active_turn.is_some() || rt.compact_anim_start.is_some() {
+            Some("session busy")
+        } else if text.trim().is_empty() {
+            Some("empty prompt")
+        } else {
+            None
+        };
+        if let Some(reason) = rejection {
+            self.send_to(idx, DaemonEvent::TurnResult {
+                request_id,
+                disposition: TurnDisposition::Rejected,
+                turn_id: None,
+                reason: Some(reason.into()),
+            });
+            return;
+        }
+        let result = crate::app::runtime::actions::chat::kickoff_fresh_turn(text, state, client, handle);
+        let (disposition, turn_id, reason) = match result {
+            Ok(id) if state.rest.fg().waiting => (TurnDisposition::Started, Some(id), None),
+            Ok(_) => (TurnDisposition::Rejected, None, Some(state.rest.fg().status.clone())),
+            Err(error) => (TurnDisposition::Rejected, None, Some(format!("{error:#}"))),
+        };
+        self.send_to(idx, DaemonEvent::TurnResult { request_id, disposition, turn_id, reason });
+    }
+
+    /// A stale stop must not cut a newer turn, including one started this tick.
+    pub(super) fn interrupt_turn(
+        &mut self,
+        idx: usize,
+        state: &mut AppState,
+        client: &mut Option<Arc<OpenRouterClient>>,
+        handle: &tokio::runtime::Handle,
+        request_id: String,
+        turn_id: String,
+    ) {
+        use crate::ipc::proto::turn::TurnDisposition;
+        if state.rest.fg().active_turn.as_ref().is_none_or(|turn| turn.id != turn_id) {
+            self.send_to(idx, DaemonEvent::TurnResult {
+                request_id,
+                disposition: TurnDisposition::Rejected,
+                turn_id: Some(turn_id),
+                reason: Some("stale_turn".into()),
+            });
+            return;
+        }
+        let result = apply_action(Action::Interrupt, state, client, handle);
+        self.force_resync = true;
+        let (disposition, reason) = match result {
+            Ok(()) => (TurnDisposition::Interrupted, None),
+            Err(error) => (TurnDisposition::Rejected, Some(format!("{error:#}"))),
+        };
+        self.send_to(idx, DaemonEvent::TurnResult {
+            request_id, disposition, turn_id: Some(turn_id), reason,
+        });
+    }
+
     // Submit composed text to the foreground session — identical to the local
     // Enter-on-composer path (`Action::Submit` carries the text directly).
     pub(super) fn submit_input(

@@ -211,6 +211,45 @@ pub(super) fn file_known_in_history(
     false
 }
 
+/// Reject a human approval without executing the call. Returns true when rejected.
+pub(in crate::app::runtime::stream::tools) fn reject_approval(
+    state: &mut AppState,
+    idx: usize,
+    call: &ToolCall,
+) -> bool {
+    if state.rest.sessions[idx].policy.approval != crate::ipc::proto::turn::ApprovalPolicy::Reject {
+        return false;
+    }
+    let rt = &mut state.rest.sessions[idx];
+    rt.tool_results.push((call.id.clone(), serde_json::json!({
+        "error": "approval_rejected", "executed": false,
+        "reason": "session policy rejects human approval requests"
+    }).to_string()));
+    rt.tool_idx += 1;
+    rt.approval_reason = None;
+    rt.awaiting_approval = false;
+    true
+}
+
+/// Park for a human decision, or resolve this call without execution under Reject.
+/// True means parked; false means rejected and advanced to the next call.
+pub(in crate::app::runtime::stream::tools) fn park_or_reject(
+    state: &mut AppState,
+    idx: usize,
+    call: &ToolCall,
+    reason: Option<String>,
+    status: String,
+) -> bool {
+    if reject_approval(state, idx, call) {
+        return false;
+    }
+    let rt = &mut state.rest.sessions[idx];
+    rt.approval_reason = reason;
+    rt.awaiting_approval = true;
+    rt.status = status;
+    true
+}
+
 /// Park only the current call when a controller can answer the outage approval.
 pub(super) fn park_classifier_unavailable(
     state: &mut AppState,
@@ -219,6 +258,9 @@ pub(super) fn park_classifier_unavailable(
     reason: &str,
 ) -> bool {
     let rt = &mut state.rest.sessions[idx];
+    if rt.policy.approval == crate::ipc::proto::turn::ApprovalPolicy::Reject {
+        return false;
+    }
     if !state.rest.approval_sessions.contains(&rt.id)
         || rt
             .pending_tool_calls
@@ -594,12 +636,12 @@ pub(crate) fn process_tools(
                         {
                             state.rest.sessions[sess_idx].approval_reason = None;
                         } else {
-                            state.rest.sessions[sess_idx].approval_reason =
-                                Some(format!("classifier: ok — {}", verdict.reason));
-                            state.rest.sessions[sess_idx].awaiting_approval = true;
-                            state.rest.sessions[sess_idx].status =
-                                format!("approve {}? [y/n]", call.function.name);
-                            return;
+                            if park_or_reject(state, sess_idx, &call,
+                                Some(format!("classifier: ok — {}", verdict.reason)),
+                                format!("approve {}? [y/n]", call.function.name)) {
+                                return;
+                            }
+                            continue;
                         }
                     } else if verdict.available {
                         if mode == AgentMode::Auto
@@ -613,11 +655,11 @@ pub(crate) fn process_tools(
                             state.rest.sessions[sess_idx].tool_idx += 1;
                             continue;
                         }
-                        state.rest.sessions[sess_idx].approval_reason = Some(verdict.reason);
-                        state.rest.sessions[sess_idx].awaiting_approval = true;
-                        state.rest.sessions[sess_idx].status =
-                            format!("approve {}? [y/n]", call.function.name);
-                        return;
+                        if park_or_reject(state, sess_idx, &call, Some(verdict.reason),
+                            format!("approve {}? [y/n]", call.function.name)) {
+                            return;
+                        }
+                        continue;
                     } else {
                         if park_classifier_unavailable(state, sess_idx, &call, &verdict.reason) {
                             return;
@@ -636,10 +678,11 @@ pub(crate) fn process_tools(
                 }
                 None => {
                     if mode == AgentMode::Normal {
-                        state.rest.sessions[sess_idx].awaiting_approval = true;
-                        state.rest.sessions[sess_idx].status =
-                            format!("approve {}? [y/n]", call.function.name);
-                        return;
+                        if park_or_reject(state, sess_idx, &call, None,
+                            format!("approve {}? [y/n]", call.function.name)) {
+                            return;
+                        }
+                        continue;
                     }
                 }
             }
@@ -688,6 +731,82 @@ pub(crate) fn process_tools(
 mod outage_tests {
     use super::*;
     use crate::dto::chat::FunctionCall;
+
+    #[test]
+    fn unattended_reject_resolves_every_human_park_without_execution() {
+        for name in ["delete", "git_worktree", "plan_ready", "mission_ready", "mission_verify"] {
+            let mut state = AppState::new(crate::app::mode::Mode::Chat);
+            state.rest.fg_mut().policy.approval = crate::ipc::proto::turn::ApprovalPolicy::Reject;
+            let call = ToolCall { id: "reject".into(), kind: "function".into(),
+                function: FunctionCall { name: name.into(), arguments: "{}".into() } };
+            state.rest.fg_mut().pending_tool_calls.push(call.clone());
+            assert!(!park_or_reject(&mut state, 0, &call, None, "approve?".into()));
+            assert!(!state.rest.fg().awaiting_approval);
+            assert_eq!(state.rest.fg().tool_idx, 1);
+            let result: serde_json::Value = serde_json::from_str(&state.rest.fg().tool_results[0].1).unwrap();
+            assert_eq!(result["executed"], false);
+            assert_eq!(result["error"], "approval_rejected");
+        }
+    }
+
+    #[test]
+    fn unattended_ready_rejection_happens_before_plan_or_mission_persistence() {
+        for (name, mode) in [("plan_ready", AgentMode::Plan), ("mission_ready", AgentMode::Sdlc)] {
+            let mut state = AppState::new(crate::app::mode::Mode::Chat);
+            state.rest.fg_mut().policy.approval = crate::ipc::proto::turn::ApprovalPolicy::Reject;
+            let call = ToolCall { id: "ready".into(), kind: "function".into(),
+                function: FunctionCall { name: name.into(), arguments: "{}".into() } };
+            let flow = if name == "plan_ready" {
+                intercepts::intercept_plan_ready(&mut state, 0, &call, mode)
+            } else {
+                intercepts::intercept_mission_ready(&mut state, 0, &call, mode)
+            };
+            assert!(matches!(flow, InterceptFlow::Continue));
+            assert!(!state.rest.fg().awaiting_approval);
+            assert_eq!(state.rest.fg().tool_idx, 1);
+            assert!(state.rest.fg().tool_results[0].1.contains("approval_rejected"));
+        }
+    }
+
+    #[test]
+    fn unattended_classifier_outage_never_parks_even_with_controller() {
+        let mut state = AppState::new(crate::app::mode::Mode::Chat);
+        state.rest.fg_mut().policy.approval = crate::ipc::proto::turn::ApprovalPolicy::Reject;
+        let call = ToolCall { id: "outage".into(), kind: "function".into(),
+            function: FunctionCall { name: "delete".into(), arguments: "{}".into() } };
+        state.rest.fg_mut().pending_tool_calls.push(call.clone());
+        assert!(!park_classifier_unavailable(&mut state, 0, &call, "timeout"));
+        assert!(!state.rest.fg().awaiting_approval);
+    }
+
+    #[test]
+    fn unattended_normal_risky_call_returns_executed_false_to_model() {
+        let path = std::env::temp_dir().join(format!("koma-reject-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&path).unwrap();
+        let _cleanup = scopeguard::guard(path.clone(), |path| { let _ = std::fs::remove_dir_all(path); });
+        let mut state = AppState::new(crate::app::mode::Mode::Chat);
+        state.rest.fg_mut().session = Some(crate::model::session::Session::new(
+            "reject-test".into(), path, "test".into(), Default::default(),
+            crate::model::conversation::Conversation::new("test"),
+        ));
+        state.rest.fg_mut().agent_mode = AgentMode::Normal;
+        state.rest.fg_mut().policy.approval = crate::ipc::proto::turn::ApprovalPolicy::Reject;
+        state.rest.fg_mut().pending_tool_calls.push(ToolCall {
+            id: "risky".into(), kind: "function".into(),
+            function: FunctionCall { name: "delete".into(), arguments: "{}".into() },
+        });
+        let calls = state.rest.fg().pending_tool_calls.clone();
+        state.rest.fg_mut().session.as_mut().unwrap().conversation
+            .push_assistant_with_tools(String::new(), calls, None, None);
+        let runtime = tokio::runtime::Builder::new_current_thread().build().unwrap();
+        process_tools(&mut state, 0, &None, runtime.handle());
+        assert!(!state.rest.fg().awaiting_approval);
+        let history = state.rest.fg().session.as_ref().unwrap().conversation.history();
+        let result = history.iter().find(|message| message.role == crate::dto::chat::Role::Tool).unwrap();
+        let result: serde_json::Value = serde_json::from_str(&result.content).unwrap();
+        assert_eq!(result["executed"], false);
+        assert_eq!(result["error"], "approval_rejected");
+    }
 
     #[test]
     fn normal_risky_call_parks_but_plan_block_does_not_prompt() {

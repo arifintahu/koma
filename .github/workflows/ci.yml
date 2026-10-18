@@ -22,6 +22,38 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  sdk:
+    name: SDK (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Python SDK tests
+        env:
+          PYTHONPATH: src-core-sdk/python/src
+        run: python -m unittest discover -s src-core-sdk/python/tests -v
+      - name: Install fixture validator
+        run: python -m pip install jsonschema
+      - name: Fixture conformance
+        run: python src-core-sdk/conformance/test_fake_adapter.py
+      - name: Install TypeScript build dependencies
+        working-directory: src-core-sdk/typescript
+        run: npm ci
+      - name: TypeScript SDK build and tests
+        working-directory: src-core-sdk/typescript
+        env:
+          PYTHON: python
+        run: npm test
+
   test:
     name: test (${{ matrix.name }})
     runs-on: ${{ matrix.os }}
@@ -68,6 +100,15 @@ jobs:
 
       - name: Tests (agent)
         run: cargo test --workspace --no-default-features --all-targets
+
+      - name: First-run setup exit over native IPC
+        run: |
+          cargo build -p agent --no-default-features
+          python src-term/scripts/verify-setup-exit.py
+
+      - name: Native Windows SSH password helper
+        if: runner.os == 'Windows'
+        run: ./target/debug/koma.exe --ssh-askpass-self-test
 
       # Python daemon transport tests on Windows — validates the TCP transport
       # path that replaces Unix sockets. Only on Windows where the TCP path is

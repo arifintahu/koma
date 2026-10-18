@@ -110,6 +110,9 @@ impl DaemonHub {
                 self.handle_request(client_id, req, state, client, handle);
             }
             HubInbound::Disconnect { client_id } => {
+                if self.exit_delivery == Some(client_id) {
+                    self.exit_delivery = None;
+                }
                 // Transport gone: deregister + pass the controller seat (also disarms the
                 // GUI OAuth side-channel if armed). Unknown id (already Detached) is a no-op.
                 if let Some(idx) = self.clients.iter().position(|c| c.id == client_id) {
@@ -211,6 +214,7 @@ impl DaemonHub {
                     DaemonEvent::MenuResult {
                         request_id,
                         error: None,
+                        exit: false,
                     },
                 );
             }
@@ -469,7 +473,7 @@ impl DaemonHub {
             ClientRequest::GetMenuCapabilities => self.send_to(idx, DaemonEvent::MenuCapabilities { version: 1, usage_reader: true }),
             ClientRequest::ReplaceInputTracked { request_id, text, cursor } => {
                 self.replace_input(idx, state, text, cursor);
-                self.send_to(idx, DaemonEvent::MenuResult { request_id, error: None });
+                self.send_to(idx, DaemonEvent::MenuResult { request_id, error: None, exit: false });
             }
             ClientRequest::Menu { request_id, mode, action } => self.menu(idx, state, client, handle, super::requests_menu::MenuCall { request_id, mode, action }),
             // UUID-keyed foreground switch: resolve the id to an index, reject an
@@ -484,6 +488,30 @@ impl DaemonHub {
             // Enter-on-composer path (`Action::Submit` carries the text directly).
             ClientRequest::SubmitInput { text } => {
                 self.submit_input(idx, state, client, handle, text);
+            }
+            ClientRequest::SubmitTurnWithAttachments { request_id, text, attachments } => {
+                self.owned_turn(idx, state, client, handle, super::requests_turn::OwnedTurn {
+                    request_id, text, attachments, enqueue: false, expected: None,
+                });
+            }
+            ClientRequest::EnqueueFollowUp { request_id, text, attachments } => {
+                self.owned_turn(idx, state, client, handle, super::requests_turn::OwnedTurn {
+                    request_id, text, attachments, enqueue: true, expected: None,
+                });
+            }
+            ClientRequest::InterruptAndSubmit { request_id, turn_id, text, attachments } => {
+                self.owned_turn(idx, state, client, handle, super::requests_turn::OwnedTurn {
+                    request_id, text, attachments, enqueue: false, expected: Some(turn_id),
+                });
+            }
+            ClientRequest::SubmitTurn { request_id, text } => {
+                self.submit_turn(idx, state, client, handle, request_id, text);
+            }
+            ClientRequest::InterruptTurn { request_id, turn_id } => {
+                self.interrupt_turn(idx, state, client, handle, request_id, turn_id);
+            }
+            ClientRequest::SetSessionPolicy { request_id: _, plan, approval } => {
+                self.set_session_policy(idx, state, crate::ipc::proto::turn::SessionPolicy { plan, approval });
             }
 
             ClientRequest::AttachPaste { text, name, force } => {

@@ -289,7 +289,10 @@ impl Write for SyncIpcStream {
 /// carries the SAME hardened security attributes, so a later client cannot connect to
 /// a weaker successor instance. Must run inside a tokio runtime (registers with the
 /// reactor).
-fn create_server_instance(pipe_name: &OsStr, first: bool) -> io::Result<NamedPipeServer> {
+pub(crate) fn create_server_instance(
+    pipe_name: &OsStr,
+    first: bool,
+) -> io::Result<NamedPipeServer> {
     // Build the hardened descriptor; it must outlive the create call below (Windows
     // copies it into the kernel object at creation), so it is dropped (LocalFree'd)
     // only when this function returns.
@@ -301,7 +304,7 @@ fn create_server_instance(pipe_name: &OsStr, first: bool) -> io::Result<NamedPip
     };
 
     let mut opts = ServerOptions::new();
-    opts.first_pipe_instance(first);
+    opts.first_pipe_instance(first).reject_remote_clients(true);
 
     // SAFETY: `sa` is a fully-initialized SECURITY_ATTRIBUTES whose descriptor (`sd`)
     // is valid for the entire call and is NOT freed until after `create…` returns.

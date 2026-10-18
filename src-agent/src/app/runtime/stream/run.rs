@@ -130,6 +130,12 @@ pub(crate) fn abort_current(rest: &mut AppStateRest) {
     rt.compact_pending = None;
 }
 
+fn apply_plan_policy(advertise: &mut Vec<String>, policy: crate::ipc::proto::turn::PlanPolicy) {
+    if policy == crate::ipc::proto::turn::PlanPolicy::Forbid {
+        advertise.retain(|name| name != "plan_enter");
+    }
+}
+
 /// Spawn a streaming task for `history`. Opens a fresh channel, stashes the
 /// receiver in state, and hands the sender to the task — so this request's
 /// events are isolated from any previous one (no generation tagging needed).
@@ -148,6 +154,9 @@ pub(crate) fn start_stream_task(
         Ok(changed) => changed,
         Err(error) => {
             state.rest.sessions[sess_idx].waiting = false;
+            state.rest.sessions[sess_idx].complete_turn(
+                crate::ipc::proto::turn::TurnState::Failed, Some(error.to_string()),
+            );
             state.rest.sessions[sess_idx].set_toast(error.to_string());
             return;
         }
@@ -386,6 +395,7 @@ over sec_remote (stateful socket).\n",
     if let Err(error) = super::mode_contract::append(&mut history, &state.rest.sessions[sess_idx]) {
         let rt = &mut state.rest.sessions[sess_idx];
         rt.waiting = false;
+        rt.complete_turn(crate::ipc::proto::turn::TurnState::Failed, Some(error.to_string()));
         rt.set_toast(error.to_string());
         return;
     }
@@ -660,6 +670,7 @@ over sec_remote (stateful socket).\n",
             advertise.push(tool_name.to_string());
         }
     }
+    apply_plan_policy(&mut advertise, state.rest.sessions[sess_idx].policy.plan);
     // Provider schema generation requires unique function names. Preserve the
     // first definition while deduplicating the fully composed built-in + MCP +
     // security + lifecycle allow-list.
@@ -913,5 +924,18 @@ mod hide_runtime_tools_tests {
         hide_inactive_runtime_tools(&mut names, false, true);
         assert!(names.iter().any(|n| n.starts_with("screen_browser_")));
         assert!(names.iter().all(|n| !n.starts_with("computer_")));
+    }
+}
+
+#[cfg(test)]
+mod unattended_policy_tests {
+    #[test]
+    fn unattended_forbid_omits_only_plan_enter() {
+        use crate::ipc::proto::turn::PlanPolicy;
+        let mut names = vec!["read".into(), "plan_enter".into(), "mission_ready".into()];
+        super::apply_plan_policy(&mut names, PlanPolicy::Allow);
+        assert_eq!(names.len(), 3);
+        super::apply_plan_policy(&mut names, PlanPolicy::Forbid);
+        assert_eq!(names, vec!["read", "mission_ready"]);
     }
 }

@@ -102,7 +102,7 @@ fn next_paste_seq(pastes_dir: &Path) -> usize {
 /// image at all, and (b) as the mime fallback when `infer` can't identify the
 /// bytes at all (returns `None`) — some small/edge images aren't covered by
 /// `infer`, so we trust the extension exactly as before in that case.
-fn sniff_image_mime(path: &Path, bytes: &[u8]) -> Option<String> {
+pub(crate) fn sniff_image_mime(path: &Path, bytes: &[u8]) -> Option<String> {
     let ext = path
         .extension()
         .and_then(|e| e.to_str())

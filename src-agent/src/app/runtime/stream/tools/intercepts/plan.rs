@@ -55,6 +55,13 @@ pub(in crate::app::runtime::stream::tools) fn intercept_plan_enter(
     call: &ToolCall,
     mode: AgentMode,
 ) -> InterceptFlow {
+    if state.rest.sessions[sess_idx].policy.plan == crate::ipc::proto::turn::PlanPolicy::Forbid {
+        state.rest.sessions[sess_idx].tool_results.push((call.id.clone(),
+            serde_json::json!({"error": "plan_forbidden", "executed": false,
+                "reason": "plan mode is forbidden by session policy"}).to_string()));
+        state.rest.sessions[sess_idx].tool_idx += 1;
+        return InterceptFlow::Continue;
+    }
     let result = crate::app::runtime::stream::tools::dispatch::run_tool(state, sess_idx, call);
     let final_result = if result == crate::tool::plan::PLAN_ENTER_SENTINEL {
         if mode == AgentMode::Plan {
@@ -93,6 +100,9 @@ pub(in crate::app::runtime::stream::tools) fn intercept_plan_ready(
             "plan_ready is only available in plan mode".to_string(),
         ));
         state.rest.sessions[sess_idx].tool_idx += 1;
+        return InterceptFlow::Continue;
+    }
+    if super::super::approval::reject_approval(state, sess_idx, call) {
         return InterceptFlow::Continue;
     }
     // Settled-session guard: plan_ready is only accepted once ALL of this
@@ -242,11 +252,12 @@ pub(in crate::app::runtime::stream::tools) fn intercept_plan_ready(
     // handlers answer this exact plan_ready call. The digest renders in the
     // transcript (via the rewritten tool-call args), so `approval_reason` is
     // unused here — the plan-ready overlay shows only the y/a/n footer.
-    state.rest.sessions[sess_idx].awaiting_approval = true;
-    state.rest.sessions[sess_idx].approval_reason = None;
-    state.rest.sessions[sess_idx].status =
-        "plan ready - [y] approve  [a] approve & compact  [n] chat more".to_string();
-    InterceptFlow::Return
+    if super::super::approval::park_or_reject(state, sess_idx, call, None,
+        "plan ready - [y] approve  [a] approve & compact  [n] chat more".to_string()) {
+        InterceptFlow::Return
+    } else {
+        InterceptFlow::Continue
+    }
 }
 
 pub(in crate::app::runtime::stream::tools) fn intercept_checklist_plan(

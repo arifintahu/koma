@@ -1,7 +1,7 @@
 //! SSH password authentication via the `SSH_ASKPASS` mechanism.
 //!
 //! When key-based auth fails, we prompt for a password and feed it to ssh
-//! through a temporary askpass script. This avoids stdin conflicts with our
+//! through a platform-native askpass helper. This avoids stdin conflicts with our
 //! IPC framing protocol (stdin is piped for the length-prefixed JSON channel).
 //!
 //! Interactive collection prefers an in-TUI modal (stays on the alternate
@@ -51,58 +51,74 @@ pub(crate) struct ResolvedAuth {
 
 /// Cached SSH password for the session lifetime.
 ///
-/// Holds the password in memory and manages the temporary askpass script.
-/// The script and password are cleaned up on drop.
+/// Holds the password in memory and owns its platform helper until drop.
 pub(crate) struct SshAuth {
     password: String,
     askpass_path: Option<PathBuf>,
+    #[cfg(windows)]
+    pipe: super::auth_windows::PipeAuth,
 }
 
 impl SshAuth {
     /// Create a new auth context with the given password.
     ///
-    /// Writes the askpass helper script to a temporary file with restrictive
-    /// permissions (0o700). Uses `create_new` to avoid TOCTOU races and
-    /// retries with an incrementing attempt counter to handle collisions.
+    /// Windows serves the native helper over a protected pipe. Unix uses an
+    /// owner-only script created exclusively to avoid replacing an existing file.
     pub fn new(password: String) -> Result<Self> {
-        use std::io::Write;
+        #[cfg(windows)]
+        {
+            let path = std::env::current_exe()?;
+            let pipe = super::auth_windows::PipeAuth::new(password.clone())?;
+            Ok(Self {
+                password,
+                askpass_path: Some(path),
+                pipe,
+            })
+        }
+        #[cfg(not(windows))]
+        {
+            use std::io::Write;
 
-        // Create a unique temporary file with restrictive permissions.
-        // Use create_new to avoid TOCTOU races.
-        let dir = std::env::temp_dir();
-        let mut attempt = 0;
-        let askpass_path = loop {
-            let name = format!("koma-askpass-{}-{}", std::process::id(), attempt);
-            let path = dir.join(&name);
-            match std::fs::OpenOptions::new()
-                .write(true)
-                .create_new(true)
-                .open(&path)
-            {
-                Ok(mut f) => {
-                    // Write the script content.
-                    let script = askpass_script_content(&password);
-                    f.write_all(script.as_bytes())?;
-                    // Set permissions to owner-only read+execute.
-                    #[cfg(unix)]
-                    {
-                        use std::os::unix::fs::PermissionsExt;
-                        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o700))?;
+            // Create a unique temporary file with restrictive permissions.
+            // Use create_new to avoid TOCTOU races.
+            let dir = std::env::temp_dir();
+            let mut attempt = 0;
+            let askpass_path = loop {
+                let name = format!("koma-askpass-{}-{}", std::process::id(), attempt);
+                let path = dir.join(&name);
+                match std::fs::OpenOptions::new()
+                    .write(true)
+                    .create_new(true)
+                    .open(&path)
+                {
+                    Ok(mut f) => {
+                        // Write the script content.
+                        let script = askpass_script_content(&password);
+                        f.write_all(script.as_bytes())?;
+                        // Set permissions to owner-only read+execute.
+                        #[cfg(unix)]
+                        {
+                            use std::os::unix::fs::PermissionsExt;
+                            std::fs::set_permissions(
+                                &path,
+                                std::fs::Permissions::from_mode(0o700),
+                            )?;
+                        }
+                        break path;
                     }
-                    break path;
+                    Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
+                        attempt += 1;
+                        continue;
+                    }
+                    Err(e) => return Err(e.into()),
                 }
-                Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
-                    attempt += 1;
-                    continue;
-                }
-                Err(e) => return Err(e.into()),
-            }
-        };
+            };
 
-        Ok(Self {
-            password,
-            askpass_path: Some(askpass_path),
-        })
+            Ok(Self {
+                password,
+                askpass_path: Some(askpass_path),
+            })
+        }
     }
 
     /// Create auth from a pre-supplied password (no terminal prompt needed).
@@ -126,6 +142,10 @@ impl SshAuth {
             cmd.env("SSH_ASKPASS", path);
             cmd.env("SSH_ASKPASS_REQUIRE", "force");
             cmd.env("DISPLAY", ":0");
+            #[cfg(windows)]
+            for (key, value) in self.pipe.environment() {
+                cmd.env(key, value);
+            }
         }
     }
 
@@ -135,6 +155,10 @@ impl SshAuth {
             cmd.env("SSH_ASKPASS", path);
             cmd.env("SSH_ASKPASS_REQUIRE", "force");
             cmd.env("DISPLAY", ":0");
+            #[cfg(windows)]
+            for (key, value) in self.pipe.environment() {
+                cmd.env(key, value);
+            }
         }
     }
 
@@ -145,6 +169,10 @@ impl SshAuth {
             cmd.env("SSH_ASKPASS", path);
             cmd.env("SSH_ASKPASS_REQUIRE", "force");
             cmd.env("DISPLAY", ":0");
+            #[cfg(windows)]
+            for (key, value) in self.pipe.environment() {
+                cmd.env(key, value);
+            }
         }
     }
 }
@@ -161,6 +189,7 @@ impl std::fmt::Debug for SshAuth {
 impl Drop for SshAuth {
     fn drop(&mut self) {
         // Delete the askpass script.
+        #[cfg(not(windows))]
         if let Some(ref path) = self.askpass_path {
             let _ = std::fs::remove_file(path);
         }
@@ -528,6 +557,7 @@ pub(crate) fn prompt_password(user: &str, host: &str) -> Result<String> {
 /// loop where `SSH_ASKPASS_REQUIRE=force` causes the helper to answer
 /// host-key verification prompts ("Are you sure you want to continue
 /// connecting (yes/no)?") with the password string.
+#[cfg(not(windows))]
 fn askpass_script_content(password: &str) -> String {
     // Escape single quotes in the password for safe shell embedding.
     let escaped = password.replace('\'', "'\\''");

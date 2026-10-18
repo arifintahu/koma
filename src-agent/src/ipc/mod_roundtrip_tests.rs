@@ -21,6 +21,7 @@ where
 fn sample_session_snapshot() -> SessionSnapshot {
     use crate::dto::chat::{ChatMessage, Role};
     SessionSnapshot {
+        turn: None,
         id: "11111111-1111-4111-8111-111111111111".to_string(),
         name: "demo".to_string(),
         cwd: "/work/demo".to_string(),
@@ -1071,4 +1072,103 @@ fn context_usage_only_changes_trigger_client_refresh() {
         .cached_tokens = Some(0);
     assert!(super::snapshot::diff(&prev, &next, None, None).needs_full);
     assert!(!super::snapshot::diff(&prev, &prev, None, None).needs_full);
+}
+
+#[test]
+fn menu_exit_defaults_for_old_replies_and_roundtrips_new_replies() {
+    let old: DaemonEvent =
+        serde_json::from_str(r#"{"MenuResult":{"request_id":"old","error":null}}"#).unwrap();
+    assert!(matches!(old, DaemonEvent::MenuResult { exit: false, .. }));
+    let exit = DaemonEvent::MenuResult {
+        request_id: "quit".into(),
+        error: None,
+        exit: true,
+    };
+    let bytes = serde_json::to_vec(&exit).unwrap();
+    assert_eq!(serde_json::from_slice::<DaemonEvent>(&bytes).unwrap(), exit);
+}
+
+#[test]
+fn turn_contract_wire_defaults_and_roundtrips() {
+    let hello: DaemonEvent = serde_json::from_str(r#"{"Hello":{"version":"old"}}"#).unwrap();
+    assert!(matches!(hello, DaemonEvent::Hello { protocol: 0, capabilities, .. } if capabilities.is_empty()));
+    let hello = DaemonEvent::Hello {
+        version: "fingerprint".into(), protocol: IPC_PROTOCOL_VERSION,
+        capabilities: vec!["submit_turn".into(), "interrupt_turn".into(), "session_policy".into()],
+    };
+    assert_eq!(serde_json::from_str::<DaemonEvent>(&serde_json::to_string(&hello).unwrap()).unwrap(), hello);
+    for request in [
+        ClientRequest::SubmitTurn { request_id: "submit".into(), text: "hello".into() },
+        ClientRequest::SubmitTurnWithAttachments { request_id: "owned".into(), text: "hello".into(), attachments: vec![TurnAttachmentInput::ImageFile { path: "/tmp/a.png".into() }] },
+        ClientRequest::EnqueueFollowUp { request_id: "queue".into(), text: "next".into(), attachments: vec![TurnAttachmentInput::PastedText { text: "body".into(), name: Some("notes.txt".into()) }] },
+        ClientRequest::InterruptAndSubmit { request_id: "replace".into(), turn_id: "logical".into(), text: "instead".into(), attachments: vec![] },
+        ClientRequest::InterruptTurn { request_id: "stop".into(), turn_id: "logical".into() },
+        ClientRequest::SetSessionPolicy { request_id: "policy".into(), plan: PlanPolicy::Forbid, approval: ApprovalPolicy::Reject },
+    ] {
+        let value = serde_json::to_value(&request).unwrap();
+        assert_eq!(serde_json::from_value::<ClientRequest>(value).unwrap(), request);
+    }
+    let policy: ClientRequest = serde_json::from_str(r#"{"SetSessionPolicy":{"request_id":"p"}}"#).unwrap();
+    assert!(matches!(policy, ClientRequest::SetSessionPolicy { plan: PlanPolicy::Allow, approval: ApprovalPolicy::Default, .. }));
+    for state in [TurnState::Running, TurnState::Finished, TurnState::Interrupted, TurnState::Failed] {
+        let record = TurnRecord { id: "logical".into(), state, error: None };
+        let value = serde_json::to_value(&record).unwrap();
+        assert_eq!(value["state"].as_str().unwrap(), format!("{state:?}").to_lowercase());
+        assert_eq!(serde_json::from_value::<TurnRecord>(value).unwrap(), record);
+    }
+    for disposition in [TurnDisposition::Started, TurnDisposition::Queued, TurnDisposition::Rejected, TurnDisposition::Interrupted] {
+        let result = DaemonEvent::TurnResult { request_id: "r".into(), disposition, turn_id: Some("logical".into()), reason: None };
+        let value = serde_json::to_value(&result).unwrap();
+        assert_eq!(value["TurnResult"]["disposition"].as_str().unwrap(), format!("{disposition:?}").to_lowercase());
+        assert_eq!(serde_json::from_value::<DaemonEvent>(value).unwrap(), result);
+    }
+    for variant in ["SubmitTurnWithAttachments", "EnqueueFollowUp", "InterruptAndSubmit"] {
+        let value = serde_json::json!({ variant: {"request_id":"r", "text":"hello", "turn_id":"logical"} });
+        let request: ClientRequest = serde_json::from_value(value).unwrap();
+        assert!(match &request {
+            ClientRequest::SubmitTurnWithAttachments { attachments, .. }
+            | ClientRequest::EnqueueFollowUp { attachments, .. }
+            | ClientRequest::InterruptAndSubmit { attachments, .. } => attachments.is_empty(),
+            _ => false,
+        });
+        roundtrip(&request);
+    }
+    for (attachment, kind) in [
+        (TurnAttachmentInput::ImageFile { path: "/tmp/a.png".into() }, "image_file"),
+        (TurnAttachmentInput::PastedText { text: "body".into(), name: None }, "pasted_text"),
+    ] {
+        assert_eq!(serde_json::to_value(&attachment).unwrap()["kind"], kind);
+        roundtrip(&attachment);
+    }
+    for interrupted_turn_id in [None, Some("old".into())] {
+        roundtrip(&DaemonEvent::InterruptAndSubmitResult {
+            request_id: "replace".into(), interrupted_turn_id,
+            disposition: TurnDisposition::Rejected, turn_id: None, reason: Some("failed".into()),
+        });
+    }
+    assert_eq!(serde_json::from_str::<ClientRequest>(r#"{"SubmitTurn":{"request_id":"old","text":"hi"}}"#).unwrap(),
+        ClientRequest::SubmitTurn { request_id: "old".into(), text: "hi".into() });
+    assert_eq!(serde_json::from_str::<ClientRequest>(r#"{"SubmitInput":{"text":"hi"}}"#).unwrap(),
+        ClientRequest::SubmitInput { text: "hi".into() });
+    let old = serde_json::to_value(sample_session_snapshot()).unwrap();
+    assert!(old.get("turn").is_none());
+    let old: SessionSnapshot = serde_json::from_value(old).unwrap();
+    assert!(old.turn.is_none());
+    assert!(serde_json::to_value(RunState::default()).unwrap().get("turn").is_none());
+}
+
+#[test]
+fn turn_projection_changes_force_full_snapshot() {
+    let mut fixture = build_two_session_state(AgentMode::Auto, None, AgentMode::Auto);
+    let before = crate::ipc::snapshot::build_snapshot(&fixture.state);
+    let id = fixture.state.rest.sessions[0].begin_turn();
+    let running = crate::ipc::snapshot::build_snapshot(&fixture.state);
+    assert_eq!(running.sessions[0].turn.as_ref().unwrap().id, id);
+    assert!(crate::ipc::snapshot::diff(&before, &running, None, None).needs_full);
+    fixture.state.rest.sessions[0].complete_turn(TurnState::Finished, None);
+    let finished = crate::ipc::snapshot::build_snapshot(&fixture.state);
+    assert_eq!(finished.sessions[0].turn.as_ref().unwrap().state, TurnState::Finished);
+    assert_eq!(finished.sessions[0].turn.as_ref().unwrap().id, id);
+    assert!(crate::ipc::snapshot::diff(&running, &finished, None, None).needs_full);
+
 }

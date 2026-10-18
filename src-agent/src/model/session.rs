@@ -27,8 +27,17 @@ use crate::model::settings::{LocalConfig, Settings};
 use crate::model::skill::SkillRegistry;
 use crate::model::store::shared_settings_path;
 use crate::resources;
+use crate::ipc::proto::turn::{SessionPolicy, TurnRecord, TurnState};
 use anyhow::Result;
 use std::path::{Path, PathBuf};
+
+/// Credential-free session sidecar, deliberately separate from settings/messages.
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
+#[serde(default)]
+pub struct UnattendedState {
+    pub policy: SessionPolicy,
+    pub last_turn: Option<TurnRecord>,
+}
 
 /// One named chat session.
 ///
@@ -64,6 +73,8 @@ pub struct Session {
     /// Skill catalogue loaded during `rebuild_system`. Contains name→path mappings
     /// so the `skill` tool can load bodies on demand. Refreshed every rebuild.
     pub skills: SkillRegistry,
+    /// Loaded sidecar checkpoint; runtime owns live policy and turn state.
+    pub unattended: UnattendedState,
 }
 
 impl Session {
@@ -95,7 +106,39 @@ impl Session {
             plan_mode_hint: false,
             sdlc_mode_hint: false,
             skills: SkillRegistry::default(),
+            unattended: UnattendedState::default(),
         }
+    }
+
+    /// Load defaults when absent. A captured in-flight turn cannot survive restart.
+    pub fn load_unattended(&self) -> Result<UnattendedState> {
+        let path = self.path.join("unattended.json");
+        let bytes = match std::fs::read(&path) {
+            Ok(bytes) => bytes,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(UnattendedState::default()),
+            Err(e) => return Err(e.into()),
+        };
+        let mut saved: UnattendedState = serde_json::from_slice(&bytes)?;
+        if let Some(turn) = saved.last_turn.as_mut() {
+            if turn.state == TurnState::Running {
+                turn.state = TurnState::Failed;
+                turn.error = Some("daemon restarted".into());
+                crate::model::memory::atomic_write(&path, &serde_json::to_vec_pretty(&saved)?)?;
+            }
+        }
+        Ok(saved)
+    }
+
+    /// Dedicated SetSessionPolicy persistence. Ordinary saves and turn completion
+    /// must not write this sidecar. The caller supplies the active-or-last turn;
+    /// turns after this explicit checkpoint are intentionally not durable.
+    pub fn save_unattended_policy(&self, policy: &SessionPolicy, turn: Option<&TurnRecord>) -> Result<()> {
+        std::fs::create_dir_all(&self.path)?;
+        let saved = UnattendedState { policy: policy.clone(), last_turn: turn.cloned() };
+        crate::model::memory::atomic_write(
+            &self.path.join("unattended.json"), &serde_json::to_vec_pretty(&saved)?,
+        )?;
+        Ok(())
     }
 
     fn settings_path(&self) -> PathBuf {
@@ -224,7 +267,10 @@ impl Session {
             plan_mode_hint: false,
             sdlc_mode_hint: false,
             skills: SkillRegistry::default(),
+            unattended: UnattendedState::default(),
         };
+
+        session.unattended = session.load_unattended()?;
 
         // Ensure the per-session scratch dir exists. Best-effort: a failure here
         // (read-only /tmp, unusual permissions) must never prevent the session

@@ -456,6 +456,8 @@ pub(crate) fn install_daemon_session(
     let unconfigured = resolve_role(&state.rest.config, &sess.settings, ModelRole::Main)
         .is_none_or(|r| !r.is_usable());
     let sess_path = sess.path.clone();
+    runtime.policy = sess.unattended.policy.clone();
+    runtime.last_turn = sess.unattended.last_turn.clone();
     runtime.session = Some(sess);
 
     // Wave-5 restore: rehydrate this session's persisted per-session records so

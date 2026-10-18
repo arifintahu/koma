@@ -30,10 +30,15 @@ impl DaemonHub {
             action,
         } = call;
         let result = menu_action(state, client, handle, &mode, action);
+        let exit = result.is_ok() && state.rest.should_quit;
+        if exit {
+            self.exit_delivery = self.clients.get(idx).map(|client| client.id);
+        }
         self.send_to(
             idx,
             DaemonEvent::MenuResult {
                 request_id,
+                exit,
                 error: result.err().map(|e| e.to_string()),
             },
         );

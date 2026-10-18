@@ -13,7 +13,7 @@ use crate::service::openrouter::OpenRouterClient;
 
 use super::InterceptFlow;
 use crate::app::runtime::stream::tools::approval::{
-    file_known_in_history, spawn_classify_park, tac_inputs,
+    file_known_in_history, park_or_reject, spawn_classify_park, tac_inputs,
 };
 
 pub(in crate::app::runtime::stream::tools) fn intercept_cd(
@@ -183,12 +183,13 @@ pub(in crate::app::runtime::stream::tools) fn intercept_git_worktree(
                 if verdict.available && verdict.allow {
                     // Definite allow. Auto runs inline; Normal still asks.
                     if mode == AgentMode::Normal {
-                        state.rest.sessions[sess_idx].approval_reason =
-                            Some(format!("classifier: ok — {}", verdict.reason));
-                        state.rest.sessions[sess_idx].awaiting_approval = true;
-                        state.rest.sessions[sess_idx].status =
-                            format!("approve {}? [y/n]", call.function.name);
-                        return InterceptFlow::Return;
+                        return if park_or_reject(state, sess_idx, call,
+                            Some(format!("classifier: ok — {}", verdict.reason)),
+                            format!("approve {}? [y/n]", call.function.name)) {
+                            InterceptFlow::Return
+                        } else {
+                            InterceptFlow::Continue
+                        };
                     }
                     // Auto + allow → fall through and run it inline.
                 } else if verdict.available {
@@ -205,11 +206,12 @@ pub(in crate::app::runtime::stream::tools) fn intercept_git_worktree(
                         state.rest.sessions[sess_idx].tool_idx += 1;
                         return InterceptFlow::Continue;
                     }
-                    state.rest.sessions[sess_idx].approval_reason = Some(verdict.reason);
-                    state.rest.sessions[sess_idx].awaiting_approval = true;
-                    state.rest.sessions[sess_idx].status =
-                        format!("approve {}? [y/n]", call.function.name);
-                    return InterceptFlow::Return;
+                    return if park_or_reject(state, sess_idx, call, Some(verdict.reason),
+                        format!("approve {}? [y/n]", call.function.name)) {
+                        InterceptFlow::Return
+                    } else {
+                        InterceptFlow::Continue
+                    };
                 } else {
                     if super::super::approval::park_classifier_unavailable(
                         state,
@@ -230,10 +232,12 @@ pub(in crate::app::runtime::stream::tools) fn intercept_git_worktree(
             // Classifier disabled → Normal asks, Auto runs.
             None => {
                 if mode == AgentMode::Normal {
-                    state.rest.sessions[sess_idx].awaiting_approval = true;
-                    state.rest.sessions[sess_idx].status =
-                        format!("approve {}? [y/n]", call.function.name);
-                    return InterceptFlow::Return;
+                    return if park_or_reject(state, sess_idx, call, None,
+                        format!("approve {}? [y/n]", call.function.name)) {
+                        InterceptFlow::Return
+                    } else {
+                        InterceptFlow::Continue
+                    };
                 }
                 // Auto + classifier disabled → fall through and run inline.
             }

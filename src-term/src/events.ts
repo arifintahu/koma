@@ -49,12 +49,13 @@ export class PendingOperations {
       this.pending.set(id, { resolve, timer })
     })
   }
-  complete({ request_id, error }: MenuResult): void {
+  complete({ request_id, error }: Pick<MenuResult, "request_id" | "error">): boolean {
     const op = this.pending.get(request_id)
-    if (!op) return
+    if (!op) return false
     clearTimeout(op.timer)
     this.pending.delete(request_id)
     op.resolve(error)
+    return true
   }
   close(error = "Connection closed. Your draft is retained."): void {
     for (const id of this.pending.keys()) this.complete({ request_id: id, error })

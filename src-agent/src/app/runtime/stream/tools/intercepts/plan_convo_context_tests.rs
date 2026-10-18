@@ -88,3 +88,19 @@ fn plan_gate_denies_external_and_mutating_calls_but_keeps_inspection() {
         assert_eq!(state.rest.fg().tool_idx, usize::from(!allowed));
     }
 }
+
+#[test]
+fn unattended_plan_enter_forbid_returns_nonexecuted_result() {
+    use crate::dto::chat::{FunctionCall, ToolCall};
+    let mut state = AppState::new(Mode::Chat);
+    state.rest.fg_mut().policy.plan = crate::ipc::proto::turn::PlanPolicy::Forbid;
+    let old_mode = state.rest.fg().agent_mode;
+    let call = ToolCall { id: "plan".into(), kind: "function".into(),
+        function: FunctionCall { name: "plan_enter".into(), arguments: "{}".into() } };
+    assert!(matches!(intercept_plan_enter(&mut state, 0, &call, old_mode), InterceptFlow::Continue));
+    assert_eq!(state.rest.fg().agent_mode, old_mode);
+    assert!(!state.rest.fg().awaiting_approval);
+    let result: serde_json::Value = serde_json::from_str(&state.rest.fg().tool_results[0].1).unwrap();
+    assert_eq!(result["executed"], false);
+    assert_eq!(result["error"], "plan_forbidden");
+}

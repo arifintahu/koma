@@ -5,6 +5,7 @@ import { Action, Fullscreen, InputField, Lines, Note, Panel, nativeMenuInput, ty
 import { RemoteBridge, type RemoteEvent, type RemoteSession } from "./remote.ts"
 import type { RemoteHandoff } from "./protocol.ts"
 import { SessionScreen } from "./session.tsx"
+import { SuspendedScreen } from "./suspended.tsx"
 import type { Theme } from "./theme.ts"
 
 type Stage = "progress" | "auth" | "sessions" | "directories" | "live" | "error"
@@ -39,6 +40,7 @@ export function RemoteScreen({ remote, theme, palette = "dark", syntaxStyle, onH
       else if ("Sessions" in event) { setSessions(event.Sessions); setStage("sessions"); setError("") }
       else if ("Directories" in event) { setPath(event.Directories.path); setLoadedPath(event.Directories.path); setDirectoryPending(false);setDirs(event.Directories.entries); setDirSel(0); setStage("directories"); setError("") }
       else if ("Connected" in event) { resumeId.current = event.Connected.session_id; setSessionId(event.Connected.session_id); setStage("live"); setError("") }
+      else if ("ConnectionLost" in event) { setError(event.ConnectionLost.message); setStage("error"); link.dispose() }
       else if ("Error" in event) { setDirectoryPending(false);setError(event.Error.message); setStage((old) => old === "sessions" || old === "directories" ? old : "error") }
     })
     bridge.current = link
@@ -51,6 +53,12 @@ export function RemoteScreen({ remote, theme, palette = "dark", syntaxStyle, onH
     const timer = setInterval(() => bridge.current?.command("Sessions"), 2000)
     return () => clearInterval(timer)
   }, [stage])
+  useEffect(() => {
+    if (stage === "live") return
+    ctrlC.current = onExit
+    return () => { ctrlC.current = () => {} }
+  }, [stage, ctrlC, onExit])
+  const restart = () => { bridge.current?.dispose(); setStage("progress"); setError(""); setAttempt((value) => value + 1) }
   const list = sessions[group]
   const index = Math.max(0, list.findIndex((s) => s.session_id === selected))
   const current = list[index]
@@ -65,8 +73,8 @@ export function RemoteScreen({ remote, theme, palette = "dark", syntaxStyle, onH
     setArmed(null)
   }
   useKeyboard((key) => {
-    if (key.eventType === "release" || stage === "live") return
-    if (key.ctrl && key.name === "c") { onHome(); return }
+    if (key.eventType === "release" || stage === "live" || stage === "error") return
+    if (key.ctrl && key.name === "c" || key.sequence === "\u0003" || key.name === "ctrl+c") { onExit(); return }
     if (key.name === "escape") { if (armed) setArmed(null); else onHome(); return }
     if (key.name === "tab") { if (stage === "sessions") setGroup((g) => g === "live" ? "history" : "live"); else if (stage === "directories") setDirectoryFocus((old) => !old); return }
     if (nativeMenuInput.current && !["return", "enter"].includes(key.name) && !(stage === "directories" && ["up", "down"].includes(key.name))) return
@@ -75,18 +83,17 @@ export function RemoteScreen({ remote, theme, palette = "dark", syntaxStyle, onH
       else if (armed) remove()
       else if (stage === "sessions" && current) open(current.session_id)
       else if (stage === "directories") { if (!directoryFocus && path !== loadedPath) loadDirs(path); else if (!directoryFocus && dirs[dirSel]) loadDirs(dirs[dirSel]!); else open(null, loadedPath) }
-      else if (stage === "error") setAttempt((old) => old + 1)
     }
     if (stage === "sessions" && (key.name === "up" || key.name === "down")) { setSelected(list[Math.max(0, Math.min(list.length - 1, index + (key.name === "down" ? 1 : -1)))]?.session_id ?? null); setArmed(null) }
     if (stage === "sessions" && key.ctrl && key.name === "x") remove()
     if (stage === "directories" && ["up", "down"].includes(key.name)) setDirSel((old) => Math.max(0, Math.min(dirs.length - 1, old + (key.name === "down" ? 1 : -1))))
   })
-  if (stage === "live" && bridge.current) return <SessionScreen key={sessionId} id={sessionId} initialPalette={palette} transport={bridge.current.transport} syntaxStyle={syntaxStyle} onHome={goHub} onOpen={(id) => open(id)} onExit={onHome} onRemote={onRemote} onPalette={onPalette} ctrlC={ctrlC} />
+  if (stage === "error") return <SuspendedScreen error={error} theme={theme} onRestart={restart} onExit={onExit} />
+  if (stage === "live" && bridge.current) return <SessionScreen key={sessionId} id={sessionId} initialPalette={palette} transport={bridge.current.transport} syntaxStyle={syntaxStyle} onHome={goHub} onOpen={(id) => open(id)} onExit={onHome} onRestart={restart} onSuspendedExit={onExit} onRemote={onRemote} onPalette={onPalette} ctrlC={ctrlC} />
   const actions = <box flexDirection="row" flexWrap="wrap" flexShrink={0}>
     {stage === "auth" ? <Action label="Authenticate (enter)" primary theme={theme} onPress={authenticate} /> : null}
     {stage === "sessions" ? <><Action label={armed ? `Confirm ${armed.group === "live" ? "kill" : "delete"} (enter)` : "Open (enter)"} theme={theme} onPress={() => { if (armed) remove(); else if (current) open(current.session_id) }} /><Action label="New session" theme={theme} onPress={() => loadDirs("/")} /><Action label={group === "live" ? "History (tab)" : "Live (tab)"} theme={theme} onPress={() => setGroup((g) => g === "live" ? "history" : "live")} /><Action label={group === "live" ? "Kill (ctrl+x)" : "Delete (ctrl+x)"} theme={theme} onPress={remove} /></> : null}
     {stage === "directories" ? <><Action label="Inspect path" theme={theme} onPress={() => loadDirs(path)} /><Action label="Parent" theme={theme} onPress={() => loadDirs(loadedPath.split("/").slice(0, -1).join("/") || "/")} /><Action label="Select folder" primary={directoryFocus} theme={theme} onPress={() => open(null, loadedPath)} /></> : null}
-    {stage === "error" ? <Action label="Retry (enter)" theme={theme} onPress={() => setAttempt((old) => old + 1)} /> : null}
     <Action label="Back (esc)" theme={theme} onPress={() => { if (armed) setArmed(null); else onHome() }} />
   </box>
   const rows: Line[] = list.map((s) => ({ label: s.name || s.session_id, detail: `${s.pwd} · ${s.session_id.slice(0, 8)}`, badge: { text: s.working ? "working" : group === "live" ? "ready" : "saved", role: s.working ? "success" : "info" } }))

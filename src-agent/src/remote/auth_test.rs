@@ -1,5 +1,6 @@
 use super::*;
 
+#[cfg(not(windows))]
 #[test]
 fn askpass_script_validates_prompt() {
     let script = askpass_script_content("hunter2");
@@ -10,6 +11,7 @@ fn askpass_script_validates_prompt() {
     assert!(script.contains("[Pp]assphrase"));
 }
 
+#[cfg(not(windows))]
 #[test]
 fn askpass_script_escapes_quotes() {
     let script = askpass_script_content("it's-a-secret");
@@ -40,6 +42,7 @@ fn askpass_helper_outputs_password_with_newline_and_rejects_other_prompts() {
     assert!(unrelated_output.stdout.is_empty());
 }
 
+#[cfg(not(windows))]
 #[test]
 fn ssh_auth_new_creates_unique_files() {
     let auth1 = SshAuth::new("pass1".to_string()).unwrap();
@@ -70,6 +73,7 @@ fn ssh_auth_debug_hides_password() {
     assert!(debug.contains("has_askpass: true"));
 }
 
+#[cfg(not(windows))]
 #[test]
 fn ssh_auth_drop_cleans_up() {
     let path;

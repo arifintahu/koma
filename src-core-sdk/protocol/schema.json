@@ -1,0 +1,950 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://koma.dev/sdk/protocol/v1/schema.json",
+  "title": "Koma public SDK JSONL protocol v1",
+  "oneOf": [
+    {
+      "$ref": "#/$defs/request"
+    },
+    {
+      "$ref": "#/$defs/hello"
+    },
+    {
+      "$ref": "#/$defs/response"
+    },
+    {
+      "$ref": "#/$defs/event"
+    }
+  ],
+  "$defs": {
+    "policy": {
+      "type": "object",
+      "properties": {
+        "plan": {
+          "enum": [
+            "allow",
+            "forbid"
+          ]
+        },
+        "approval": {
+          "enum": [
+            "default",
+            "reject"
+          ]
+        }
+      },
+      "required": [
+        "plan",
+        "approval"
+      ]
+    },
+    "turn": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "state": {
+          "enum": [
+            "running",
+            "finished",
+            "interrupted",
+            "failed"
+          ]
+        },
+        "error": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "id",
+        "state",
+        "error"
+      ]
+    },
+    "message": {
+      "type": "object",
+      "properties": {
+        "role": {
+          "enum": [
+            "system",
+            "user",
+            "assistant",
+            "tool"
+          ]
+        },
+        "content": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "role",
+        "content"
+      ]
+    },
+    "pending_approval": {
+      "type": "object",
+      "properties": {
+        "call_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "reason": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "call_id",
+        "reason"
+      ]
+    },
+    "gate": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "enum": [
+            "tool",
+            "plan",
+            "mission",
+            "unknown"
+          ]
+        },
+        "reason": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "supported": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "kind",
+        "reason",
+        "supported"
+      ]
+    },
+    "state": {
+      "type": "object",
+      "properties": {
+        "session_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9007199254740991
+        },
+        "external_approvals": {
+          "type": "boolean"
+        },
+        "pending_approval": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/pending_approval"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "gate": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/gate"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "cwd": {
+          "type": "string",
+          "minLength": 1
+        },
+        "model_id": {
+          "type": "string"
+        },
+        "policy": {
+          "$ref": "#/$defs/policy"
+        },
+        "turn": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/turn"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "working": {
+          "type": "boolean"
+        },
+        "awaiting_approval": {
+          "type": "boolean"
+        },
+        "approval_reason": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "pending_count": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 5
+        },
+        "messages": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/message"
+          }
+        },
+        "streaming": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "session_id",
+        "revision",
+        "external_approvals",
+        "pending_approval",
+        "gate",
+        "cwd",
+        "model_id",
+        "policy",
+        "turn",
+        "working",
+        "awaiting_approval",
+        "approval_reason",
+        "pending_count",
+        "messages",
+        "streaming"
+      ]
+    },
+    "attachment": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "const": "image_file"
+            },
+            "path": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "required": [
+            "kind",
+            "path"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "const": "pasted_text"
+            },
+            "text": {
+              "type": "string"
+            },
+            "name": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "kind",
+            "text"
+          ]
+        }
+      ]
+    },
+    "request": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string",
+              "minLength": 1
+            },
+            "method": {
+              "const": "create"
+            },
+            "params": {
+              "type": "object",
+              "properties": {
+                "cwd": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "model_id": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "policy": {
+                  "$ref": "#/$defs/policy"
+                },
+                "external_approvals": {
+                  "type": "boolean"
+                }
+              },
+              "required": [
+                "cwd"
+              ]
+            }
+          },
+          "required": [
+            "id",
+            "method",
+            "params"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string",
+              "minLength": 1
+            },
+            "method": {
+              "const": "resume"
+            },
+            "params": {
+              "type": "object",
+              "properties": {
+                "session_id": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "policy": {
+                  "$ref": "#/$defs/policy"
+                },
+                "external_approvals": {
+                  "type": "boolean"
+                }
+              },
+              "required": [
+                "session_id"
+              ]
+            }
+          },
+          "required": [
+            "id",
+            "method",
+            "params"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string",
+              "minLength": 1
+            },
+            "method": {
+              "const": "state"
+            },
+            "params": {
+              "type": "object",
+              "properties": {},
+              "required": []
+            }
+          },
+          "required": [
+            "id",
+            "method",
+            "params"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string",
+              "minLength": 1
+            },
+            "method": {
+              "const": "submit"
+            },
+            "params": {
+              "type": "object",
+              "properties": {
+                "text": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "attachments": {
+                  "type": "array",
+                  "maxItems": 16,
+                  "items": {
+                    "$ref": "#/$defs/attachment"
+                  }
+                }
+              },
+              "required": [
+                "text"
+              ]
+            }
+          },
+          "required": [
+            "id",
+            "method",
+            "params"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string",
+              "minLength": 1
+            },
+            "method": {
+              "const": "enqueue"
+            },
+            "params": {
+              "type": "object",
+              "properties": {
+                "text": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "attachments": {
+                  "type": "array",
+                  "maxItems": 16,
+                  "items": {
+                    "$ref": "#/$defs/attachment"
+                  }
+                }
+              },
+              "required": [
+                "text"
+              ]
+            }
+          },
+          "required": [
+            "id",
+            "method",
+            "params"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string",
+              "minLength": 1
+            },
+            "method": {
+              "const": "interrupt"
+            },
+            "params": {
+              "type": "object",
+              "properties": {
+                "turn_id": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "required": [
+                "turn_id"
+              ]
+            }
+          },
+          "required": [
+            "id",
+            "method",
+            "params"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string",
+              "minLength": 1
+            },
+            "method": {
+              "const": "interrupt_and_submit"
+            },
+            "params": {
+              "type": "object",
+              "properties": {
+                "turn_id": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "text": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "attachments": {
+                  "type": "array",
+                  "maxItems": 16,
+                  "items": {
+                    "$ref": "#/$defs/attachment"
+                  }
+                }
+              },
+              "required": [
+                "turn_id",
+                "text"
+              ]
+            }
+          },
+          "required": [
+            "id",
+            "method",
+            "params"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string",
+              "minLength": 1
+            },
+            "method": {
+              "const": "approve"
+            },
+            "params": {
+              "type": "object",
+              "properties": {
+                "call_id": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "approve": {
+                  "type": "boolean"
+                }
+              },
+              "required": [
+                "call_id",
+                "approve"
+              ]
+            }
+          },
+          "required": [
+            "id",
+            "method",
+            "params"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string",
+              "minLength": 1
+            },
+            "method": {
+              "const": "detach"
+            },
+            "params": {
+              "type": "object",
+              "properties": {},
+              "required": []
+            }
+          },
+          "required": [
+            "id",
+            "method",
+            "params"
+          ]
+        }
+      ]
+    },
+    "reason": {
+      "type": "object",
+      "properties": {
+        "code": {
+          "type": "string",
+          "minLength": 1
+        },
+        "message": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "code",
+        "message"
+      ]
+    },
+    "turn_result": {
+      "type": "object",
+      "properties": {
+        "disposition": {
+          "enum": [
+            "started",
+            "queued",
+            "rejected",
+            "interrupted"
+          ]
+        },
+        "turn_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "reason": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/reason"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "disposition",
+        "turn_id",
+        "reason"
+      ]
+    },
+    "replacement_result": {
+      "type": "object",
+      "properties": {
+        "disposition": {
+          "enum": [
+            "started",
+            "rejected"
+          ]
+        },
+        "turn_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "reason": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/reason"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "interrupted_turn_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "disposition",
+        "turn_id",
+        "reason",
+        "interrupted_turn_id"
+      ]
+    },
+    "error": {
+      "type": "object",
+      "properties": {
+        "code": {
+          "type": "string",
+          "minLength": 1
+        },
+        "message": {
+          "type": "string"
+        },
+        "delivery": {
+          "enum": [
+            "not_sent",
+            "unknown"
+          ]
+        }
+      },
+      "required": [
+        "code",
+        "message",
+        "delivery"
+      ]
+    },
+    "hello": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "hello"
+        },
+        "protocol": {
+          "const": 1
+        },
+        "binary": {
+          "type": "object",
+          "properties": {
+            "path": {
+              "type": "string",
+              "minLength": 1
+            },
+            "version": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "required": [
+            "path",
+            "version"
+          ]
+        },
+        "diagnostics": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "capabilities": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "enum": [
+              "create",
+              "resume",
+              "state",
+              "submit",
+              "enqueue",
+              "interrupt",
+              "interrupt_and_submit",
+              "approve",
+              "detach"
+            ]
+          }
+        }
+      },
+      "required": [
+        "type",
+        "protocol",
+        "binary",
+        "diagnostics",
+        "capabilities"
+      ]
+    },
+    "response": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "const": "response"
+            },
+            "id": {
+              "type": "string",
+              "minLength": 1
+            },
+            "result": {
+              "anyOf": [
+                {
+                  "type": "object",
+                  "properties": {
+                    "state": {
+                      "$ref": "#/$defs/state"
+                    }
+                  },
+                  "required": [
+                    "state"
+                  ]
+                },
+                {
+                  "$ref": "#/$defs/turn_result"
+                },
+                {
+                  "$ref": "#/$defs/replacement_result"
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "approved": {
+                      "type": "boolean"
+                    }
+                  },
+                  "required": [
+                    "approved"
+                  ]
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "detached": {
+                      "const": true
+                    }
+                  },
+                  "required": [
+                    "detached"
+                  ]
+                }
+              ]
+            }
+          },
+          "required": [
+            "type",
+            "id",
+            "result"
+          ],
+          "not": {
+            "required": [
+              "error"
+            ]
+          }
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "const": "response"
+            },
+            "id": {
+              "type": "string",
+              "minLength": 1
+            },
+            "error": {
+              "$ref": "#/$defs/error"
+            }
+          },
+          "required": [
+            "type",
+            "id",
+            "error"
+          ],
+          "not": {
+            "required": [
+              "result"
+            ]
+          }
+        }
+      ]
+    },
+    "event": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "const": "event"
+            },
+            "event": {
+              "const": "state"
+            },
+            "seq": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 9007199254740991
+            },
+            "state": {
+              "$ref": "#/$defs/state"
+            },
+            "resynced": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "type",
+            "event",
+            "seq",
+            "state",
+            "resynced"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "const": "event"
+            },
+            "event": {
+              "const": "output_append"
+            },
+            "seq": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 9007199254740991
+            },
+            "revision": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 9007199254740991
+            },
+            "offset": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991
+            },
+            "text": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "required": [
+            "type",
+            "event",
+            "seq",
+            "revision",
+            "offset",
+            "text"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "const": "event"
+            },
+            "event": {
+              "const": "turn"
+            },
+            "seq": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 9007199254740991
+            },
+            "revision": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 9007199254740991
+            },
+            "turn": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/turn"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "required": [
+            "type",
+            "event",
+            "seq",
+            "revision",
+            "turn"
+          ]
+        }
+      ]
+    }
+  }
+}

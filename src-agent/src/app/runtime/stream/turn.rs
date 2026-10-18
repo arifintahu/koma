@@ -351,7 +351,13 @@ pub(crate) fn finish_stream(rest: &mut AppStateRest, sess_idx: usize, error: Opt
     }
     rt.waiting = false;
     rt.current_task = None;
-    match error.or(save_err) {
+    let terminal_error = error.or(save_err);
+    rt.complete_turn(
+        if terminal_error.is_some() { crate::ipc::proto::turn::TurnState::Failed }
+        else { crate::ipc::proto::turn::TurnState::Finished },
+        terminal_error.clone(),
+    );
+    match terminal_error {
         Some(e) => {
             crate::model::store::append_global_error_log(
                 "turn.error",
@@ -692,6 +698,7 @@ pub(crate) fn advance_turn(
         // Status + toast are per-session (C6); this runs per-session unbracketed, so
         // write them on `sessions[sess_idx]` — the projection shows them only to the
         // client(s) viewing this session.
+        let terminal_error = save_err.clone();
         let status = match save_err {
             Some(e) => {
                 state.rest.sessions[sess_idx].set_toast(e.clone());
@@ -701,6 +708,11 @@ pub(crate) fn advance_turn(
             None => "ready".into(),
         };
         state.rest.sessions[sess_idx].status = status;
+        state.rest.sessions[sess_idx].complete_turn(
+            if terminal_error.is_some() { crate::ipc::proto::turn::TurnState::Failed }
+            else { crate::ipc::proto::turn::TurnState::Finished },
+            terminal_error,
+        );
 
         // Turn ended with queued steers still pending (they were enqueued but no
         // tool-hop boundary consumed them). Auto-send them as a normal next turn —
@@ -728,7 +740,15 @@ pub(crate) fn advance_turn(
                 state.rest.sessions[sess_idx].awaiting_classify = false;
                 state.rest.sessions[sess_idx].pending_classify_verdict = None;
                 state.rest.sessions[sess_idx].status = "thinking".into();
+                state.rest.sessions[sess_idx].begin_turn();
                 super::run::start_stream_task(history, state, sess_idx, client, handle);
+                if !state.rest.sessions[sess_idx].waiting {
+                    let rt = &mut state.rest.sessions[sess_idx];
+                    let error = rt.toast.as_ref().map(|(message, _, _)| message.clone())
+                        .unwrap_or_else(|| "stream kickoff failed".into());
+                    rt.take_stream();
+                    rt.complete_turn(crate::ipc::proto::turn::TurnState::Failed, Some(error));
+                }
             }
         }
 

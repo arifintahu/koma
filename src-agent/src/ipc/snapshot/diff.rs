@@ -206,7 +206,8 @@ pub fn diff(
         };
         // Any of these moving is either hard to fold incrementally or rare enough
         // that a full resync is the honest, cheap-correct answer.
-        let structural = p.messages != n.messages
+        let structural = p.turn != n.turn
+            || p.messages != n.messages
             // Committed reasoning rides the message list; a change (new turn's
             // thinking block committed) has no incremental delta, so resync.
             || p.committed_reasoning != n.committed_reasoning

@@ -307,6 +307,10 @@ pub(in crate::app::runtime::stream::tools) fn intercept_mission_ready(
         return InterceptFlow::Continue;
     }
 
+    if super::super::approval::reject_approval(state, sess_idx, call) {
+        return InterceptFlow::Continue;
+    }
+
     // Settled-session guard: reject if background work is still running.
     let mut pending: Vec<String> = Vec::new();
     for j in &state.rest.sessions[sess_idx].bash_jobs {
@@ -685,15 +689,17 @@ pub(in crate::app::runtime::stream::tools) fn intercept_mission_ready(
         state.rest.sessions[sess_idx].tool_idx += 1;
         return InterceptFlow::Continue;
     }
-    state.rest.sessions[sess_idx].awaiting_approval = true;
-    state.rest.sessions[sess_idx].approval_reason = None;
-    state.rest.sessions[sess_idx].status = if amending {
+    let status = if amending {
         "mission amendment ready - [y] re-approve  [a] re-approve & compact  [n] chat more"
             .to_string()
     } else {
         "mission ready - [y] approve  [a] approve & compact  [n] chat more".to_string()
     };
-    InterceptFlow::Return
+    if super::super::approval::park_or_reject(state, sess_idx, call, None, status) {
+        InterceptFlow::Return
+    } else {
+        InterceptFlow::Continue
+    }
 }
 
 /// Intercept `mission_verify` BEFORE the generic dispatch path. Only when
@@ -791,12 +797,13 @@ pub(in crate::app::runtime::stream::tools) fn intercept_mission_verify(
                 return InterceptFlow::Continue;
             }
             // Park for user decision — do NOT persist approval here.
-            state.rest.sessions[sess_idx].awaiting_approval = true;
-            state.rest.sessions[sess_idx].approval_reason =
-                Some(format!("SDLC human gate: {gate}"));
-            state.rest.sessions[sess_idx].status =
-                format!("human gate '{gate}' — [y] approve  [n] deny");
-            return InterceptFlow::Return;
+            return if super::super::approval::park_or_reject(state, sess_idx, call,
+                Some(format!("SDLC human gate: {gate}")),
+                format!("human gate '{gate}' — [y] approve  [n] deny")) {
+                InterceptFlow::Return
+            } else {
+                InterceptFlow::Continue
+            };
         }
         state.rest.sessions[sess_idx].tool_results.push((
             call.id.clone(),
