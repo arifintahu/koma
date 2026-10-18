@@ -7,6 +7,13 @@ name: ci
 # Uses only standard GitHub-hosted runners, which are free and unmetered for
 # public repositories, so this does not touch the Actions minute allotment used
 # by the release workflow.
+#
+# Staged so one pull request does not start every job at once:
+#   1. lint and nix, together, on ubuntu
+#   2. sdk, test, and terminal, after those pass
+#      (the test and terminal matrices take two runners at a time)
+#   3. macOS GUI release link, after the test and terminal matrices pass
+# A clippy or flake failure skips the later stages. rustfmt stays non-gating.
 on:
   pull_request:
 
@@ -24,6 +31,7 @@ env:
 jobs:
   sdk:
     name: SDK (${{ matrix.os }})
+    needs: [lint, nix]
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -56,9 +64,11 @@ jobs:
 
   test:
     name: test (${{ matrix.name }})
+    needs: [lint, nix]
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
+      max-parallel: 2
       matrix:
         include:
           - name: linux-x64
@@ -131,9 +141,11 @@ jobs:
   # complete payload; this job tests frozen dependencies on every release OS. linux-arm64 is native here (the release job cross-builds it).
   term:
     name: terminal (${{ matrix.name }})
+    needs: [lint, nix]
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
+      max-parallel: 2
       matrix:
         include:
           - name: linux-x64
@@ -176,6 +188,7 @@ jobs:
 
   macos-gui-link:
     name: GUI release link (${{ matrix.target }})
+    needs: [test, term]
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false

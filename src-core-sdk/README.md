@@ -1,4 +1,4 @@
-# Koma partner SDKs
+# Koma Open SDKs
 
 Phase one provides Python 3.11+ (`koma_sdk`) and Node.js 22+ JavaScript/TypeScript
 (`@koma/sdk`) clients for an **installed Koma executable**. These packages are
@@ -39,7 +39,7 @@ that option and exact API examples.
 
 Configure provider/model credentials through Koma's existing configuration flow
 before running real inference. The SDK does not expose credentials or a global
-configuration API. Partner quickstarts require no Cargo, Bun, terminal preparation,
+configuration API. Open SDK quickstarts require no Cargo, Bun, terminal preparation,
 or Koma source compilation.
 
 ## Install a client

@@ -85,7 +85,12 @@ class Conformance(unittest.IsolatedAsyncioTestCase):
         first = await s.submit('hello')
         with self.assertRaises(ObservationUnavailable):
             await s.wait_turn(first.turn_id, timeout=.1)
-        s = await self.client('timeout', request_timeout=.05).create('/fake/work')
+        # Hello shares request_timeout. Windows process startup can exceed a
+        # few dozen milliseconds, so create uses the default budget. Submit
+        # still has to time out: the fake adapter sleeps 2s only on submit.
+        client = self.client('timeout')
+        s = await client.create('/fake/work')
+        client.request_timeout = 1
         with self.assertRaises(DeliveryUnknown):
             await s.submit('hello')
         s = await self.client('stderr').create('/fake/work')
