@@ -30,11 +30,31 @@ class TestTransport(unittest.IsolatedAsyncioTestCase):
             else:
                 t.publish(m)
         t._accept = accept
-        with self.assertRaises(EventOverflow):
-            await t.request("test", {}, mutation=False, timeout=1,
-                            envelope=lambda i,m,p: {"id": i})
+        result = await t.request("test", {}, mutation=True, timeout=1,
+                                 envelope=lambda i,m,p: {"id": i})
+        self.assertTrue(result["ok"])
+        self.assertEqual(t._event_bytes, 0)
+        self.assertFalse(t._event_sizes)
+        self.assertTrue(t.events.empty())
+        self.assertIsNone(t.failure)
         with self.assertRaises(EventOverflow):
             await t.next_event()
+
+    async def test_byte_overflow_and_validation_after_overflow(self):
+        t = await self.launch("import time; time.sleep(5)")
+        t.current_frame_bytes = 33 * 1024 * 1024
+        t.publish({"e": 1})
+        t.publish({"e": 2})
+        self.assertEqual(t._event_bytes, 0)
+        with self.assertRaises(EventOverflow):
+            await t.next_event()
+        self.assertTrue(t.restart_events())
+        t.current_frame_bytes = 1
+        t.publish({"e": 3})
+        self.assertEqual(await t.next_event(), {"e": 3})
+        t.publish({"e": 4})
+        t.clear_events()
+        self.assertEqual(t._event_bytes, 0)
 
     async def test_after_write_timeout_and_cancel(self):
         for cancel in (False, True):

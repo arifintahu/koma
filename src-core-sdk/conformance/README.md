@@ -19,6 +19,8 @@ Scenarios (one per process):
 | wrong_id | extra unknown response before correct response; do not steal correlation |
 | out_of_order | hold first response, respond to second then first; send two concurrent requests (including create+state) |
 | event_flood | emit 300 state events before reply; bounded stalled event consumers must fail, not hang/unboundedly grow |
+| flood_output | first submit overflows; restart reconciles output and subsequent turns emit valid appends |
+| flood_finish | submit emits 300 events before its reply; next state read completes the turn; polling and restart recovery remain usable |
 | approval | submit parks at tool approval gate; explicitly opted-in approval uses actual pending call ID |
 | bad_version | hello protocol 2; client must refuse before requests |
 | stderr | >64 KiB diagnostic stream; drain independently and retain bounded tail |

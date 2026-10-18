@@ -190,8 +190,17 @@ be ignored after validating sequence; unknown response IDs are ignored.
 Client pending requests: at most 64; fail excess before writing. Client event
 queue: at most 256 frames AND 64 MiB serialized bytes. Adapters may coalesce
 unsent full-state events BEFORE assigning seq. A client may not silently drop
-received events; on queue overflow fail the connection with event_overflow,
-mark dispatched requests unknown and detach without interrupting the session.
+received events: on queue overflow, clear buffered events and their byte accounting,
+pause event buffering, and report event_overflow once through event consumption.
+Overflow alone MUST NOT fail pending requests, mark delivery unknown, or detach.
+Continue validating frames and correlating responses while buffering is paused.
+Polling-only submit-and-wait usage is supported without consuming events.
+After the error is observed, restarting the single event iterator enables buffering
+and obtains authoritative state by readback. Yield that state with resynced true,
+ignore queued observations superseded by its revision, then accept later appends.
+A second overflow during recovery is another explicit event-stream error.
+Polling waits never consume an active iterator's events. Malformed frames, EOF,
+process failure, and transport errors remain connection-fatal.
 Drain responses independently of event consumers; bound stderr independently.
 An adapter must not accumulate unbounded snapshots while stdout is blocked.
 State too large for a frame produces unavailable/not_sent on explicit state

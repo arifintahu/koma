@@ -58,16 +58,16 @@ export class Session {
   }
   async getState(options?: RequestOptions): Promise<State> {
     const result = await this.request<{ state: State }>('state', {}, options);
-    if (result.state.revision >= this.state.revision) this.state = result.state;
+    if (result.state.revision > this.state.revision) this.state = result.state;
     return this.state;
   }
   async *events(options?: Pick<RequestOptions, 'signal'>): AsyncGenerator<Event> {
-    for await (const event of this.transport.events(options)) {
+    for await (const event of this.transport.events(options, () => this.getState(options))) {
       if (event.gap) {
         yield { type: 'event', event: 'state', seq: event.seq, state: await this.getState(), resynced: true }; continue;
       }
       if (event.event === 'state') {
-        if (event.state.revision < this.state.revision) continue;
+        if (event.state.revision < this.state.revision || (event.state.revision === this.state.revision && !event.resynced)) continue;
         this.state = event.state;
       } else if (event.event === 'output_append') {
         if (event.revision <= this.state.revision) continue;

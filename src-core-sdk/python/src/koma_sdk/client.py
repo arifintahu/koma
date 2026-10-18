@@ -221,7 +221,7 @@ class Client:
         session = Session(self, t, hello, external_approvals=params["external_approvals"])
         try:
             response = await session._request(method, params, mutation=True)
-            session._state = State.from_wire(response["state"])
+            session._update_state(State.from_wire(response["state"]))
             self._sessions.add(session)
             return session
         except BaseException:
@@ -271,16 +271,25 @@ class Session:
                 exc.session_id = self._state.session_id
             raise
 
+    def _update_state(self, state: State) -> State:
+        if self._state is None or state.revision > self._state.revision:
+            self._state = state
+        return self._state
+
     async def get_state(self) -> State:
         result = await self._request("state", {}, mutation=False)
-        self._state = State.from_wire(result["state"])
-        return self._state
+        return self._update_state(State.from_wire(result["state"]))
 
     async def events(self) -> AsyncIterator[Event]:
         """Single consumer; revisions/offsets prevent duplicate output after readback."""
         if self._event_lock.locked():
             raise RuntimeError("only one events iterator may consume a session")
         async with self._event_lock:
+            if self._transport.restart_events():
+                seq = self._transport.sequence
+                state = await self.get_state()
+                self._transport.finish_recovery(state.revision)
+                yield StateEvent(seq, state, True)
             while True:
                 e = await self._transport.next_event()
                 if e["_gap"]:
@@ -288,8 +297,8 @@ class Session:
                     continue
                 if e["event"] == "state":
                     state = State.from_wire(e["state"])
-                    if self._state is None or state.revision >= self._state.revision:
-                        self._state = state
+                    if self._state is None or state.revision > self._state.revision:
+                        self._update_state(state)
                         yield StateEvent(e["seq"], state, e["resynced"])
                 elif e["event"] == "output_append":
                     current = self._state

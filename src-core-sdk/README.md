@@ -122,8 +122,13 @@ await timeout/cancellation does not stop a turn. Use explicit targeted interrupt
 
 Detach, client close, EOF, and stopping event iteration do not interrupt work,
 quit the daemon, or delete the persisted session. Daemon work can continue after
-the adapter exits. Event/stderr buffers are bounded; overflow/disconnection is an
-explicit observation failure, not a silently dropped control result.
+the adapter exits. Event/stderr buffers are bounded. Event overflow pauses event
+buffering and reports an explicit event-stream error while polling and control
+requests continue. Polling-only submit-and-wait is supported for long streams.
+After observing overflow, restart the event iterator to read authoritative state
+and receive a resynced state event. Superseded queued observations are ignored;
+repeated overflow during recovery is explicit. Protocol and transport failures
+remain connection-fatal.
 
 ## Maintainers only
 

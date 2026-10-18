@@ -38,7 +38,8 @@ Paths refer to the daemon host. See the shared guide for byte/count limits.
 
 `async for event in session.events()` has one consumer. Handle `StateEvent` replacements, `OutputAppendEvent` proven UTF-8 suffixes, and `TurnEvent` observations.
 Revisions and offsets are connection-local; full state replaces prior state. The iterator reconciles mismatches by state readback. Events can precede method results.
-Buffers are bounded (256 events / 64 MiB, 64 pending requests, 64 KiB stderr tail, 40 MiB serialized frames). Abandoned event consumers eventually fail with `EventOverflow`, rather than blocking control replies.
+Buffers are bounded (256 events / 64 MiB, 64 pending requests, 64 KiB stderr tail, 40 MiB serialized frames). Overflow clears buffered events and pauses event buffering. Event consumption raises `EventOverflow`; pending requests, polling waits, and control methods remain usable. Polling-only `submit` / `wait_turn` usage is supported for long streams.
+After catching `EventOverflow`, start a new `session.events()` iterator. It enables buffering, reads authoritative state, and yields `StateEvent(resynced=True)` before later output. Queued observations superseded by that state are ignored. Overflow during recovery raises `EventOverflow` again. Polling waits do not consume an active iterator's events. Malformed frames and transport failures still close the connection.
 
 Mutation timeouts, cancellation after writing, malformed replies and disconnects raise `DeliveryUnknown`, containing available request/session/turn IDs. Never retry automatically: resume/read state first. Cancellation does not interrupt work.
 `wait_turn` returns the observed final record, not proof of task success; hidden/newer turns or timeout raise `ObservationUnavailable`. `finished` only means normal execution ended.

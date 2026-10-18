@@ -37,6 +37,8 @@ class Transport:
         self.events: asyncio.Queue[dict[str, Any]] = asyncio.Queue(event_capacity)
         self.event_error: TransportError | None = None
         self._event_bytes = 0
+        self._overflow_observed = False
+        self._resync_required = False
         self._event_sizes: deque[int] = deque()
         self.current_frame_bytes = 0
         self.failure: TransportError | None = None
@@ -119,15 +121,52 @@ class Transport:
             self._event_bytes += self.current_frame_bytes
             self._event_sizes.append(self.current_frame_bytes)
         except asyncio.QueueFull:
-            self.event_error = EventOverflow("event inbox overflow; events lost; reconnect and reconcile state")
-            self._fail(self.event_error)
-            asyncio.create_task(self.close())
+            self.clear_events()
+            self.event_error = EventOverflow("event inbox overflow; restart events to reconcile state")
+            self._overflow_observed = False
         self.changed.set()
+
+    def clear_events(self) -> None:
+        while not self.events.empty():
+            self.events.get_nowait()
+        self._event_sizes.clear()
+        self._event_bytes = 0
+
+    def restart_events(self) -> bool:
+        if self.event_error and not self._overflow_observed:
+            return False
+        if not self._overflow_observed and not self._resync_required:
+            return False
+        self.event_error = None
+        self._resync_required = True
+        self._overflow_observed = False
+        return True
+
+    def check_events(self) -> None:
+        if self.failure:
+            raise self.failure
+        if self.event_error:
+            self._overflow_observed = True
+            raise self.event_error
+
+    def finish_recovery(self, revision: int) -> None:
+        self.check_events()
+        retained = []
+        while not self.events.empty():
+            event = self.events.get_nowait()
+            size = self._event_sizes.popleft()
+            if event.get("state", {}).get("revision", event.get("revision", 0)) > revision:
+                retained.append((event, size))
+        self._event_bytes = 0
+        for event, size in retained:
+            self.events.put_nowait(event)
+            self._event_sizes.append(size)
+            self._event_bytes += size
+        self._resync_required = False
 
     async def next_event(self) -> dict[str, Any]:
         while True:
-            if self.event_error:
-                raise self.event_error
+            self.check_events()
             if not self.events.empty():
                 self._event_bytes -= self._event_sizes.popleft()
                 return self.events.get_nowait()

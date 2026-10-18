@@ -13,7 +13,7 @@ METHODS = ['create', 'resume', 'state', 'submit', 'enqueue', 'interrupt',
 p = argparse.ArgumentParser(description=__doc__)
 p.add_argument('--scenario', choices=['normal', 'reject', 'partial', 'unknown',
     'eof', 'malformed', 'wrong_id', 'out_of_order', 'event_flood', 'approval',
-    'bad_version', 'stderr', 'output', 'timeout', 'hidden', 'fragmented', 'missing_cap', 'output_gap', 'bad_offset', 'finish', 'bad_result'], default=os.environ.get('KOMA_FAKE_SCENARIO', 'normal'))
+    'bad_version', 'stderr', 'output', 'timeout', 'hidden', 'fragmented', 'missing_cap', 'output_gap', 'bad_offset', 'finish', 'bad_result', 'flood_finish', 'flood_output'], default=os.environ.get('KOMA_FAKE_SCENARIO', 'normal'))
 a = p.parse_args([] if sys.argv[1:] == ['sdk', 'serve'] else None)
 
 def emit(value):
@@ -95,7 +95,7 @@ while True:
     elif session is None:
         frame = response(rid, code='invalid_state')
     elif method == 'state':
-        if a.scenario == 'finish' and session['turn'] and session['turn']['state'] == 'running':
+        if a.scenario in ('finish', 'flood_finish') and session['turn'] and session['turn']['state'] == 'running':
             session['turn']['state'] = 'finished'
             session['working'] = False
             session['streaming'] = None
@@ -149,7 +149,7 @@ while True:
         else:
             counter += 1
             tid = 'turn-' + str(counter)
-            session.update(turn=dict(id=tid, state='running', error=None), working=True,
+            session.update(turn=dict(id=tid, state='running', error=None), working=True, streaming=None,
                            awaiting_approval=a.scenario == 'approval',
                            approval_reason='fake tool' if a.scenario == 'approval' else None)
             session['messages'].append(dict(role='user', content=params['text']))
@@ -164,11 +164,14 @@ while True:
         session['turn'] = dict(id='newer', state='running', error=None)
         session['revision'] += 1
         frame = response(rid, dict(state=copy.deepcopy(session)))
-    if a.scenario in ('output','output_gap','bad_offset') and method == 'submit':
+    if a.scenario in ('output','output_gap','bad_offset','flood_output') and method == 'submit':
         session['streaming'] = 'é雪'
         session['revision'] += 1
         seq += 2 if a.scenario == 'output_gap' else 1
         emit(dict(type='event', event='output_append', seq=seq, revision=session['revision'], offset=999 if a.scenario == 'bad_offset' else 0, text='é雪'))
+    if a.scenario in ('flood_finish', 'flood_output') and method == 'submit' and (a.scenario == 'flood_finish' or counter == 1):
+        for _ in range(300):
+            event()
     if a.scenario == 'bad_result' and method == 'submit':
         frame['result']['turn_id'] = 123
     if a.scenario == 'wrong_id':

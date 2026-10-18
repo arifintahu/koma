@@ -1,6 +1,6 @@
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { isAbsolute } from 'node:path';
-import { METHODS, SdkError, DeliveryUnknownError, type ClientOptions, type Hello, type Method, type RequestOptions, type Event } from './types.js';
+import { METHODS, SdkError, DeliveryUnknownError, type ClientOptions, type Hello, type Method, type RequestOptions, type Event, type State } from './types.js';
 import { validateHello, validateEvent, validateResult, object, string } from './validate.js';
 
 type Incoming = Event & { gap?: boolean };
@@ -27,6 +27,9 @@ export class Transport {
   private waiter?: { resolve: (v: IteratorResult<Incoming>) => void; reject: (e: unknown) => void };
   private iterating = false;
   private failure?: SdkError;
+  private eventError?: SdkError;
+  private overflowObserved = false;
+  private resyncRequired = false;
   private ended = false;
   private expectedExit = false;
   private stderrTail = Buffer.alloc(0);
@@ -93,9 +96,15 @@ export class Transport {
       if (!['state', 'output_append', 'turn'].includes(frame.event as string)) return; // Additive event kinds retain sequence validation.
       validateEvent(frame);
       const event = { ...frame, gap: this.gap } as unknown as Incoming; this.gap = false;
+      if (this.eventError) return;
       if (this.waiter) { const w = this.waiter; this.waiter = undefined; w.resolve({ done: false, value: event }); }
       else {
-        if (this.queue.length >= 256 || this.queueBytes + bytes > MAX_EVENTS_BYTES) throw new SdkError('event_overflow', 'Event consumer exceeded 256 frames / 64 MiB');
+        if (this.queue.length >= 256 || this.queueBytes + bytes > MAX_EVENTS_BYTES) {
+          this.queue = []; this.queueBytes = 0;
+          this.eventError = new SdkError('event_overflow', 'Event consumer exceeded 256 frames / 64 MiB; restart events to reconcile state');
+          this.overflowObserved = false;
+          return;
+        }
         this.queue.push({ event, bytes }); this.queueBytes += bytes;
       }
       return;
@@ -180,13 +189,28 @@ export class Transport {
     this.stop();
     await this.exited;
   }
-  async *events(options: Pick<RequestOptions, 'signal'> = {}): AsyncGenerator<Incoming> {
+  private checkEvents(): void {
+    if (this.failure) throw this.failure;
+    if (this.eventError) { this.overflowObserved = true; throw this.eventError; }
+  }
+  async *events(options: Pick<RequestOptions, 'signal'> = {}, recover?: () => Promise<State>): AsyncGenerator<Incoming> {
     if (this.iterating) throw new SdkError('invalid_state', 'Only one event iterator can be active');
     this.iterating = true;
     try {
+      if ((this.overflowObserved || (this.resyncRequired && !this.eventError)) && recover) {
+        this.resyncRequired = true;
+        this.eventError = undefined; this.overflowObserved = false;
+        const seq = this.seq;
+        const state = await recover();
+        this.checkEvents();
+        this.queue = this.queue.filter(({ event }) => (event.event === 'state' ? event.state.revision : event.revision) > state.revision);
+        this.queueBytes = this.queue.reduce((sum, item) => sum + item.bytes, 0);
+        this.resyncRequired = false;
+        yield { type: 'event', event: 'state', seq, state, resynced: true };
+      }
       while (true) {
         if (options.signal?.aborted) throw new SdkError('cancelled', 'Event await cancelled; turn was not interrupted');
-        if (this.failure) throw this.failure;
+        this.checkEvents();
         const item = this.queue.shift();
         if (item) { this.queueBytes -= item.bytes; yield item.event; continue; }
         if (this.ended) return;

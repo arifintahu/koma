@@ -19,7 +19,7 @@ class IncompatibleAdapter(ProtocolError):
 
 
 class EventOverflow(TransportError):
-    """The bounded event inbox overflowed. Reconnect and reconcile state."""
+    """The bounded event inbox overflowed. Restart event consumption to reconcile state."""
 
 
 class RequestTimeout(TransportError):
