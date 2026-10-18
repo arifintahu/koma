@@ -1,4 +1,5 @@
-import { expect, test } from "bun:test"
+import { expect, spyOn, test } from "bun:test"
+import * as childProcess from "node:child_process"
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
@@ -10,7 +11,7 @@ import { RemoteScreen } from "./remote-screen.tsx"
 import { themeFor } from "./theme.ts"
 
 // An invalid executable fails before SSH can run on either Unix or Windows.
-test("remote bootstrap suspends with Restart and Exit and restarts its helper", async () => {
+test.each(["native", "synchronous"] as const)("remote bootstrap suspends with Restart and Exit and restarts its helper (%s)", async (failure) => {
   const directory = mkdtempSync(join(tmpdir(), "koma-remote-suspend-"))
   const first = join(directory, "first.exe"), second = join(directory, "second.exe")
   writeFileSync(first, "invalid executable"); writeFileSync(second, "invalid executable")
@@ -25,6 +26,11 @@ test("remote bootstrap suspends with Restart and Exit and restarts its helper", 
     useEffect(() => () => style.destroy(), [style])
     return <RemoteScreen remote={remote} theme={themeFor("dark")} syntaxStyle={style} ctrlC={ctrlC} onExit={() => { exits++ }} onHome={() => { homes++ }} onRemote={() => {}} onPalette={() => {}} />
   }
+  const attempts: string[] = []
+  const spawn = failure === "synchronous" ? spyOn(childProcess, "spawn").mockImplementation((executable) => {
+    attempts.push(executable)
+    throw new Error("Failed to spawn process")
+  }) : null
   let view!: Awaited<ReturnType<typeof testRender>>
   try {
     await act(async () => { view = await testRender(<Harness />, { width: 80, height: 24, exitOnCtrlC: false }) })
@@ -43,12 +49,14 @@ test("remote bootstrap suspends with Restart and Exit and restarts its helper", 
     await act(async () => { view.mockInput.pressEnter() })
     await suspended()
     expect(view.captureCharFrame().replace(/\s/g, "")).toContain("second.exe")
+    if (spawn) expect(attempts).toEqual([first, second])
     const lines = view.captureCharFrame().split("\n"), y = lines.findIndex((line) => line.includes("Exit (esc)"))
     await act(async () => { await view.mockMouse.click(lines[y]!.indexOf("Exit") + 1, y) })
     expect(exits).toBe(1)
     expect(homes).toBe(0)
   } finally {
     if (view) await act(async () => { await view.dispose() })
+    spawn?.mockRestore()
     if (previous === undefined) delete process.env.KOMA_BIN
     else process.env.KOMA_BIN = previous
     rmSync(directory, { recursive: true, force: true })
