@@ -108,6 +108,8 @@ export type RemoteHandoff = {
 }
 
 export type Control =
+  | { kind: "exit" }
+  | { kind: "disconnect"; text: string }
   | { kind: "frame" }
   | { kind: "home" }
   | { kind: "new"; kill: boolean }

@@ -925,6 +925,8 @@ pub enum DaemonEvent {
     MenuResult {
         request_id: String,
         error: Option<String>,
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        exit: bool,
     },
     MenuCapabilities {
         version: u32,

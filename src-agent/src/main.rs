@@ -89,6 +89,14 @@ fn open_standalone(opts: cli::Opts) -> anyhow::Result<()> {
 }
 
 fn main() -> anyhow::Result<()> {
+    #[cfg(windows)]
+    if std::env::var_os(remote::auth_windows::PIPE_ENV).is_some() {
+        return remote::auth_windows::run_helper();
+    }
+    #[cfg(windows)]
+    if std::env::args().nth(1).as_deref() == Some("--ssh-askpass-self-test") {
+        return remote::auth_windows::self_test();
+    }
     if std::env::args().nth(1).as_deref() == Some("remote-usage") {
         return model::usage::reader::run();
     }

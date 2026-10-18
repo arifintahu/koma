@@ -110,6 +110,9 @@ impl DaemonHub {
                 self.handle_request(client_id, req, state, client, handle);
             }
             HubInbound::Disconnect { client_id } => {
+                if self.exit_delivery == Some(client_id) {
+                    self.exit_delivery = None;
+                }
                 // Transport gone: deregister + pass the controller seat (also disarms the
                 // GUI OAuth side-channel if armed). Unknown id (already Detached) is a no-op.
                 if let Some(idx) = self.clients.iter().position(|c| c.id == client_id) {
@@ -211,6 +214,7 @@ impl DaemonHub {
                     DaemonEvent::MenuResult {
                         request_id,
                         error: None,
+                        exit: false,
                     },
                 );
             }
@@ -469,7 +473,7 @@ impl DaemonHub {
             ClientRequest::GetMenuCapabilities => self.send_to(idx, DaemonEvent::MenuCapabilities { version: 1, usage_reader: true }),
             ClientRequest::ReplaceInputTracked { request_id, text, cursor } => {
                 self.replace_input(idx, state, text, cursor);
-                self.send_to(idx, DaemonEvent::MenuResult { request_id, error: None });
+                self.send_to(idx, DaemonEvent::MenuResult { request_id, error: None, exit: false });
             }
             ClientRequest::Menu { request_id, mode, action } => self.menu(idx, state, client, handle, super::requests_menu::MenuCall { request_id, mode, action }),
             // UUID-keyed foreground switch: resolve the id to an index, reject an

@@ -50,6 +50,8 @@ pub fn split_stream(stream: IpcStream) -> (IpcReadHalf, IpcWriteHalf) {
 #[cfg(windows)]
 mod win;
 #[cfg(windows)]
+pub(crate) use win::create_server_instance as protected_pipe;
+#[cfg(windows)]
 pub use win::{IpcListener, IpcStream, SyncIpcStream};
 #[cfg(windows)]
 pub type IpcReadHalf = tokio::io::ReadHalf<IpcStream>;

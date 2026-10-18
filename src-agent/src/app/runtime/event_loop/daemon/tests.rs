@@ -860,3 +860,121 @@ fn cadence_slow_when_fully_idle() {
         "idle + an attached-but-quiet client still naps slow"
     );
 }
+
+#[test]
+fn setup_menu_exit_is_correlated_and_navigation_does_not_quit() {
+    use crate::ipc::proto::MenuAction;
+    for (code, mods, exits) in [
+        (KeyCodeWire::Esc, 0, true),
+        (KeyCodeWire::Char('q'), 0, true),
+        (KeyCodeWire::Char('c'), key_mods::CONTROL, true),
+        (KeyCodeWire::Down, 0, false),
+    ] {
+        let mut state = AppState::new(Mode::Onboard(Box::default()));
+        let (mut client, rt) = ctx();
+        let (mut hub, runner_tx) = DaemonHub::new();
+        let (frame_tx, frame_rx) = std::sync::mpsc::channel();
+        hub.handle_inbound(
+            HubInbound::Register {
+                client_id: 1,
+                frame_tx,
+            },
+            &mut state,
+            &mut client,
+            rt.handle(),
+        );
+        hub.handle_inbound(
+            HubInbound::Request {
+                client_id: 1,
+                req: ClientRequest::Attach {
+                    foreground_id: None,
+                    cwd: None,
+                },
+            },
+            &mut state,
+            &mut client,
+            rt.handle(),
+        );
+        hub.handle_inbound(
+            HubInbound::Request {
+                client_id: 1,
+                req: ClientRequest::Menu {
+                    request_id: "setup-key".into(),
+                    mode: "Onboard".into(),
+                    action: MenuAction::Key(KeyWire { code, mods }),
+                },
+            },
+            &mut state,
+            &mut client,
+            rt.handle(),
+        );
+        assert!(frame_rx.try_iter().any(|frame| matches!(frame.event,
+            DaemonEvent::MenuResult { request_id, error: None, exit } if request_id == "setup-key" && exit == exits)));
+        assert_eq!(state.rest.should_quit, exits);
+        if exits {
+            runner_tx
+                .send(HubInbound::Request {
+                    client_id: 1,
+                    req: ClientRequest::Detach,
+                })
+                .unwrap();
+            hub.flush_exit_response();
+            hub.flush_exit_response();
+        }
+    }
+}
+
+#[test]
+fn setup_enter_and_nested_escape_keep_the_wizard_usable() {
+    use crate::app::mode::OnboardState;
+    use crate::ipc::proto::MenuAction;
+    let mut state = AppState::new(Mode::Onboard(Box::new(OnboardState { cursor: 2 })));
+    let (mut client, rt) = ctx();
+    let (mut hub, _runner_tx) = DaemonHub::new();
+    let (frame_tx, frame_rx) = std::sync::mpsc::channel();
+    hub.handle_inbound(
+        HubInbound::Register {
+            client_id: 1,
+            frame_tx,
+        },
+        &mut state,
+        &mut client,
+        rt.handle(),
+    );
+    hub.handle_inbound(
+        HubInbound::Request {
+            client_id: 1,
+            req: ClientRequest::Attach {
+                foreground_id: None,
+                cwd: None,
+            },
+        },
+        &mut state,
+        &mut client,
+        rt.handle(),
+    );
+    for (mode, code, exit) in [
+        ("Onboard", KeyCodeWire::Enter, false),
+        ("KeyInput", KeyCodeWire::Enter, false),
+        ("KeyInput", KeyCodeWire::Esc, false),
+        ("KeyInput", KeyCodeWire::Esc, true),
+    ] {
+        hub.handle_inbound(
+            HubInbound::Request {
+                client_id: 1,
+                req: ClientRequest::Menu {
+                    request_id: mode.into(),
+                    mode: mode.into(),
+                    action: MenuAction::Key(KeyWire { code, mods: 0 }),
+                },
+            },
+            &mut state,
+            &mut client,
+            rt.handle(),
+        );
+        assert!(frame_rx.try_iter().any(|frame| matches!(frame.event,
+            DaemonEvent::MenuResult { error: None, exit: requested, .. } if requested == exit)));
+        assert!(matches!(state.mode(), Mode::KeyInput(_)));
+        assert_eq!(state.rest.should_quit, exit);
+    }
+}

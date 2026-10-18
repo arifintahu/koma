@@ -601,7 +601,7 @@ pub fn list_koma_session_pipes() -> Vec<String> {
     ];
     // Non-session pipe name PREFIXES (also checked before stripping `koma-`), so a
     // whole family — every extension host — is excluded without listing each id.
-    const RESERVED_PREFIX: &[&str] = &["koma-ext-"];
+    const RESERVED_PREFIX: &[&str] = &["koma-ext-", "koma-askpass-"];
 
     let entries = match std::fs::read_dir(r"\\.\pipe\") {
         Ok(e) => e,

@@ -1072,3 +1072,17 @@ fn context_usage_only_changes_trigger_client_refresh() {
     assert!(super::snapshot::diff(&prev, &next, None, None).needs_full);
     assert!(!super::snapshot::diff(&prev, &prev, None, None).needs_full);
 }
+
+#[test]
+fn menu_exit_defaults_for_old_replies_and_roundtrips_new_replies() {
+    let old: DaemonEvent =
+        serde_json::from_str(r#"{"MenuResult":{"request_id":"old","error":null}}"#).unwrap();
+    assert!(matches!(old, DaemonEvent::MenuResult { exit: false, .. }));
+    let exit = DaemonEvent::MenuResult {
+        request_id: "quit".into(),
+        error: None,
+        exit: true,
+    };
+    let bytes = serde_json::to_vec(&exit).unwrap();
+    assert_eq!(serde_json::from_slice::<DaemonEvent>(&bytes).unwrap(), exit);
+}

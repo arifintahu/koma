@@ -69,6 +69,15 @@ jobs:
       - name: Tests (agent)
         run: cargo test --workspace --no-default-features --all-targets
 
+      - name: First-run setup exit over native IPC
+        run: |
+          cargo build -p agent --no-default-features
+          python src-term/scripts/verify-setup-exit.py
+
+      - name: Native Windows SSH password helper
+        if: runner.os == 'Windows'
+        run: ./target/debug/koma.exe --ssh-askpass-self-test
+
       # Python daemon transport tests on Windows — validates the TCP transport
       # path that replaces Unix sockets. Only on Windows where the TCP path is
       # the primary transport.

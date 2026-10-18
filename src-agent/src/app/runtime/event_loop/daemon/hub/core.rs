@@ -237,6 +237,7 @@ pub(in crate::app::runtime) struct DaemonHub {
     /// observes it via [`should_shutdown`](Self::should_shutdown) and returns, so
     /// the shared teardown (release locks, drop runtime, unlink socket) runs.
     pub(super) shutdown: bool,
+    pub(super) exit_delivery: Option<u64>,
     /// This daemon's build fingerprint, captured ONCE at construction (task #142) and
     /// reported to each newly-attached client via [`DaemonEvent::Hello`]. Stored — not
     /// recomputed per attach — so it reflects the binary AS-OF daemon startup: by the
@@ -307,6 +308,7 @@ impl DaemonHub {
                 msg_rx,
                 clients: Vec::new(),
                 shutdown: false,
+                exit_delivery: None,
                 version: crate::model::store::build_fingerprint(),
                 list_models_tx,
                 list_models_rx,
@@ -481,6 +483,25 @@ impl DaemonHub {
         self.shutdown = true;
     }
 
+    /// Wait for the exiting client to consume the reply and detach before teardown.
+    pub(in crate::app::runtime) fn flush_exit_response(&mut self) {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(1);
+        while let Some(expected) = self.exit_delivery {
+            let remaining = deadline.saturating_duration_since(std::time::Instant::now());
+            match self.msg_rx.recv_timeout(remaining) {
+                Ok(
+                    HubInbound::Request {
+                        client_id,
+                        req: crate::ipc::proto::ClientRequest::Detach,
+                    }
+                    | HubInbound::Disconnect { client_id },
+                ) if client_id == expected => self.exit_delivery = None,
+                Ok(_) => {} // Shutdown is already committed; do not apply further requests.
+                Err(_) => break,
+            }
+        }
+    }
+
     /// Number of clients currently ENROLLED (registered, attached or not). The
     /// self-exit grace timer (daemon stage 10) treats ANY enrolled client — even one
     /// mid-`Attach` handshake — as "a client is present", so a daemon never reaps
@@ -504,6 +525,9 @@ impl DaemonHub {
     /// re-sent on promotion — the promoted client already holds a live shadow; it simply
     /// gains mutate rights.
     pub(super) fn deregister(&mut self, idx: usize, state: &mut AppState) {
+        if self.exit_delivery == self.clients.get(idx).map(|client| client.id) {
+            self.exit_delivery = None;
+        }
         for rt in &mut state.rest.sessions {
             if rt.computer.owner == Some(self.clients[idx].id) {
                 // Idle share stops. A turn that is still iterating keeps the

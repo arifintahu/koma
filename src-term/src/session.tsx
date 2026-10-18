@@ -18,6 +18,7 @@ import { foregroundSession, modeName, type RemoteHandoff, type Snapshot } from "
 import { QuitScreen, quitState } from "./quit.tsx"
 import { rewindOf } from "./screens.tsx"
 import { DaemonLink } from "./socket.ts"
+import { SuspendedScreen } from "./suspended.tsx"
 import { themeFor, type Theme } from "./theme.ts"
 import { Toast, type LocalNotice } from "./toast.tsx"
 
@@ -28,6 +29,8 @@ export function SessionScreen({
   onHome,
   onOpen,
   onExit,
+  onRestart,
+  onSuspendedExit,
   onRemote,
   onPalette,
   ctrlC,
@@ -40,10 +43,13 @@ export function SessionScreen({
   onHome: () => void
   onOpen: (id: string) => void
   onExit: () => void
+  onRestart?: () => void
+  onSuspendedExit?: () => void
   onRemote: (remote: RemoteHandoff) => void
   onPalette: (name: string) => void
   ctrlC?: { current: () => void }
 }) {
+  const [attempt, setAttempt] = useState(0)
   const usageReaderRef = useRef<UsageReader | null>(null)
   const [usageReader, setUsageReader] = useState<UsageReader | null>(null)
   useEffect(() => {
@@ -53,7 +59,7 @@ export function SessionScreen({
     usageReaderRef.current = reader
     setUsageReader(reader)
     return () => { reader?.dispose(); if (usageReaderRef.current === reader) usageReaderRef.current = null }
-  }, [id, transport])
+  }, [id, transport, attempt])
   const columns = useColumns()
   const [snap, setSnap] = useState<Snapshot | null>(null)
   const [phase, setPhase] = useState<"connecting" | "live" | "error">("connecting")
@@ -80,6 +86,7 @@ export function SessionScreen({
   const send = useCallback((request: unknown) => {
     const link = linkRef.current
     const current = snapRef.current
+    if (phaseRef.current !== "live") return
     if (current && request && typeof request === "object" && ("ApproveTool" in request || "PlanDecision" in request)) {
       const fg = foregroundSession(current)
       if (!fg?.awaiting_approval) return
@@ -115,6 +122,7 @@ export function SessionScreen({
 
   useEffect(() => {
     let dead = false
+    formGuard.current = new FormGuard()
     const link = new DaemonLink(
       (next) => {
         if (dead) return
@@ -128,6 +136,16 @@ export function SessionScreen({
       },
       (control) => {
         if (dead) return
+        if (control.kind === "exit") {
+          onExit()
+          return
+        }
+        if (control.kind === "disconnect") {
+          phaseRef.current = "error"
+          setError(control.text)
+          setPhase("error")
+          return
+        }
         if (control.kind === "home") {
           onHome()
           return
@@ -177,7 +195,7 @@ export function SessionScreen({
       link.detach()
       if (linkRef.current === link) linkRef.current = null
     }
-  }, [id, transport])
+  }, [id, transport, attempt])
 
   phaseRef.current = phase
 
@@ -186,17 +204,32 @@ export function SessionScreen({
     if (name) onPalette(name)
   }, [snap?.global.palette, onPalette])
 
+  const suspendedExit = onSuspendedExit ?? onExit
+  const restart = () => {
+    linkRef.current?.detach()
+    phaseRef.current = "connecting"
+    setPhase("connecting")
+    snapRef.current = null
+    setSnap(null)
+    setError("")
+    setNotice(null)
+    setLeavePrompt(false)
+    decision.current = null
+    if (onRestart) onRestart()
+    else setAttempt((value) => value + 1)
+  }
+
+  const interrupt = useCallback(() => {
+    if (phaseRef.current !== "live") { suspendedExit(); return }
+    if (quitState(snapRef.current?.global.mode)) return
+    send({ SendKey: { code: { Char: "c" }, mods: 2 } })
+  }, [send, suspendedExit])
+
   useEffect(() => {
     if (!ctrlC) return
-    ctrlC.current = () => {
-      if (phaseRef.current !== "live") return
-      if (quitState(snapRef.current?.global.mode)) return
-      send({ SendKey: { code: { Char: "c" }, mods: 2 } })
-    }
-    return () => {
-      ctrlC.current = () => {}
-    }
-  }, [ctrlC, send])
+    ctrlC.current = interrupt
+    return () => { ctrlC.current = () => {} }
+  }, [ctrlC, interrupt])
 
   const theme = themeFor(snap?.global.palette ?? initialPalette)
   const session = snap ? foregroundSession(snap) : null
@@ -251,10 +284,14 @@ export function SessionScreen({
   })
 
   useKeyboard((key) => {
-    if (key.eventType === "release") return
+    if (key.eventType === "release" || phase === "error") return
     if (exiting != null) { key.preventDefault(); key.stopPropagation(); return }
-    if ((key.ctrl && key.name === "c") || key.sequence === "\u0003") {
-      if (phase === "live" && !quit) send({ SendKey: { code: { Char: "c" }, mods: 2 } })
+    if ((key.ctrl && key.name === "c") || key.sequence === "\u0003" || key.name === "ctrl+c") {
+      interrupt()
+      return
+    }
+    if (phase !== "live") {
+      if (key.name === "escape") onHome()
       return
     }
     if (approval && !quit && !warming && phase === "live") {
@@ -344,13 +381,8 @@ export function SessionScreen({
   if (phase === "connecting") {
     return <OpeningSplash theme={theme} />
   }
-  if (phase === "error" && !snap) {
-    return (
-      <box flexDirection="column" flexGrow={1} padding={1} gap={1} backgroundColor={theme.bg}>
-        <text fg={theme.error}>{error || "could not open this session"}</text>
-        <text fg={theme.dim}>esc home. the current terminal for this screen is koma legacy.</text>
-      </box>
-    )
+  if (phase === "error") {
+    return <SuspendedScreen error={error} theme={theme} onRestart={restart} onExit={suspendedExit} />
   }
   if (!snap) return null
   if (warming) {
