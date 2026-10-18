@@ -171,7 +171,7 @@ fn attach_emits_hello_then_snapshot() {
     match f0.event {
         DaemonEvent::Hello { version, protocol, capabilities } => {
             assert_eq!(protocol, crate::ipc::proto::IPC_PROTOCOL_VERSION);
-            assert_eq!(capabilities, vec!["submit_turn", "interrupt_turn", "session_policy", "enqueue_follow_up", "interrupt_and_submit", "turn_attachments"]);
+            assert_eq!(capabilities, vec!["submit_turn", "interrupt_turn", "session_policy", "session_policy_readback", "enqueue_follow_up", "interrupt_and_submit", "turn_attachments"]);
             assert_eq!(
                 version,
                 crate::model::store::build_fingerprint(),
@@ -1116,6 +1116,9 @@ fn session_policy_is_explicit_idle_only_and_persists_before_activation() {
     assert_eq!(f.state.rest.fg().policy, SessionPolicy { plan: PlanPolicy::Forbid, approval: ApprovalPolicy::Reject });
     let loaded = crate::model::session::Session::load(&f.path).unwrap();
     assert_eq!(loaded.unattended.policy, f.state.rest.fg().policy);
+    f.request(1, ClientRequest::GetRunState { req_seq: 42 });
+    assert!(matches!(f.result(), DaemonEvent::RunState { req_seq: 42, state }
+        if state.policy == Some(SessionPolicy { plan: PlanPolicy::Forbid, approval: ApprovalPolicy::Reject })));
     assert!(f.replies[1].try_recv().is_err());
 }
 

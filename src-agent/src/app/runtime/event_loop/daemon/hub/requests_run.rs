@@ -23,6 +23,7 @@ pub(crate) fn run_state(state: &AppState) -> anyhow::Result<RunState> {
     .rows;
     Ok(RunState {
         session_id: sess.id.clone(),
+        policy: Some(rt.policy.clone()),
         turn: rt.active_turn.as_ref().or(rt.last_turn.as_ref()).cloned(),
         name: sess.name.clone(),
         workdir: sess
@@ -177,6 +178,7 @@ mod tests {
             ));
         }
         let a = run_state(&state).unwrap();
+        assert_eq!(a.policy, Some(state.rest.fg().policy.clone()));
         assert_eq!(a.extensions.iter().filter(|e| e.active).count(), 2);
         assert!(a.short_send);
         state.rest.foreground = 1;

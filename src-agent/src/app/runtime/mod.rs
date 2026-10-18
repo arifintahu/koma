@@ -17,6 +17,7 @@
 //! bookkeeping.
 
 mod actions;
+pub(crate) mod sdk;
 pub(crate) fn save_web_search_config(
     config: &crate::model::app_config::AppConfig,
 ) -> anyhow::Result<()> {

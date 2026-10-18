@@ -4,6 +4,9 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct RunState {
     pub session_id: String,
+    /// Live daemon session policy; absent on older daemons.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub policy: Option<crate::ipc::proto::turn::SessionPolicy>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub turn: Option<crate::ipc::proto::TurnRecord>,
     pub name: String,
@@ -38,4 +41,25 @@ pub struct RunExtension {
     pub enabled: bool,
     pub active: bool,
     pub running: bool,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::ipc::proto::turn::{ApprovalPolicy, PlanPolicy, SessionPolicy};
+
+    #[test]
+    fn run_state_policy_is_optional_and_roundtrips() {
+        let legacy = serde_json::to_value(RunState::default()).unwrap();
+        assert!(legacy.get("policy").is_none());
+        let mut state: RunState = serde_json::from_value(legacy).unwrap();
+        assert_eq!(state.policy, None);
+        state.policy = Some(SessionPolicy {
+            plan: PlanPolicy::Forbid,
+            approval: ApprovalPolicy::Reject,
+        });
+        let value = serde_json::to_value(&state).unwrap();
+        assert_eq!(value["policy"], serde_json::json!({"plan": "forbid", "approval": "reject"}));
+        assert_eq!(serde_json::from_value::<RunState>(value).unwrap(), state);
+    }
 }

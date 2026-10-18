@@ -1,0 +1,5 @@
+{"type":"event","event":"state","seq":1,"resynced":false,"state":{"revision":1,"external_approvals":false,"pending_approval":null,"gate":null,"session_id":"session-1","cwd":"/workspace","model_id":"provider/model","policy":{"plan":"forbid","approval":"reject"},"turn":{"id":"turn-1","state":"running","error":null},"working":true,"awaiting_approval":false,"approval_reason":null,"pending_count":0,"messages":[],"streaming":"é"}}
+{"type":"event","event":"output_append","seq":2,"revision":2,"offset":2,"text":"雪"}
+{"type":"event","event":"state","seq":3,"resynced":true,"state":{"revision":3,"external_approvals":false,"pending_approval":null,"gate":null,"session_id":"session-1","cwd":"/workspace","model_id":"provider/model","policy":{"plan":"forbid","approval":"reject"},"turn":{"id":"turn-1","state":"finished","error":null},"working":false,"awaiting_approval":false,"approval_reason":null,"pending_count":0,"messages":[{"role":"assistant","content":"é雪"}],"streaming":null}}
+{"type":"event","event":"turn","seq":4,"revision":3,"turn":{"id":"turn-1","state":"finished","error":null}}
+{"id":"approve-1","method":"approve","params":{"call_id":"pending-call-1","approve":false}}
