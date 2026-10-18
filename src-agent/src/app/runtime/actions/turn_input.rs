@@ -63,7 +63,11 @@ pub(crate) fn prepare_with_limit(
                     attachment::sniff_image_mime(path, &bytes).is_some(),
                     "not a recognised image"
                 );
-                let name = path.file_name().unwrap().to_string_lossy().into_owned();
+                let name = path
+                    .file_name()
+                    .ok_or_else(|| anyhow::anyhow!("image path has no file name"))?
+                    .to_string_lossy()
+                    .into_owned();
                 batch.push((Some(name), bytes, None));
             }
             TurnAttachmentInput::PastedText { text, name } => {

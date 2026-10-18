@@ -10,7 +10,7 @@ use crate::app::mode::Mode;
 use crate::app::state::AppState;
 use crate::controller::input::{handle_key, handle_paste, Action};
 use crate::dto::chat::Role;
-use crate::ipc::proto::{DaemonEvent, KeyWire};
+use crate::ipc::proto::{DaemonEvent, KeyWire, TurnAttachmentInput};
 use crate::service::openrouter::OpenRouterClient;
 
 use crate::app::runtime::actions::apply_action;
@@ -19,15 +19,31 @@ use crate::app::runtime::commands::compact::handle_compact;
 
 use super::core::DaemonHub;
 
+pub(super) struct OwnedTurn {
+    pub request_id: String,
+    pub text: String,
+    pub attachments: Vec<TurnAttachmentInput>,
+    pub enqueue: bool,
+    pub expected: Option<String>,
+}
+
 impl DaemonHub {
     /// Owned submission, enqueue, and atomic targeted replacement share preflight.
     pub(super) fn owned_turn(
-        &mut self, idx: usize, state: &mut AppState,
-        client: &mut Option<Arc<OpenRouterClient>>, handle: &tokio::runtime::Handle,
-        request_id: String, text: String,
-        attachments: Vec<crate::ipc::proto::TurnAttachmentInput>,
-        enqueue: bool, expected: Option<String>,
+        &mut self,
+        idx: usize,
+        state: &mut AppState,
+        client: &mut Option<Arc<OpenRouterClient>>,
+        handle: &tokio::runtime::Handle,
+        call: OwnedTurn,
     ) {
+        let OwnedTurn {
+            request_id,
+            text,
+            attachments,
+            enqueue,
+            expected,
+        } = call;
         use crate::ipc::proto::TurnDisposition;
         let mut interrupted_turn_id = None;
         let result = (|| -> anyhow::Result<(TurnDisposition, Option<String>)> {

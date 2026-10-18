@@ -232,7 +232,7 @@ async fn dispatch(
             )
         })
         .await
-        .map_err(|e| RpcError::unknown(e))?
+        .map_err(RpcError::unknown)?
         .map_err(RpcError::unknown)?;
         let mut c = Connection::attach(id, cwd, events.clone())
             .await
@@ -353,7 +353,9 @@ async fn dispatch(
                     "target call is not awaiting opted-in tool approval",
                 ));
             }
-            let s = c.projection.session.as_ref().unwrap();
+            let s = c.projection.session.as_ref().ok_or_else(|| {
+                RpcError::new("invalid_state", "no active session")
+            })?;
             let call = s
                 .pending_tool_calls
                 .get(s.tool_idx)
