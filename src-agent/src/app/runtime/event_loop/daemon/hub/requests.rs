@@ -489,6 +489,15 @@ impl DaemonHub {
             ClientRequest::SubmitInput { text } => {
                 self.submit_input(idx, state, client, handle, text);
             }
+            ClientRequest::SubmitTurnWithAttachments { request_id, text, attachments } => {
+                self.owned_turn(idx, state, client, handle, request_id, text, attachments, false, None);
+            }
+            ClientRequest::EnqueueFollowUp { request_id, text, attachments } => {
+                self.owned_turn(idx, state, client, handle, request_id, text, attachments, true, None);
+            }
+            ClientRequest::InterruptAndSubmit { request_id, turn_id, text, attachments } => {
+                self.owned_turn(idx, state, client, handle, request_id, text, attachments, false, Some(turn_id));
+            }
             ClientRequest::SubmitTurn { request_id, text } => {
                 self.submit_turn(idx, state, client, handle, request_id, text);
             }

@@ -19,6 +19,7 @@ mod attachments;
 mod background;
 mod bash;
 pub(crate) mod chat;
+pub(crate) mod turn_input;
 mod todo;
 // `pub(in crate::app::runtime)` so the daemon store hub (`event_loop::daemon::hub::
 // requests_ext`, within `runtime`) can call `uninstall_extension_core` — the shared,

@@ -20,6 +20,59 @@ use crate::app::runtime::commands::compact::handle_compact;
 use super::core::DaemonHub;
 
 impl DaemonHub {
+    /// Owned submission, enqueue, and atomic targeted replacement share preflight.
+    pub(super) fn owned_turn(
+        &mut self, idx: usize, state: &mut AppState,
+        client: &mut Option<Arc<OpenRouterClient>>, handle: &tokio::runtime::Handle,
+        request_id: String, text: String,
+        attachments: Vec<crate::ipc::proto::TurnAttachmentInput>,
+        enqueue: bool, expected: Option<String>,
+    ) {
+        use crate::ipc::proto::TurnDisposition;
+        let mut interrupted_turn_id = None;
+        let result = (|| -> anyhow::Result<(TurnDisposition, Option<String>)> {
+            let rt = state.rest.fg();
+            if let Some(id) = expected.as_ref() {
+                anyhow::ensure!(rt.active_turn.as_ref().is_some_and(|t| &t.id == id), "stale_turn");
+            }
+            anyhow::ensure!(!rt.closed && rt.session.is_some(), "no active session");
+            anyhow::ensure!(client.is_some(), "no active client");
+            if enqueue {
+                anyhow::ensure!(rt.waiting && rt.active_turn.is_some(), "no active waiting turn");
+                anyhow::ensure!(!rt.awaiting_shell && rt.compact_anim_start.is_none() && rt.compact_pending.is_none() && rt.compact_apply_at.is_none(), "session busy");
+                anyhow::ensure!(rt.pending_steer.len() < 5, "queue_full");
+            } else if expected.is_none() {
+                anyhow::ensure!(!rt.is_ui_busy() && rt.active_turn.is_none() && rt.compact_anim_start.is_none() && rt.compact_pending.is_none() && rt.compact_apply_at.is_none(), "session busy");
+            }
+            let prepared = crate::app::runtime::actions::turn_input::prepare(state, text, attachments)?;
+            if enqueue {
+                let rt = state.rest.fg_mut();
+                rt.ext_injected_turns = 0;
+                rt.call_track.invalidate_inspections();
+                rt.pending_steer.push(crate::app::state::FollowUp { text: prepared.text, attachments: prepared.attachments });
+                state.rest.pending_steer_sel = state.rest.fg().pending_steer.len().saturating_sub(1);
+                return Ok((TurnDisposition::Queued, None));
+            }
+            if let Some(id) = expected.as_ref() {
+                apply_action(Action::Interrupt, state, client, handle)?;
+                interrupted_turn_id = Some(id.clone());
+                self.force_resync = true;
+            }
+            let id = crate::app::runtime::actions::chat::kickoff_prepared_turn(prepared, state, client, handle)?;
+            Ok((TurnDisposition::Started, Some(id)))
+        })();
+        let (disposition, turn_id, reason) = match result {
+            Ok((d, id)) => (d, id, None),
+            Err(e) => (TurnDisposition::Rejected, None, Some(format!("{e:#}"))),
+        };
+        let event = if expected.is_some() {
+            DaemonEvent::InterruptAndSubmitResult { request_id, disposition, interrupted_turn_id, turn_id, reason }
+        } else {
+            DaemonEvent::TurnResult { request_id, disposition, turn_id, reason }
+        };
+        self.send_to(idx, event);
+    }
+
     /// Tracked submission never enters the legacy mid-turn steering path.
     pub(super) fn submit_turn(
         &mut self,

@@ -1099,6 +1099,9 @@ fn turn_contract_wire_defaults_and_roundtrips() {
     assert_eq!(serde_json::from_str::<DaemonEvent>(&serde_json::to_string(&hello).unwrap()).unwrap(), hello);
     for request in [
         ClientRequest::SubmitTurn { request_id: "submit".into(), text: "hello".into() },
+        ClientRequest::SubmitTurnWithAttachments { request_id: "owned".into(), text: "hello".into(), attachments: vec![TurnAttachmentInput::ImageFile { path: "/tmp/a.png".into() }] },
+        ClientRequest::EnqueueFollowUp { request_id: "queue".into(), text: "next".into(), attachments: vec![TurnAttachmentInput::PastedText { text: "body".into(), name: Some("notes.txt".into()) }] },
+        ClientRequest::InterruptAndSubmit { request_id: "replace".into(), turn_id: "logical".into(), text: "instead".into(), attachments: vec![] },
         ClientRequest::InterruptTurn { request_id: "stop".into(), turn_id: "logical".into() },
         ClientRequest::SetSessionPolicy { request_id: "policy".into(), plan: PlanPolicy::Forbid, approval: ApprovalPolicy::Reject },
     ] {
@@ -1113,12 +1116,40 @@ fn turn_contract_wire_defaults_and_roundtrips() {
         assert_eq!(value["state"].as_str().unwrap(), format!("{state:?}").to_lowercase());
         assert_eq!(serde_json::from_value::<TurnRecord>(value).unwrap(), record);
     }
-    for disposition in [TurnDisposition::Started, TurnDisposition::Rejected, TurnDisposition::Interrupted] {
+    for disposition in [TurnDisposition::Started, TurnDisposition::Queued, TurnDisposition::Rejected, TurnDisposition::Interrupted] {
         let result = DaemonEvent::TurnResult { request_id: "r".into(), disposition, turn_id: Some("logical".into()), reason: None };
         let value = serde_json::to_value(&result).unwrap();
         assert_eq!(value["TurnResult"]["disposition"].as_str().unwrap(), format!("{disposition:?}").to_lowercase());
         assert_eq!(serde_json::from_value::<DaemonEvent>(value).unwrap(), result);
     }
+    for variant in ["SubmitTurnWithAttachments", "EnqueueFollowUp", "InterruptAndSubmit"] {
+        let value = serde_json::json!({ variant: {"request_id":"r", "text":"hello", "turn_id":"logical"} });
+        let request: ClientRequest = serde_json::from_value(value).unwrap();
+        assert!(match &request {
+            ClientRequest::SubmitTurnWithAttachments { attachments, .. }
+            | ClientRequest::EnqueueFollowUp { attachments, .. }
+            | ClientRequest::InterruptAndSubmit { attachments, .. } => attachments.is_empty(),
+            _ => false,
+        });
+        roundtrip(&request);
+    }
+    for (attachment, kind) in [
+        (TurnAttachmentInput::ImageFile { path: "/tmp/a.png".into() }, "image_file"),
+        (TurnAttachmentInput::PastedText { text: "body".into(), name: None }, "pasted_text"),
+    ] {
+        assert_eq!(serde_json::to_value(&attachment).unwrap()["kind"], kind);
+        roundtrip(&attachment);
+    }
+    for interrupted_turn_id in [None, Some("old".into())] {
+        roundtrip(&DaemonEvent::InterruptAndSubmitResult {
+            request_id: "replace".into(), interrupted_turn_id,
+            disposition: TurnDisposition::Rejected, turn_id: None, reason: Some("failed".into()),
+        });
+    }
+    assert_eq!(serde_json::from_str::<ClientRequest>(r#"{"SubmitTurn":{"request_id":"old","text":"hi"}}"#).unwrap(),
+        ClientRequest::SubmitTurn { request_id: "old".into(), text: "hi".into() });
+    assert_eq!(serde_json::from_str::<ClientRequest>(r#"{"SubmitInput":{"text":"hi"}}"#).unwrap(),
+        ClientRequest::SubmitInput { text: "hi".into() });
     let old = serde_json::to_value(sample_session_snapshot()).unwrap();
     assert!(old.get("turn").is_none());
     let old: SessionSnapshot = serde_json::from_value(old).unwrap();

@@ -46,6 +46,15 @@ pub struct TurnRecord {
 #[serde(rename_all = "snake_case")]
 pub enum TurnDisposition {
     Started,
+    Queued,
     Rejected,
     Interrupted,
+}
+
+/// Request-owned media; paths refer to files on the daemon host.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum TurnAttachmentInput {
+    ImageFile { path: String },
+    PastedText { text: String, #[serde(default)] name: Option<String> },
 }

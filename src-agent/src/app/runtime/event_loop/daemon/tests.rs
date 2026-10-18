@@ -171,7 +171,7 @@ fn attach_emits_hello_then_snapshot() {
     match f0.event {
         DaemonEvent::Hello { version, protocol, capabilities } => {
             assert_eq!(protocol, crate::ipc::proto::IPC_PROTOCOL_VERSION);
-            assert_eq!(capabilities, vec!["submit_turn", "interrupt_turn", "session_policy"]);
+            assert_eq!(capabilities, vec!["submit_turn", "interrupt_turn", "session_policy", "enqueue_follow_up", "interrupt_and_submit", "turn_attachments"]);
             assert_eq!(
                 version,
                 crate::model::store::build_fingerprint(),
@@ -1181,4 +1181,205 @@ fn stream_failure_completes_addressed_session_without_touching_foreground() {
     assert_eq!(completed.id, other_id);
     assert_eq!(completed.state, TurnState::Failed);
     assert_eq!(completed.error.as_deref(), Some("producer disconnected"));
+}
+
+#[test]
+fn owned_enqueue_admission_is_bounded_ordered_and_requester_only() {
+    use crate::ipc::proto::TurnDisposition;
+    let mut f = TurnFixture::new();
+    let enqueue = |text: String| ClientRequest::EnqueueFollowUp {
+        request_id: text.clone(), text, attachments: vec![],
+    };
+    f.request(1, enqueue("idle".into()));
+    assert!(matches!(f.result(), DaemonEvent::TurnResult { disposition: TurnDisposition::Rejected, .. }));
+    assert!(f.state.rest.fg().active_turn.is_none());
+    let id = f.state.rest.fg_mut().begin_turn();
+    f.state.rest.fg_mut().waiting = true;
+    f.state.rest.fg_mut().awaiting_approval = true;
+    f.request(1, enqueue("  ".into()));
+    assert!(matches!(f.result(), DaemonEvent::TurnResult { disposition: TurnDisposition::Rejected, .. }));
+    for n in 0..5 {
+        f.request(1, enqueue(n.to_string()));
+        assert!(matches!(f.result(), DaemonEvent::TurnResult {
+            disposition: TurnDisposition::Queued, turn_id: None, reason: None, request_id,
+        } if request_id == n.to_string()));
+    }
+    f.request(1, enqueue("sixth".into()));
+    assert!(matches!(f.result(), DaemonEvent::TurnResult {
+        disposition: TurnDisposition::Rejected, reason: Some(reason), ..
+    } if reason == "queue_full"));
+    assert_eq!(f.state.rest.fg().pending_steer.iter().map(|s| s.text.as_str()).collect::<Vec<_>>(), ["0", "1", "2", "3", "4"]);
+    assert_eq!(f.state.rest.pending_steer_sel, 4);
+    assert_eq!(f.state.rest.fg().active_turn.as_ref().unwrap().id, id);
+    f.hub.stream_deltas(&mut f.state);
+    assert!(!f.replies[1].try_iter().any(|frame| matches!(frame.event,
+        DaemonEvent::TurnResult { .. } | DaemonEvent::InterruptAndSubmitResult { .. })));
+}
+
+#[test]
+fn owned_replacement_starts_new_id_preserves_queue_and_rejects_stale_stop() {
+    use crate::ipc::proto::{TurnDisposition, TurnState};
+    let mut f = TurnFixture::new();
+    let old = f.state.rest.fg_mut().begin_turn();
+    f.state.rest.fg_mut().waiting = true;
+    f.state.rest.fg_mut().streaming = Some("partial".into());
+    f.state.rest.fg_mut().pending_steer.push("keep queued".to_string().into());
+    f.request(1, ClientRequest::InterruptAndSubmit {
+        request_id: "replace".into(), turn_id: old.clone(), text: "replacement".into(), attachments: vec![],
+    });
+    let fresh = match f.result() {
+        DaemonEvent::InterruptAndSubmitResult { request_id, disposition: TurnDisposition::Started,
+            interrupted_turn_id: Some(id), turn_id: Some(fresh), reason: None } => {
+            assert_eq!(request_id, "replace"); assert_eq!(id, old); fresh
+        }
+        other => panic!("expected replacement started, got {other:?}"),
+    };
+    assert_ne!(fresh, old);
+    assert_eq!(f.state.rest.fg().last_turn.as_ref().unwrap().state, TurnState::Interrupted);
+    assert_eq!(f.state.rest.fg().pending_steer[0].text, "keep queued");
+    assert!(f.state.rest.fg().session.as_ref().unwrap().conversation.messages().iter()
+        .any(|m| m.content.contains("partial") && m.content.contains("[interrupted]")));
+    f.request(1, ClientRequest::InterruptAndSubmit {
+        request_id: "stale".into(), turn_id: old, text: "too late".into(), attachments: vec![],
+    });
+    assert!(matches!(f.result(), DaemonEvent::InterruptAndSubmitResult {
+        disposition: TurnDisposition::Rejected, interrupted_turn_id: None, reason: Some(reason), ..
+    } if reason == "stale_turn"));
+    assert_eq!(f.state.rest.fg().active_turn.as_ref().unwrap().id, fresh);
+    assert!(f.state.rest.fg().waiting);
+    f.hub.stream_deltas(&mut f.state);
+    assert!(!f.replies[1].try_iter().any(|frame| matches!(frame.event, DaemonEvent::InterruptAndSubmitResult { .. })));
+}
+
+#[test]
+fn owned_replacement_preflight_keeps_execution_queue_and_composer() {
+    use crate::ipc::proto::{TurnAttachmentInput, TurnDisposition};
+    let mut f = TurnFixture::new();
+    let old = f.state.rest.fg_mut().begin_turn();
+    f.state.rest.fg_mut().waiting = true;
+    f.state.rest.fg_mut().streaming = Some("still running".into());
+    f.state.rest.fg_mut().input = "draft".into();
+    f.state.rest.fg_mut().cursor = 2;
+    f.state.rest.fg_mut().pending_steer.push("keep".to_string().into());
+    let (staged, _) = crate::model::attachment::ingest_paste_text(&f.path.join("pastes"), "staged").unwrap();
+    f.state.rest.fg_mut().pending_attachments.push(staged.clone());
+    for (target, text, attachments) in [
+        ("stale".to_string(), "hello", vec![]),
+        (old.clone(), " \n", vec![]),
+        (old.clone(), "hello", vec![
+            TurnAttachmentInput::PastedText { text: "valid first".into(), name: None },
+            TurnAttachmentInput::ImageFile { path: "relative.png".into() },
+        ]),
+    ] {
+        f.request(1, ClientRequest::InterruptAndSubmit { request_id: "reject".into(), turn_id: target, text: text.into(), attachments });
+        assert!(matches!(f.result(), DaemonEvent::InterruptAndSubmitResult {
+            disposition: TurnDisposition::Rejected, interrupted_turn_id: None, turn_id: None, reason: Some(_), ..
+        }));
+        let rt = f.state.rest.fg();
+        assert_eq!(rt.active_turn.as_ref().unwrap().id, old);
+        assert!(rt.waiting);
+        assert_eq!(rt.streaming.as_deref(), Some("still running"));
+        assert_eq!(rt.input, "draft"); assert_eq!(rt.cursor, 2);
+        assert_eq!(rt.pending_attachments, [staged.clone()]);
+        assert_eq!(rt.pending_steer[0].text, "keep");
+        assert!(rt.last_turn.is_none());
+    }
+}
+
+#[test]
+fn owned_replacement_startup_failure_records_interruption_not_started() {
+    use crate::ipc::proto::{TurnDisposition, TurnState};
+    for save_failure in [true, false] {
+        let mut f = TurnFixture::new();
+        let old = f.state.rest.fg_mut().begin_turn();
+        f.state.rest.fg_mut().waiting = true;
+        if save_failure {
+            let blocked = f.path.join("not-a-directory");
+            std::fs::write(&blocked, "file").unwrap();
+            f.state.rest.fg_mut().session.as_mut().unwrap().path = blocked;
+        } else {
+            f.state.rest.fg_mut().session.as_mut().unwrap().conversation =
+                crate::model::conversation::Conversation::from_messages(Vec::new());
+        }
+        f.request(1, ClientRequest::InterruptAndSubmit { request_id: "fails".into(), turn_id: old.clone(), text: "replacement".into(), attachments: vec![] });
+        assert!(matches!(f.result(), DaemonEvent::InterruptAndSubmitResult {
+            disposition: TurnDisposition::Rejected, interrupted_turn_id: Some(id), turn_id: None, reason: Some(_), ..
+        } if id == old));
+        assert!(f.state.rest.fg().active_turn.is_none());
+        assert!(!f.state.rest.fg().waiting);
+        assert_eq!(f.state.rest.fg().last_turn.as_ref().unwrap().state,
+            if save_failure { TurnState::Interrupted } else { TurnState::Failed });
+    }
+}
+
+#[test]
+fn owned_attachments_are_explicit_and_never_capture_composer_media() {
+    use crate::ipc::proto::{TurnAttachmentInput, TurnDisposition};
+    for operation in ["submit", "enqueue", "replace"] {
+        for with_attachments in [false, true] {
+            let mut f = TurnFixture::new();
+            let (staged, marker) = crate::model::attachment::ingest_paste_text(&f.path.join("pastes"), "COMPOSER ONLY").unwrap();
+            f.state.rest.fg_mut().input = format!("draft {marker}");
+            f.state.rest.fg_mut().cursor = 3;
+            f.state.rest.fg_mut().pending_attachments.push(staged.clone());
+            let draft = f.state.rest.fg().input.clone();
+            let image = f.path.join("tiny.png");
+            let image_bytes = b"\x89PNG\r\n\x1a\n";
+            std::fs::write(&image, image_bytes).unwrap();
+            let text = format!("owned @{}", image.display());
+            let attachments = if with_attachments { vec![
+                TurnAttachmentInput::ImageFile { path: image.to_string_lossy().into_owned() },
+                TurnAttachmentInput::PastedText { text: "OWNED BODY".into(), name: Some("/tmp/notes\n.txt".into()) },
+            ] } else { vec![] };
+            let old = if operation != "submit" {
+                let id = f.state.rest.fg_mut().begin_turn();
+                f.state.rest.fg_mut().waiting = true;
+                Some(id)
+            } else { None };
+            let request = match operation {
+                "enqueue" => ClientRequest::EnqueueFollowUp { request_id: "owned".into(), text: text.clone(), attachments },
+                "replace" => ClientRequest::InterruptAndSubmit { request_id: "owned".into(), turn_id: old.unwrap(), text: text.clone(), attachments },
+                _ => ClientRequest::SubmitTurnWithAttachments { request_id: "owned".into(), text: text.clone(), attachments },
+            };
+            f.request(1, request);
+            assert!(matches!(f.result(),
+                DaemonEvent::TurnResult { disposition: TurnDisposition::Started | TurnDisposition::Queued, reason: None, .. }
+                | DaemonEvent::InterruptAndSubmitResult { disposition: TurnDisposition::Started, reason: None, .. }));
+            let rt = f.state.rest.fg();
+            assert_eq!(rt.input, draft); assert_eq!(rt.cursor, 3);
+            assert_eq!(rt.pending_attachments, [staged.clone()]);
+            let (content, media) = if operation == "enqueue" {
+                let followup = &rt.pending_steer[0];
+                (followup.text.as_str(), followup.attachments.as_slice())
+            } else {
+                let message = rt.session.as_ref().unwrap().conversation.messages().last().unwrap();
+                (message.content.as_str(), message.attachments.as_slice())
+            };
+            assert!(content.starts_with(&text)); // @image tokens are not scanned.
+            assert!(!content.contains("COMPOSER ONLY"));
+            assert!(!media.contains(&staged));
+            assert_eq!(media.len(), if with_attachments { 2 } else { 0 });
+            if with_attachments {
+                assert!(media[0].is_image()); assert!(media[1].is_pasted_text());
+                assert_eq!(media[1].label.as_deref(), Some("notes.txt"));
+                assert_eq!(std::fs::read(f.path.join(&media[0].rel_path)).unwrap(), image_bytes);
+                assert_eq!(std::fs::read_to_string(f.path.join(&media[1].rel_path)).unwrap(), "OWNED BODY");
+                assert!(content.contains(&format!("[Image #{}]", media[0].marker_n)));
+                assert!(content.contains(if operation == "enqueue" { "[Pasted Text #" } else { "OWNED BODY" }));
+            }
+            assert!(f.replies[1].try_recv().is_err());
+        }
+    }
+    let mut f = TurnFixture::new();
+    let paste = TurnAttachmentInput::PastedText { text: "body".into(), name: None };
+    f.request(1, ClientRequest::SubmitTurnWithAttachments { request_id: "limit".into(), text: "hello".into(), attachments: vec![paste.clone(); 17] });
+    assert!(matches!(f.result(), DaemonEvent::TurnResult { disposition: TurnDisposition::Rejected, .. }));
+    assert!(crate::app::runtime::actions::turn_input::prepare_with_limit(&f.state, "hello".into(), vec![paste], 3).is_err());
+    let image = f.path.join("bounded.png");
+    std::fs::write(&image, b"12345678").unwrap();
+    assert!(crate::app::runtime::actions::turn_input::prepare_with_limit(&f.state, "hello".into(),
+        vec![TurnAttachmentInput::ImageFile { path: image.to_string_lossy().into_owned() }], 4).is_err());
+    assert!(!f.path.join("images").exists());
+    assert!(!f.path.join("pastes").exists());
+    assert!(f.state.rest.fg().active_turn.is_none());
 }

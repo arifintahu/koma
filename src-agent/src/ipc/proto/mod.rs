@@ -12,7 +12,7 @@ pub use run::{RunExtension, RunState};
 pub mod snapshot;
 pub mod stream;
 pub mod turn;
-pub use turn::{ApprovalPolicy, PlanPolicy, TurnDisposition, TurnRecord, TurnState};
+pub use turn::{ApprovalPolicy, PlanPolicy, TurnAttachmentInput, TurnDisposition, TurnRecord, TurnState};
 
 // Re-export everything so downstream `crate::ipc::proto::*` paths keep working.
 #[allow(unused_imports)]
@@ -69,6 +69,18 @@ pub enum ClientRequest {
     GetMenuCapabilities,
     /// Start a fresh logical user turn; never implicitly queue or steer.
     SubmitTurn { request_id: String, text: String },
+    SubmitTurnWithAttachments {
+        request_id: String, text: String,
+        #[serde(default)] attachments: Vec<TurnAttachmentInput>,
+    },
+    EnqueueFollowUp {
+        request_id: String, text: String,
+        #[serde(default)] attachments: Vec<TurnAttachmentInput>,
+    },
+    InterruptAndSubmit {
+        request_id: String, turn_id: String, text: String,
+        #[serde(default)] attachments: Vec<TurnAttachmentInput>,
+    },
     /// Interrupt only the named active logical turn.
     InterruptTurn { request_id: String, turn_id: String },
     SetSessionPolicy {
@@ -972,6 +984,13 @@ pub enum DaemonEvent {
     TurnResult {
         request_id: String,
         disposition: TurnDisposition,
+        turn_id: Option<String>,
+        reason: Option<String>,
+    },
+    InterruptAndSubmitResult {
+        request_id: String,
+        disposition: TurnDisposition,
+        interrupted_turn_id: Option<String>,
         turn_id: Option<String>,
         reason: Option<String>,
     },
