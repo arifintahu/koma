@@ -52,6 +52,49 @@ pub(crate) fn linux_disable_webkit_prefetch(webview: &wry::WebView) {
         settings.set_hardware_acceleration_policy(HardwareAccelerationPolicy::Never);
         linux_disable_crash_features(settings.to_glib_none().0);
     }
+    // Same webviews. An RGBA toplevel only keeps the pixels WebKit copies on
+    // this draw; see `linux_keep_full_frame`.
+    linux_keep_full_frame(webview);
+}
+
+/// WebKitGTK 2.54 copies only the damage clip into an RGBA toplevel
+/// (`webkitWebViewBaseDraw` → `AcceleratedBackingStore::paint`). Pixels
+/// outside that clip stay alpha 0, so the window shows a strip under the
+/// cursor and the rest falls through to the desktop.
+///
+/// The committed WebKit buffer is already the whole page, transparent
+/// corners included. This runs before WebKit's draw handler and widens the
+/// clip to the widget so that buffer is copied whole. `#app` keeps its
+/// anti-aliased radius. On Wayland, GDK also records only the original
+/// damage rect (`wl_surface_damage` / the cairo backfill), and
+/// `gdk_window_shape_combine_region` does not clip the frame, so a partial
+/// clip also schedules one full invalidate. That full pass is not partial,
+/// and this handler does not schedule another.
+#[cfg(target_os = "linux")]
+fn linux_keep_full_frame(webview: &wry::WebView) {
+    use gtk::prelude::*;
+    use wry::WebViewExtUnix;
+    webview.webview().connect_draw(|widget, cr| {
+        let alloc = widget.allocation();
+        let w = f64::from(alloc.width());
+        let h = f64::from(alloc.height());
+        if w > 0.0 && h > 0.0 {
+            let partial = matches!(
+                cr.clip_extents(),
+                Ok((x1, y1, x2, y2))
+                    if x1 > 0.5 || y1 > 0.5 || x2 < w - 0.5 || y2 < h - 0.5
+            );
+            cr.reset_clip();
+            cr.rectangle(0.0, 0.0, w, h);
+            cr.clip();
+            // The follow-up paint's clip is the whole widget, so this does
+            // not queue itself again.
+            if partial {
+                widget.queue_draw();
+            }
+        }
+        gtk::glib::Propagation::Proceed
+    });
 }
 
 /// View Transitions are the confirmed null-backing-store trigger (WebKit 321683).

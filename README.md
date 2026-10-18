@@ -52,7 +52,7 @@ koma run --prompt 'ping' --once --timeout 120
 koma run --prompt-file ./instructions.txt --name batch-1 --workdir "$PWD"
 ```
 
-Partner integrations can use the [Python and JavaScript/TypeScript SDKs](src-core-sdk/README.md)
+The [Koma Open SDKs](src-core-sdk/README.md) (Python and JavaScript/TypeScript) can drive sessions
 over `koma sdk serve`. The SDKs use an installed Koma binary; they do not download or
 build the engine. See the SDK guide for local/artifact installation and compatibility checks.
 

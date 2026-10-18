@@ -1283,7 +1283,7 @@ fn owned_replacement_preflight_keeps_execution_queue_and_composer() {
         assert!(rt.waiting);
         assert_eq!(rt.streaming.as_deref(), Some("still running"));
         assert_eq!(rt.input, "draft"); assert_eq!(rt.cursor, 2);
-        assert_eq!(rt.pending_attachments, [staged.clone()]);
+        assert_eq!(rt.pending_attachments, std::slice::from_ref(&staged));
         assert_eq!(rt.pending_steer[0].text, "keep");
         assert!(rt.last_turn.is_none());
     }
@@ -1350,7 +1350,7 @@ fn owned_attachments_are_explicit_and_never_capture_composer_media() {
                 | DaemonEvent::InterruptAndSubmitResult { disposition: TurnDisposition::Started, reason: None, .. }));
             let rt = f.state.rest.fg();
             assert_eq!(rt.input, draft); assert_eq!(rt.cursor, 3);
-            assert_eq!(rt.pending_attachments, [staged.clone()]);
+            assert_eq!(rt.pending_attachments, std::slice::from_ref(&staged));
             let (content, media) = if operation == "enqueue" {
                 let followup = &rt.pending_steer[0];
                 (followup.text.as_str(), followup.attachments.as_slice())
