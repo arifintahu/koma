@@ -16,15 +16,17 @@ export type ProviderSavePayload = { id: string; name: string; endpoint: string; 
 // handled separately (blank manual form).
 export const PREDEFINED: { name: string; endpoint: string }[] = [
   { name: 'Koma', endpoint: 'https://koma.run/api/v1/koma-gateway' },
+  { name: 'NetraRuntime', endpoint: 'https://api.netraruntime.com/v1' },
+  { name: 'GismaPro', endpoint: 'https://api.gismapro.com/api/v1' },
   { name: 'OpenRouter', endpoint: 'https://openrouter.ai/api/v1' },
-  { name: 'DeepSeek', endpoint: 'https://api.deepseek.com' },
-  { name: 'Mimo (token plan)', endpoint: 'https://token-plan-sgp.xiaomimimo.com/v1' },
-  { name: 'OpenAI', endpoint: 'https://api.openai.com/v1' },
-  { name: 'Groq', endpoint: 'https://api.groq.com/openai/v1' },
-  { name: 'Together', endpoint: 'https://api.together.xyz/v1' },
-  { name: 'Fireworks', endpoint: 'https://api.fireworks.ai/inference/v1' },
-  { name: 'Mistral', endpoint: 'https://api.mistral.ai/v1' },
-  { name: 'DeepInfra', endpoint: 'https://api.deepinfra.com/v1/openai' },
+  // { name: 'DeepSeek', endpoint: 'https://api.deepseek.com' },
+  // { name: 'Mimo (token plan)', endpoint: 'https://token-plan-sgp.xiaomimimo.com/v1' },
+  // { name: 'OpenAI', endpoint: 'https://api.openai.com/v1' },
+  // { name: 'Groq', endpoint: 'https://api.groq.com/openai/v1' },
+  // { name: 'Together', endpoint: 'https://api.together.xyz/v1' },
+  // { name: 'Fireworks', endpoint: 'https://api.fireworks.ai/inference/v1' },
+  // { name: 'Mistral', endpoint: 'https://api.mistral.ai/v1' },
+  // { name: 'DeepInfra', endpoint: 'https://api.deepinfra.com/v1/openai' },
 ]
 
 export function ProviderForm({

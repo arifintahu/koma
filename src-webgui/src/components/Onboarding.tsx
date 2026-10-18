@@ -337,7 +337,7 @@ export function Onboarding() {
                   Provider
                 </span>
                 <span className="text-[11.5px] text-koma-fg opacity-60">
-                  Bring your own API key (OpenRouter, OpenAI, DeepSeek, and more).
+                  Bring your own API key (Koma, NetraRuntime, GismaPro, OpenRouter, or Custom).
                 </span>
               </button>
 
