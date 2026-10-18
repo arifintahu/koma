@@ -942,6 +942,13 @@ impl AppStateRest {
         if self.sessions.get(sess_idx).is_none() {
             return;
         }
+        // Check before interrupting a live response or changing any mode rails.
+        if new_mode == AgentMode::Plan
+            && self.sessions[sess_idx].policy.plan == crate::ipc::proto::turn::PlanPolicy::Forbid
+        {
+            self.sessions[sess_idx].set_toast("Plan mode is forbidden by session policy".into());
+            return;
+        }
         let old_mode = self.sessions[sess_idx].agent_mode;
         self.sessions[sess_idx].plan_read_only.store(
             new_mode == AgentMode::Plan,

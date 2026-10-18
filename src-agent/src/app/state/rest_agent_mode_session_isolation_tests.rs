@@ -292,3 +292,18 @@ fn invalidate_sdlc_keeper_llm_drops_staged_and_bumps_epoch() {
     assert!(rt.pending_sdlc_keeper_llm.is_none());
     assert_eq!(rt.sdlc_keeper_epoch, e0.wrapping_add(2));
 }
+
+#[test]
+fn unattended_plan_forbid_leaves_live_stream_and_mode_untouched() {
+    let mut rest = AppStateRest::new();
+    rest.fg_mut().policy.plan = crate::ipc::proto::turn::PlanPolicy::Forbid;
+    let old_mode = rest.fg().agent_mode;
+    let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+    rest.fg_mut().active_rx = Some(rx);
+    rest.fg_mut().waiting = true;
+    rest.set_agent_mode(AgentMode::Plan);
+    assert_eq!(rest.fg().agent_mode, old_mode);
+    assert!(rest.fg().waiting);
+    assert!(!rest.fg().plan_read_only.load(std::sync::atomic::Ordering::Acquire));
+    assert!(tx.send(crate::service::StreamEvent::Done).is_ok());
+}

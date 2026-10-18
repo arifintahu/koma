@@ -411,7 +411,7 @@ fn probe_session_hello(path: &Path) -> anyhow::Result<Option<String>> {
             Ok(f) => f,
             Err(_) => return Ok(None), // closed/timed out before Hello — not a mismatch
         };
-        if let DaemonEvent::Hello { version } = frame.event {
+        if let DaemonEvent::Hello { version, .. } = frame.event {
             return Ok(Some(version));
         }
     }

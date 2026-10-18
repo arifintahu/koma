@@ -89,6 +89,7 @@ pub fn session_snapshot(
 
     SessionSnapshot {
         id: rt.id.clone(),
+        turn: rt.active_turn.as_ref().or(rt.last_turn.as_ref()).cloned(),
         name,
         cwd: rt
             .session

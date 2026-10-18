@@ -11,6 +11,8 @@ mod run;
 pub use run::{RunExtension, RunState};
 pub mod snapshot;
 pub mod stream;
+pub mod turn;
+pub use turn::{ApprovalPolicy, PlanPolicy, TurnDisposition, TurnRecord, TurnState};
 
 // Re-export everything so downstream `crate::ipc::proto::*` paths keep working.
 #[allow(unused_imports)]
@@ -23,8 +25,10 @@ use serde::{Deserialize, Serialize};
 
 // ─── frame constants ─────────────────────────────────────────────────────────
 
+/// Additive daemon protocol contract, independent of the build fingerprint.
+pub const IPC_PROTOCOL_VERSION: u32 = 1;
+
 /// Hard upper bound on a single length-prefixed frame's payload size (64 MiB).
-#[allow(dead_code)]
 pub const MAX_FRAME_BYTES: usize = 64 * 1024 * 1024;
 
 // ─── lightweight session metadata ────────────────────────────────────────────
@@ -63,6 +67,17 @@ pub struct FileSearchItem {
 pub enum ClientRequest {
     /// Direct menu actions, correlated independently from legacy Ack traffic.
     GetMenuCapabilities,
+    /// Start a fresh logical user turn; never implicitly queue or steer.
+    SubmitTurn { request_id: String, text: String },
+    /// Interrupt only the named active logical turn.
+    InterruptTurn { request_id: String, turn_id: String },
+    SetSessionPolicy {
+        request_id: String,
+        #[serde(default)]
+        plan: PlanPolicy,
+        #[serde(default)]
+        approval: ApprovalPolicy,
+    },
     SetUsageReader {
         enabled: bool,
     },
@@ -948,6 +963,17 @@ pub enum DaemonEvent {
     /// Build-skew handshake (task #142): sent VERY FIRST on attach.
     Hello {
         version: String,
+        #[serde(default)]
+        protocol: u32,
+        #[serde(default)]
+        capabilities: Vec<String>,
+    },
+    /// Requester-only reply. Never broadcast to attached peers.
+    TurnResult {
+        request_id: String,
+        disposition: TurnDisposition,
+        turn_id: Option<String>,
+        reason: Option<String>,
     },
     /// A full state projection — sent on attach and on resync. Boxed.
     Snapshot(Box<StateSnapshot>),

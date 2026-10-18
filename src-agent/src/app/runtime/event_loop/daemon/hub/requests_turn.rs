@@ -20,6 +20,78 @@ use crate::app::runtime::commands::compact::handle_compact;
 use super::core::DaemonHub;
 
 impl DaemonHub {
+    /// Tracked submission never enters the legacy mid-turn steering path.
+    pub(super) fn submit_turn(
+        &mut self,
+        idx: usize,
+        state: &mut AppState,
+        client: &mut Option<Arc<OpenRouterClient>>,
+        handle: &tokio::runtime::Handle,
+        request_id: String,
+        text: String,
+    ) {
+        use crate::ipc::proto::turn::TurnDisposition;
+        let rt = state.rest.fg();
+        let rejection = if rt.closed || rt.session.is_none() {
+            Some("no active session")
+        } else if client.is_none() {
+            Some("no active client")
+        } else if rt.is_ui_busy() || rt.active_turn.is_some() || rt.compact_anim_start.is_some() {
+            Some("session busy")
+        } else if text.trim().is_empty() {
+            Some("empty prompt")
+        } else {
+            None
+        };
+        if let Some(reason) = rejection {
+            self.send_to(idx, DaemonEvent::TurnResult {
+                request_id,
+                disposition: TurnDisposition::Rejected,
+                turn_id: None,
+                reason: Some(reason.into()),
+            });
+            return;
+        }
+        let result = crate::app::runtime::actions::chat::kickoff_fresh_turn(text, state, client, handle);
+        let (disposition, turn_id, reason) = match result {
+            Ok(id) if state.rest.fg().waiting => (TurnDisposition::Started, Some(id), None),
+            Ok(_) => (TurnDisposition::Rejected, None, Some(state.rest.fg().status.clone())),
+            Err(error) => (TurnDisposition::Rejected, None, Some(format!("{error:#}"))),
+        };
+        self.send_to(idx, DaemonEvent::TurnResult { request_id, disposition, turn_id, reason });
+    }
+
+    /// A stale stop must not cut a newer turn, including one started this tick.
+    pub(super) fn interrupt_turn(
+        &mut self,
+        idx: usize,
+        state: &mut AppState,
+        client: &mut Option<Arc<OpenRouterClient>>,
+        handle: &tokio::runtime::Handle,
+        request_id: String,
+        turn_id: String,
+    ) {
+        use crate::ipc::proto::turn::TurnDisposition;
+        if state.rest.fg().active_turn.as_ref().is_none_or(|turn| turn.id != turn_id) {
+            self.send_to(idx, DaemonEvent::TurnResult {
+                request_id,
+                disposition: TurnDisposition::Rejected,
+                turn_id: Some(turn_id),
+                reason: Some("stale_turn".into()),
+            });
+            return;
+        }
+        let result = apply_action(Action::Interrupt, state, client, handle);
+        self.force_resync = true;
+        let (disposition, reason) = match result {
+            Ok(()) => (TurnDisposition::Interrupted, None),
+            Err(error) => (TurnDisposition::Rejected, Some(format!("{error:#}"))),
+        };
+        self.send_to(idx, DaemonEvent::TurnResult {
+            request_id, disposition, turn_id: Some(turn_id), reason,
+        });
+    }
+
     // Submit composed text to the foreground session — identical to the local
     // Enter-on-composer path (`Action::Submit` carries the text directly).
     pub(super) fn submit_input(

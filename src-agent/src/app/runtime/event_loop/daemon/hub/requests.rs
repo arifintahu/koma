@@ -489,6 +489,15 @@ impl DaemonHub {
             ClientRequest::SubmitInput { text } => {
                 self.submit_input(idx, state, client, handle, text);
             }
+            ClientRequest::SubmitTurn { request_id, text } => {
+                self.submit_turn(idx, state, client, handle, request_id, text);
+            }
+            ClientRequest::InterruptTurn { request_id, turn_id } => {
+                self.interrupt_turn(idx, state, client, handle, request_id, turn_id);
+            }
+            ClientRequest::SetSessionPolicy { request_id: _, plan, approval } => {
+                self.set_session_policy(idx, state, crate::ipc::proto::turn::SessionPolicy { plan, approval });
+            }
 
             ClientRequest::AttachPaste { text, name, force } => {
                 self.attach_paste(idx, state, text, name, force);

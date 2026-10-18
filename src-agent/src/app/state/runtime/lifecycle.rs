@@ -9,6 +9,27 @@ use std::path::{Path, PathBuf};
 use super::SessionRuntime;
 
 impl SessionRuntime {
+    /// Mint only for a fresh user turn, never for a tool round or synthetic wake.
+    pub fn begin_turn(&mut self) -> String {
+        let id = uuid::Uuid::new_v4().to_string();
+        self.active_turn = Some(crate::ipc::proto::turn::TurnRecord {
+            id: id.clone(),
+            state: crate::ipc::proto::turn::TurnState::Running,
+            error: None,
+        });
+        id
+    }
+
+    /// Terminal transition, idempotent; synthetic work has no active record.
+    pub fn complete_turn(&mut self, state: crate::ipc::proto::turn::TurnState, error: Option<String>) {
+        debug_assert!(state != crate::ipc::proto::turn::TurnState::Running);
+        if let Some(mut turn) = self.active_turn.take() {
+            turn.state = state;
+            turn.error = error;
+            self.last_turn = Some(turn);
+        }
+    }
+
     /// Kill running sub-agents that belong to THIS session, drop model-delegated
     /// queued sub-agents, but PRESERVE user-initiated /task jobs
     /// (tool_call_id == None).
@@ -98,6 +119,7 @@ impl SessionRuntime {
         if self.closed {
             return;
         }
+        self.complete_turn(crate::ipc::proto::turn::TurnState::Interrupted, None);
         // In-flight stream task: abort + drop the receiver so late events vanish.
         if let Some(h) = self.current_task.take() {
             h.abort();
@@ -154,6 +176,7 @@ impl SessionRuntime {
     /// and only THIS session's counters are touched. The rest-GLOBAL compaction
     /// cleanup + status line stay with the caller (`actions::chat::handle_interrupt`).
     pub fn interrupt(&mut self) {
+        self.complete_turn(crate::ipc::proto::turn::TurnState::Interrupted, None);
         // Sharing stays on. The generation bump cancels the in-flight click
         // on the GUI worker; the square stop control is what turns sharing off.
         self.computer.halt_turn();
@@ -393,5 +416,44 @@ impl SessionRuntime {
         self.active_cwd = None;
         self.set_toast("active workspace no longer allowed — reset to primary workdir".into());
         true
+    }
+}
+
+#[cfg(test)]
+mod turn_tests {
+    use super::*;
+    use crate::ipc::proto::turn::{SessionPolicy, TurnState};
+
+    #[test]
+    fn logical_turn_is_stable_across_stream_rounds_and_completes_once() {
+        let mut rt = SessionRuntime::new();
+        assert_eq!(rt.policy, SessionPolicy::default());
+        rt.begin_stream();
+        assert!(rt.active_turn.is_none(), "synthetic streams do not mint ids");
+        let id = rt.begin_turn();
+        assert!(uuid::Uuid::parse_str(&id).is_ok());
+        rt.begin_stream();
+        rt.take_stream();
+        rt.begin_stream();
+        assert_eq!(rt.active_turn.as_ref().unwrap().id, id);
+        rt.complete_turn(TurnState::Finished, None);
+        rt.complete_turn(TurnState::Failed, Some("late".into()));
+        assert_eq!(rt.last_turn.as_ref().unwrap().state, TurnState::Finished);
+        assert_eq!(rt.last_turn.as_ref().unwrap().id, id);
+        assert_ne!(rt.begin_turn(), id);
+        rt.interrupt();
+        assert_eq!(rt.last_turn.as_ref().unwrap().state, TurnState::Interrupted);
+    }
+
+    #[test]
+    fn closing_active_turn_is_terminal_and_idle_close_keeps_last() {
+        let mut rt = SessionRuntime::new();
+        let id = rt.begin_turn();
+        rt.close();
+        assert!(rt.active_turn.is_none());
+        assert_eq!(rt.last_turn.as_ref().unwrap().id, id);
+        assert_eq!(rt.last_turn.as_ref().unwrap().state, TurnState::Interrupted);
+        rt.close();
+        assert_eq!(rt.last_turn.as_ref().unwrap().id, id);
     }
 }

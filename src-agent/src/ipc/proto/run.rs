@@ -4,6 +4,8 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct RunState {
     pub session_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub turn: Option<crate::ipc::proto::TurnRecord>,
     pub name: String,
     pub workdir: Vec<String>,
     pub model: String,

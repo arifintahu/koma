@@ -66,6 +66,7 @@ pub(super) fn exit_select(
 pub(super) fn fail_compaction(state: &mut AppState, idx: usize, reason: String) {
     if let Some(rt) = state.rest.sessions.get_mut(idx) {
         rt.waiting = false;
+        rt.complete_turn(crate::ipc::proto::turn::TurnState::Failed, Some(reason.clone()));
         rt.compact_anim_start = None;
         rt.compact_apply_at = None;
         rt.compact_pending = None;

@@ -23,6 +23,7 @@ pub(crate) fn run_state(state: &AppState) -> anyhow::Result<RunState> {
     .rows;
     Ok(RunState {
         session_id: sess.id.clone(),
+        turn: rt.active_turn.as_ref().or(rt.last_turn.as_ref()).cloned(),
         name: sess.name.clone(),
         workdir: sess
             .workdirs()
@@ -64,6 +65,36 @@ pub(crate) fn run_state(state: &AppState) -> anyhow::Result<RunState> {
 }
 
 impl DaemonHub {
+    /// Only explicit idle policy changes checkpoint unattended.json. Persist first
+    /// so a failed atomic write leaves the live policy untouched.
+    pub(super) fn set_session_policy(
+        &mut self,
+        idx: usize,
+        state: &mut AppState,
+        policy: crate::ipc::proto::turn::SessionPolicy,
+    ) {
+        use crate::app::state::AgentMode;
+        use crate::ipc::proto::turn::PlanPolicy;
+        let result = (|| -> anyhow::Result<()> {
+            let rt = state.rest.fg();
+            anyhow::ensure!(!rt.closed, "session closed");
+            let sess = rt.session.as_ref().ok_or_else(|| anyhow::anyhow!("no active session"))?;
+            anyhow::ensure!(
+                !rt.is_working() && rt.active_turn.is_none() && rt.compact_anim_start.is_none(),
+                "session busy"
+            );
+            anyhow::ensure!(
+                policy.plan != PlanPolicy::Forbid || rt.agent_mode != AgentMode::Plan,
+                "leave plan mode first"
+            );
+            sess.save_unattended_policy(&policy, rt.active_turn.as_ref().or(rt.last_turn.as_ref()))?;
+            state.rest.fg_mut().policy = policy;
+            Ok(())
+        })();
+        // Policy requests are not turns: do not invent a Started disposition.
+        self.ack_or_error(idx, result);
+    }
+
     pub(super) fn get_run_state(&mut self, idx: usize, state: &AppState, req_seq: u64) {
         match run_state(state) {
             Ok(state) => self.send_to(idx, DaemonEvent::RunState { req_seq, state }),

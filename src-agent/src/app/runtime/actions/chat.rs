@@ -117,6 +117,22 @@ pub(super) fn handle_submit(
         state.rest.pending_steer_sel = n.saturating_sub(1);
         return Ok(());
     }
+    // Legacy submit retains its status/toast behavior; tracked callers use the
+    // fallible fresh-only helper directly and receive an accurate disposition.
+    let _ = kickoff_fresh_turn(text, state, client, handle);
+    Ok(())
+}
+
+/// Start one fresh logical user turn. Never enqueue or steer. Callers validate
+/// fresh-turn preconditions (tracked callers reject empty/busy/closed). The caller selects
+/// the foreground session before calling; the returned id survives tool rounds.
+pub(crate) fn kickoff_fresh_turn(
+    text: String,
+    state: &mut AppState,
+    client: &mut Option<Arc<OpenRouterClient>>,
+    handle: &tokio::runtime::Handle,
+) -> Result<String> {
+    anyhow::ensure!(client.is_some() && state.rest.fg().session.is_some(), "no active session");
     // Real user activity (immediate-kickoff path): reset the extension-injection
     // budget counter (cost-DoS guard, review finding — see
     // `SessionRuntime::ext_injected_turns`) now that we know this submit is a real,
@@ -165,14 +181,14 @@ pub(super) fn handle_submit(
             "chat",
             "BUG: fg session missing in handle_submit",
         );
-        return Ok(());
+        anyhow::bail!("no active session");
     };
     let _ = msglog::append(&sess.path, Role::User, &text, None, None);
     sess.conversation
         .push_user_with_attachments(text, attachments);
     if let Err(e) = sess.save() {
         state.rest.fg_mut().status = format!("error: {e}");
-        return Ok(());
+        return Err(e);
     }
     let history = sess.conversation.history();
     // Image-capability guard: if this message carries images and the resolved Main
@@ -215,7 +231,7 @@ pub(super) fn handle_submit(
             crate::app::runtime::stream::push_image_unsupported_notice(&mut state.rest);
             state.rest.reset_scroll();
             state.rest.fg_mut().status = "ready".into();
-            return Ok(());
+            anyhow::bail!("model does not support image input");
         }
     }
     state.rest.reset_scroll();
@@ -248,7 +264,17 @@ pub(super) fn handle_submit(
     // Active session this submit drives (always foreground; captured into a local
     // before the call so it isn't read while a `&mut state.rest` is live).
     let fgi = state.rest.foreground;
+    let turn_id = state.rest.fg_mut().begin_turn();
     start_stream_task(history, state, fgi, client, handle);
+    if !state.rest.fg().waiting {
+        let error = state.rest.fg().toast.as_ref()
+            .map(|(message, _, _)| message.clone())
+            .unwrap_or_else(|| "stream kickoff failed".into());
+        let rt = state.rest.fg_mut();
+        rt.take_stream();
+        rt.complete_turn(crate::ipc::proto::turn::TurnState::Failed, Some(error.clone()));
+        anyhow::bail!(error);
+    }
 
     // Prompt-classifier (PC), advisory + non-blocking: once per turn, if
     // the harness is enabled, classify the user prompt on a background
@@ -277,7 +303,7 @@ pub(super) fn handle_submit(
             });
         });
     }
-    Ok(())
+    Ok(turn_id)
 }
 
 /// Handle `Action::Shell`: run a `!`-prefixed command in the foreground session's
@@ -645,6 +671,7 @@ pub(super) fn handle_deny_tool(state: &mut AppState) -> Result<()> {
         let _ = sess.save();
     }
     // Reset the agentic-loop state and end the turn.
+    state.rest.fg_mut().complete_turn(crate::ipc::proto::turn::TurnState::Interrupted, None);
     state.rest.fg_mut().pending_tool_calls.clear();
     state.rest.fg_mut().tool_idx = 0;
     state.rest.fg_mut().tool_results.clear();

@@ -35,6 +35,8 @@ impl DaemonHub {
             idx,
             DaemonEvent::Hello {
                 version: self.version.clone(),
+                protocol: crate::ipc::proto::IPC_PROTOCOL_VERSION,
+                capabilities: vec!["submit_turn".into(), "interrupt_turn".into(), "session_policy".into()],
             },
         );
         // Reload global catalogue from disk so a reconnecting client always sees

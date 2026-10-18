@@ -169,7 +169,9 @@ fn attach_emits_hello_then_snapshot() {
     let f0 = frame_rx.try_recv().expect("hello frame on attach");
     assert_eq!(f0.seq, 1);
     match f0.event {
-        DaemonEvent::Hello { version } => {
+        DaemonEvent::Hello { version, protocol, capabilities } => {
+            assert_eq!(protocol, crate::ipc::proto::IPC_PROTOCOL_VERSION);
+            assert_eq!(capabilities, vec!["submit_turn", "interrupt_turn", "session_policy"]);
             assert_eq!(
                 version,
                 crate::model::store::build_fingerprint(),
@@ -977,4 +979,206 @@ fn setup_enter_and_nested_escape_keep_the_wizard_usable() {
         assert!(matches!(state.mode(), Mode::KeyInput(_)));
         assert_eq!(state.rest.should_quit, exit);
     }
+}
+
+/// In-process hub fixture: current-thread tasks never contact a model provider.
+struct TurnFixture {
+    state: AppState,
+    client: Option<Arc<OpenRouterClient>>,
+    runtime: tokio::runtime::Runtime,
+    hub: DaemonHub,
+    replies: Vec<std::sync::mpsc::Receiver<DaemonFrame>>,
+    path: std::path::PathBuf,
+}
+
+impl TurnFixture {
+    fn new() -> Self {
+        let path = std::env::temp_dir().join(format!("koma-ipc-turn-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&path).unwrap();
+        let session = crate::model::session::Session::new(
+            uuid::Uuid::new_v4().to_string(), path.clone(), "ipc-test".into(),
+            crate::model::settings::Settings::default(),
+            crate::model::conversation::Conversation::new("test"),
+        );
+        let mut state = AppState::new(Mode::Chat);
+        state.rest.fg_mut().session = Some(session);
+        let (hub, _) = DaemonHub::new();
+        let mut fixture = Self {
+            state, client: Some(Arc::new(OpenRouterClient::new())),
+            runtime: tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap(),
+            hub, replies: Vec::new(), path,
+        };
+        for client_id in [1, 2] {
+            let (frame_tx, frame_rx) = std::sync::mpsc::channel();
+            fixture.hub.handle_inbound(HubInbound::Register { client_id, frame_tx },
+                &mut fixture.state, &mut fixture.client, fixture.runtime.handle());
+            fixture.replies.push(frame_rx);
+            fixture.request(client_id, ClientRequest::Attach { foreground_id: None, cwd: None });
+            fixture.replies[(client_id - 1) as usize].try_iter().for_each(drop);
+        }
+        fixture
+    }
+
+    fn request(&mut self, client_id: u64, req: ClientRequest) {
+        self.hub.handle_inbound(HubInbound::Request { client_id, req },
+            &mut self.state, &mut self.client, self.runtime.handle());
+    }
+
+    fn result(&self) -> DaemonEvent {
+        self.replies[0].try_recv().expect("requester reply").event
+    }
+}
+
+impl Drop for TurnFixture {
+    fn drop(&mut self) {
+        self.state.rest.fg_mut().interrupt();
+        let _ = std::fs::remove_dir_all(&self.path);
+    }
+}
+
+#[test]
+fn tracked_submit_starts_once_rejects_busy_and_never_broadcasts() {
+    use crate::ipc::proto::turn::{TurnDisposition, TurnState};
+    let mut f = TurnFixture::new();
+    f.request(1, ClientRequest::SubmitTurn { request_id: "first".into(), text: "hello".into() });
+    let id = match f.result() {
+        DaemonEvent::TurnResult { request_id, disposition: TurnDisposition::Started, turn_id: Some(id), reason: None } => {
+            assert_eq!(request_id, "first");
+            id
+        }
+        other => panic!("expected started, got {other:?}"),
+    };
+    assert_eq!(f.state.rest.fg().active_turn.as_ref().unwrap().id, id);
+    assert_eq!(f.state.rest.fg().active_turn.as_ref().unwrap().state, TurnState::Running);
+    f.request(1, ClientRequest::SubmitTurn { request_id: "busy".into(), text: "not a steer".into() });
+    assert!(matches!(f.result(), DaemonEvent::TurnResult { disposition: TurnDisposition::Rejected, .. }));
+    assert!(f.state.rest.fg().pending_steer.is_empty());
+    f.request(1, ClientRequest::SubmitInput { text: "legacy steer".into() });
+    assert_eq!(f.result(), DaemonEvent::Ack);
+    assert_eq!(f.state.rest.fg().pending_steer.len(), 1);
+    f.hub.stream_deltas(&mut f.state);
+    assert!(!f.replies[1].try_iter().any(|frame| matches!(frame.event, DaemonEvent::TurnResult { .. })));
+}
+
+#[test]
+fn targeted_interrupt_rejects_stale_id_while_unit_interrupt_still_cuts() {
+    use crate::ipc::proto::turn::{TurnDisposition, TurnState};
+    let mut f = TurnFixture::new();
+    let id = f.state.rest.fg_mut().begin_turn();
+    f.state.rest.fg_mut().waiting = true;
+    f.request(1, ClientRequest::InterruptTurn { request_id: "stale".into(), turn_id: "older".into() });
+    assert!(matches!(f.result(), DaemonEvent::TurnResult { disposition: TurnDisposition::Rejected, reason: Some(reason), .. } if reason == "stale_turn"));
+    assert!(f.state.rest.fg().waiting);
+    assert_eq!(f.state.rest.fg().active_turn.as_ref().unwrap().id, id);
+    f.request(1, ClientRequest::InterruptTurn { request_id: "stop".into(), turn_id: id.clone() });
+    assert!(matches!(f.result(), DaemonEvent::TurnResult { disposition: TurnDisposition::Interrupted, turn_id: Some(actual), .. } if actual == id));
+    assert!(!f.state.rest.fg().waiting);
+    assert_eq!(f.state.rest.fg().last_turn.as_ref().unwrap().state, TurnState::Interrupted);
+    f.state.rest.fg_mut().begin_turn();
+    f.state.rest.fg_mut().waiting = true;
+    f.request(1, ClientRequest::Interrupt);
+    assert_eq!(f.result(), DaemonEvent::Ack);
+    assert!(f.state.rest.fg().active_turn.is_none());
+    assert!(!f.state.rest.fg().waiting);
+    assert!(f.replies[1].try_recv().is_err());
+}
+
+#[test]
+fn tracked_submit_rejects_empty_and_shell_or_approval_parks() {
+    use crate::ipc::proto::turn::TurnDisposition;
+    let mut f = TurnFixture::new();
+    for (text, shell, approval) in [("  ", false, false), ("hello", true, false), ("hello", false, true)] {
+        f.state.rest.fg_mut().awaiting_shell = shell;
+        f.state.rest.fg_mut().awaiting_approval = approval;
+        f.request(1, ClientRequest::SubmitTurn { request_id: "reject".into(), text: text.into() });
+        assert!(matches!(f.result(), DaemonEvent::TurnResult { disposition: TurnDisposition::Rejected, .. }));
+        assert!(f.state.rest.fg().active_turn.is_none());
+        assert!(f.state.rest.fg().pending_steer.is_empty());
+    }
+}
+
+#[test]
+fn session_policy_is_explicit_idle_only_and_persists_before_activation() {
+    use crate::ipc::proto::turn::{PlanPolicy, ApprovalPolicy, SessionPolicy};
+    let mut f = TurnFixture::new();
+    let policy_request = || ClientRequest::SetSessionPolicy { request_id: "policy".into(), plan: PlanPolicy::Forbid, approval: ApprovalPolicy::Reject };
+    f.state.rest.fg_mut().waiting = true;
+    f.request(1, policy_request());
+    assert!(matches!(f.result(), DaemonEvent::Error(_)));
+    assert!(!f.path.join("unattended.json").exists());
+    f.state.rest.fg_mut().waiting = false;
+    f.state.rest.fg_mut().agent_mode = crate::app::state::AgentMode::Plan;
+    f.request(1, policy_request());
+    assert!(matches!(f.result(), DaemonEvent::Error(reason) if reason.contains("leave plan mode first")));
+    f.state.rest.fg_mut().agent_mode = crate::app::state::AgentMode::Normal;
+    f.request(1, policy_request());
+    assert_eq!(f.result(), DaemonEvent::Ack);
+    assert_eq!(f.state.rest.fg().policy, SessionPolicy { plan: PlanPolicy::Forbid, approval: ApprovalPolicy::Reject });
+    let loaded = crate::model::session::Session::load(&f.path).unwrap();
+    assert_eq!(loaded.unattended.policy, f.state.rest.fg().policy);
+    assert!(f.replies[1].try_recv().is_err());
+}
+
+#[test]
+fn tracked_submit_reports_synchronous_kickoff_failure_not_started() {
+    use crate::ipc::proto::turn::{TurnDisposition, TurnState};
+    let mut f = TurnFixture::new();
+    f.state.rest.fg_mut().session.as_mut().unwrap().conversation =
+        crate::model::conversation::Conversation::from_messages(Vec::new());
+    f.request(1, ClientRequest::SubmitTurn { request_id: "bad-history".into(), text: "hello".into() });
+    assert!(matches!(f.result(), DaemonEvent::TurnResult { disposition: TurnDisposition::Rejected, reason: Some(reason), .. } if reason.contains("leading system message")));
+    assert!(!f.state.rest.fg().waiting);
+    assert!(f.state.rest.fg().active_turn.is_none());
+    assert_eq!(f.state.rest.fg().last_turn.as_ref().unwrap().state, TurnState::Failed);
+}
+
+#[test]
+fn tracked_submit_save_failure_rejects_and_legacy_still_acks() {
+    use crate::ipc::proto::turn::TurnDisposition;
+    let mut f = TurnFixture::new();
+    let blocked = f.path.join("not-a-directory");
+    std::fs::write(&blocked, "file").unwrap();
+    f.state.rest.fg_mut().session.as_mut().unwrap().path = blocked;
+    f.request(1, ClientRequest::SubmitTurn { request_id: "save-fails".into(), text: "hello".into() });
+    assert!(matches!(f.result(), DaemonEvent::TurnResult { disposition: TurnDisposition::Rejected, reason: Some(_), .. }));
+    assert!(!f.state.rest.fg().waiting);
+    assert!(f.state.rest.fg().active_turn.is_none());
+    f.request(1, ClientRequest::SubmitInput { text: "legacy".into() });
+    assert_eq!(f.result(), DaemonEvent::Ack);
+}
+
+#[test]
+fn normal_final_answer_completes_old_id_before_queued_steer_starts_fresh() {
+    use crate::ipc::proto::turn::{TurnDisposition, TurnState};
+    let mut f = TurnFixture::new();
+    let old_id = f.state.rest.fg_mut().begin_turn();
+    f.state.rest.fg_mut().waiting = true;
+    f.state.rest.fg_mut().streaming = Some("Implemented the requested change.".into());
+    f.state.rest.fg_mut().pending_steer.push("Next request".to_string().into());
+    crate::app::runtime::stream::advance_turn(&mut f.state, 0, &f.client, f.runtime.handle());
+    let previous = f.state.rest.fg().last_turn.as_ref().unwrap();
+    assert_eq!(previous.id, old_id);
+    assert_eq!(previous.state, TurnState::Finished);
+    let fresh = f.state.rest.fg().active_turn.as_ref().unwrap().id.clone();
+    assert_ne!(fresh, old_id);
+    f.request(1, ClientRequest::InterruptTurn { request_id: "late-stop".into(), turn_id: old_id });
+    assert!(matches!(f.result(), DaemonEvent::TurnResult { disposition: TurnDisposition::Rejected, reason: Some(reason), .. } if reason == "stale_turn"));
+    assert_eq!(f.state.rest.fg().active_turn.as_ref().unwrap().id, fresh);
+}
+
+#[test]
+fn stream_failure_completes_addressed_session_without_touching_foreground() {
+    use crate::ipc::proto::turn::TurnState;
+    let mut f = TurnFixture::new();
+    let fg_id = f.state.rest.fg_mut().begin_turn();
+    let mut other = crate::app::state::SessionRuntime::new();
+    let other_id = other.begin_turn();
+    other.waiting = true;
+    f.state.rest.sessions.push(other);
+    crate::app::runtime::stream::finish_stream(&mut f.state.rest, 1, Some("producer disconnected".into()));
+    assert_eq!(f.state.rest.fg().active_turn.as_ref().unwrap().id, fg_id);
+    let completed = f.state.rest.sessions[1].last_turn.as_ref().unwrap();
+    assert_eq!(completed.id, other_id);
+    assert_eq!(completed.state, TurnState::Failed);
+    assert_eq!(completed.error.as_deref(), Some("producer disconnected"));
 }

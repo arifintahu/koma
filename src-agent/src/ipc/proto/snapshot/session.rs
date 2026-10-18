@@ -20,6 +20,8 @@ pub struct StateSnapshot {
 #[allow(dead_code)]
 pub struct SessionSnapshot {
     pub id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub turn: Option<crate::ipc::proto::turn::TurnRecord>,
     pub name: String,
     pub cwd: String,
     pub messages: Vec<ChatMessage>,

@@ -113,7 +113,7 @@ pub(crate) fn connect_attach_and_handshake(
     while let Some(remaining) = deadline.checked_duration_since(Instant::now()) {
         match frame_rx.recv_timeout(remaining) {
             Ok(frame) => match frame.event {
-                DaemonEvent::Hello { version } => {
+                DaemonEvent::Hello { version, .. } => {
                     daemon_version = Some(version);
                     break;
                 }

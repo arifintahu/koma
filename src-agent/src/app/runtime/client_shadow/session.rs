@@ -51,6 +51,13 @@ pub(crate) fn toast_kind(kind: &str) -> ToastKind {
 pub(crate) fn shadow_session_runtime(s: &SessionSnapshot) -> SessionRuntime {
     let mut rt = SessionRuntime::new();
     rt.id = s.id.clone();
+    if let Some(turn) = &s.turn {
+        if turn.state == crate::ipc::proto::TurnState::Running {
+            rt.active_turn = Some(turn.clone());
+        } else {
+            rt.last_turn = Some(turn.clone());
+        }
+    }
     rt.model_routes = s.model_routes.clone();
     rt.session = Some(shadow_session(s));
     // Mirror the daemon's effective cwd onto the shadow as the live override, so
