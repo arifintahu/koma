@@ -1,0 +1,57 @@
+---
+title: Smallest program
+description: Run the echo sample before you write your own.
+---
+
+# Smallest program
+
+Start here. This sample adds one tool. Koma calls your program. Your program does not call Koma, so there is no grant to learn yet.
+
+From the src-extension directory:
+
+```sh
+cargo run -p echo-tool-daemon
+```
+
+No Koma process is required. The sample prints the handshake and the tool call it would answer. When you want the same binary to talk to a running Koma, set KOMA_EXT_SOCKET and KOMA_EXT_TOKEN in the environment.
+
+Read the next two samples only after this one prints.
+
+event-watcher-daemon listens for events Koma broadcasts.
+
+orchestrator-daemon is the first sample that calls into Koma. In this no-Koma demo, only the agent calls are faked. The other calls print unknown method. That line is the demo stub, not a bug in Koma. Run it against a live Koma when you want the real replies.
+
+```sh
+cargo run -p event-watcher-daemon
+cargo run -p orchestrator-daemon
+```
+
+The echo manifest is the shortest one that works. The id is reverse-DNS so two extensions do not collide. tier is free or paid. schema stays koma-extension/v0 until version 1 exists.
+
+```json
+{
+  "schema": "koma-extension/v0",
+  "id": "run.koma.example.echo-tool-daemon",
+  "name": "Echo Tool",
+  "version": "0.0.0",
+  "description": "A minimal daemon extension that contributes a single echo tool.",
+  "tier": "free",
+  "kind": "daemon",
+  "runtime": { "exec": "echo-tool-daemon", "args": [] },
+  "contributes": {
+    "tools": [
+      {
+        "name": "echo",
+        "description": "echo input back",
+        "input_schema": {
+          "type": "object",
+          "properties": { "text": { "type": "string" } }
+        }
+      }
+    ]
+  },
+  "requires": []
+}
+```
+
+Next, package that program and install it: [Build and sideload](/extension/sideload).

@@ -1,0 +1,33 @@
+---
+title: Daemon or oneshot
+description: Choose whether the process stays up.
+---
+
+# Daemon or oneshot
+
+Use a daemon when the program must remember something between calls. A panel, a login, and a ticker all need a daemon. Delegated sign-in requires a daemon, because the start and the poll share memory.
+
+Use a oneshot when the program answers one call and can forget everything. A tool that only transforms text is a oneshot.
+
+Both kinds use the same handshake. The manifest field is kind.
+
+```json
+{ "kind": "daemon" }
+```
+
+```json
+{ "kind": "oneshot" }
+```
+
+runtime names the binary Koma launches.
+
+```json
+{
+  "runtime": {
+    "exec": "echo-tool-daemon",
+    "args": []
+  }
+}
+```
+
+The echo sample is a daemon even though it keeps no state, so you can leave it running while you try the next call. The upper-tool sample is the oneshot version of the same idea.

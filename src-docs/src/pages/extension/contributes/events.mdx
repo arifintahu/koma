@@ -1,0 +1,39 @@
+---
+title: Events
+description: Broadcasts you can subscribe to.
+---
+
+# Events
+
+List exact names in contributes.events. A running extension that listed the name receives it. No grant is required. Delivery is best effort. The frame has no id and expects no reply. There is no retry. If your process is down, the event is gone. Nothing is queued.
+
+```json
+{ "events": ["subagent.done", "agent.turn_end", "session.foreground_change"] }
+```
+
+subagent.done fires when any sub-agent enters done, error, or killed. Every subscriber hears it, not only the spawner.
+
+```json
+{
+  "session": "sess-uuid",
+  "subagentId": 3,
+  "agent": "researcher",
+  "status": "done"
+}
+```
+
+agent.turn_end fires when a session goes from working to not working. The payload is the session id.
+
+session.foreground_change fires when the foreground session changes inside this daemon. A session owned by another daemon is invisible here. The payload is the session id.
+
+agents.done is different. It goes only to the extension that spawned that agent with notify true. It does not need to be listed in contributes.events. The agentId is the id agents.spawn returned to you. notify false, the default, sends no agents.done. You can still observe the broadcast subagent.done if you subscribed.
+
+```json
+{
+  "agentId": 7,
+  "status": "error",
+  "error": "the tool call failed"
+}
+```
+
+error is present when status is error, and also on killed when the daemon is shutting down.

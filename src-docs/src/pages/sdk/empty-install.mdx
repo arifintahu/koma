@@ -1,0 +1,50 @@
+---
+title: An empty install
+description: Write providers and model roles before the first session.
+---
+
+# An empty install
+
+A new Koma has no providers and no models. Create cannot pick a main model until you write one.
+
+Call configure on the client before create. It writes ~/.koma/config.json and does not start a daemon. The call must include providers, models, or both. The first call on an empty catalogue must include models.main.
+
+A provider looks like this. api_type is openai or anthropic. endpoint is an http or https URL. Names in one call are unique. A new provider requires api_key.
+
+```json
+{
+  "name": "openai",
+  "endpoint": "https://api.openai.com/v1",
+  "api_type": "openai",
+  "api_key": "sk-your-key"
+}
+```
+
+The same name later updates that provider and keeps its uuid. Leave api_key out, or send JSON null, to keep the stored key. An empty string is invalid_request. A name owned by an extension is rejected.
+
+Models map five roles to a provider and a model id. A later call may name a subset. Roles you leave out stay as they are. Awareness, compactor, and planner inherit main when they are unset. Safeguard does not.
+
+```json
+{
+  "main": { "provider": "openai", "model_id": "gpt-4.1" },
+  "awareness": { "provider": "openai", "model_id": "gpt-4.1-mini" },
+  "safeguard": { "provider": "openai", "model_id": "gpt-4.1-mini" },
+  "compactor": { "provider": "openai", "model_id": "gpt-4.1-mini" },
+  "planner": { "provider": "openai", "model_id": "gpt-4.1-mini" }
+}
+```
+
+The result lists only what this call changed. It never includes an API key.
+
+```json
+{
+  "providers": [{ "name": "openai", "uuid": "6f1c..." }],
+  "models": {
+    "main": { "uuid": "a91e...", "model_id": "gpt-4.1", "provider": "openai" }
+  }
+}
+```
+
+Configure on a live session uses the same body. The running catalogue updates. The next turn uses it. A turn that is already streaming keeps the model it started with. When models.main is in the call, that session main model is pinned again.
+
+An already-open Koma window keeps the catalogue it loaded at startup until that window restarts.

@@ -1,0 +1,41 @@
+---
+title: sessions:manage
+description: The sessions:manage grant.
+grant: "sessions:manage"
+---
+
+# sessions:manage
+
+
+List takes no fields. Each row has id, name, workdir, live, and working. The list is a point in time. It does not subscribe, and it does not poll other daemons.
+
+```json
+{ "method": "sessions.list", "params": {} }
+```
+
+Create takes an optional workdir and an optional name. workdir must be an absolute path that exists, or leave it out to use the daemon launch directory. Success is an id. A failed rename is retried once and does not fail the create.
+
+```json
+{
+  "method": "sessions.create",
+  "params": { "workdir": "/absolute/existing/path", "name": "launch notes" }
+}
+```
+
+Switch takes a session uuid. A session in this daemon returns delivery local. A session in another daemon returns delivery signaled. Signaled means a client still has to attach. The terminal may ignore that signal. A missing session is an error.
+
+```json
+{ "method": "sessions.switch", "params": { "session": "sess-uuid" } }
+```
+
+Spawn into takes a session and a task, plus the same optional fields as agents.spawn. On the local daemon the result matches agents.spawn and the agent is tracked. Across processes the result is status sent and the session id, with no agent id. workspace is honored only on the local branch. A cross-daemon workspace is ignored. A down target returns the text: session not live.
+
+```json
+{
+  "method": "sessions.spawn_into",
+  "params": {
+    "session": "sess-uuid",
+    "task": "Draft the reply."
+  }
+}
+```

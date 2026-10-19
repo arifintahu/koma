@@ -1,0 +1,103 @@
+.koma-guide {
+  margin: 1.5rem 0 2rem;
+  border: 1px solid var(--vocs-color-border, #2b2f38);
+  border-radius: 12px;
+  overflow: hidden;
+  background: #000;
+  outline: none;
+}
+
+.koma-guide:focus {
+  box-shadow: 0 0 0 2px #39ff14;
+}
+
+.koma-guide-bar,
+.koma-guide-nav {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.55rem 0.9rem;
+  background: #111;
+  color: #adadad;
+  font-size: 0.8rem;
+}
+
+.koma-guide-bar strong {
+  margin-left: auto;
+  color: #e6e6e6;
+  font-weight: 600;
+}
+
+.koma-guide-dots {
+  display: flex;
+  gap: 0.35rem;
+}
+
+.koma-guide-dots button {
+  width: 0.45rem;
+  height: 0.45rem;
+  padding: 0;
+  border: 0;
+  border-radius: 999px;
+  background: #3a3a3a;
+  cursor: pointer;
+}
+
+.koma-guide-dots button.is-done {
+  background: #39ff1466;
+}
+
+.koma-guide-dots button.is-current {
+  width: 1rem;
+  background: #39ff14;
+}
+
+.koma-guide-copy {
+  padding: 0.9rem 1rem 0.2rem;
+  background: #0b0e14;
+  color: #e6e6e6;
+}
+
+.koma-guide-copy p,
+.koma-guide-note {
+  margin: 0;
+}
+
+.koma-guide-copy ul {
+  margin: 0.6rem 0 0.8rem;
+  padding-left: 1.1rem;
+  color: #adadad;
+}
+
+.koma-guide-term {
+  display: flex;
+  justify-content: center;
+  padding: 0.5rem;
+  background: #000;
+  overflow-x: auto;
+}
+
+.koma-guide-nav button {
+  border: 0;
+  background: transparent;
+  color: #39ff14;
+  cursor: pointer;
+  font: inherit;
+}
+
+.koma-guide-nav button:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+.koma-guide-nav span {
+  margin: 0 auto;
+  text-align: center;
+}
+
+.koma-guide-note {
+  padding: 0 0.9rem 0.7rem;
+  background: #111;
+  color: #adadad;
+  font-size: 0.75rem;
+}

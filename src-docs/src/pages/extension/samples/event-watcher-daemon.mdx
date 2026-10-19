@@ -1,0 +1,29 @@
+---
+title: event-watcher-daemon
+description: Subscribes to every broadcast event and counts them. Read this second.
+sample: event-watcher-daemon
+---
+
+# event-watcher-daemon
+
+Subscribes to every broadcast event and counts them. Read this second.
+
+Kind is daemon. Tier is free.
+
+Contributes: tools and events.
+
+Requires: none.
+
+The source tree is below.
+
+```text
+src-extension/example/event-watcher-daemon
+```
+
+Run it with no Koma attached. The process prints its manifest id, the hello, and the scripted frames.
+
+```sh
+cargo run -p event-watcher-daemon
+```
+
+Set KOMA_EXT_SOCKET and KOMA_EXT_TOKEN to connect that same binary to a running Koma.

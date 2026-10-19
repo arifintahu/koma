@@ -1,0 +1,47 @@
+---
+title: interrupt_and_submit
+description: Stop one turn and start a replacement.
+method: interrupt_and_submit
+---
+
+# interrupt_and_submit
+
+Stop one turn and start a replacement.
+
+The input is checked before the interrupt. interrupted_turn_id is the target id when the stop happened, even if the new turn then failed, and null when the target was not stopped.
+
+```json
+{
+  "id": "7",
+  "method": "interrupt_and_submit",
+  "params": {
+    "turn_id": "turn-1",
+    "text": "Stop and answer in one sentence."
+  }
+}
+```
+
+The disposition is started or rejected.
+
+Do not report a rejected replacement as nothing changed when interrupted_turn_id is set.
+
+The shared error object has code, message, and delivery. delivery is not_sent or unknown. A rejected turn disposition is a result, described on the turns page.
+
+## Python
+
+```python
+result = await session.interrupt_and_submit(
+    "turn-1",
+    "Stop and answer in one sentence.",
+)
+print(result.disposition, result.interrupted_turn_id)
+```
+
+## TypeScript
+
+```ts
+const result = await session.interruptAndSubmit("turn-1", {
+  text: "Stop and answer in one sentence.",
+});
+console.log(result.disposition, result.interrupted_turn_id);
+```

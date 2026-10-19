@@ -1,0 +1,83 @@
+---
+title: Turns
+description: Start work, add a follow-up, or stop it.
+---
+
+# Turns
+
+A turn result looks like this. reason is null on success. On rejection it is a code and a message. Rejection is a normal result. Do not treat it as a transport error. Read the code, not the sentence. Codes you will see include busy, stale_turn, queue_full, invalid_input, no_session, unavailable, and internal. The set is open.
+
+```json
+{
+  "disposition": "started",
+  "turn_id": "turn-1",
+  "reason": null
+}
+```
+
+Submit starts a turn only when the session is idle. If it is busy, the result is rejected and the text is not queued. Started always carries a new turn id.
+
+Enqueue adds a follow-up only while a turn is running and waiting. The queue holds 5. A queued item is a steer inside the current turn, not a future turn, so turn_id is null. The turn may consume it before you see the response. There is no durable id for one queued line.
+
+```json
+{
+  "disposition": "queued",
+  "turn_id": null,
+  "reason": null
+}
+```
+
+Interrupt takes the active turn id. A stale id is rejected and must not stop a newer turn. The echoed turn_id is the one you sent, even when rejected.
+
+Interrupt and submit checks the new text before it stops the old turn. The result is started or rejected, plus interrupted_turn_id. That field is null when the target was not stopped, and the target id when it was, including when the replacement then failed. Do not collapse that into nothing happened.
+
+```json
+{
+  "disposition": "rejected",
+  "turn_id": null,
+  "interrupted_turn_id": "turn-1",
+  "reason": { "code": "invalid_input", "message": "text is empty" }
+}
+```
+
+Wait until the turn is final, or the timeout fires. Completion is visible on state.turn, not on the submit result. After resume, the current turn may already be final.
+
+Turn states are running, finished, interrupted, and failed. working on the state means the daemon is active. It is not the same thing as a turn whose state is running.
+
+## Python
+
+```python
+from koma_sdk import Disposition
+
+result = await session.submit("Summarize this folder. Do not edit files.")
+if result.disposition is Disposition.STARTED:
+    turn = await session.wait_turn(result.turn_id, timeout=120)
+    print(turn.state)
+
+queued = await session.enqueue("Also mention the date.")
+stopped = await session.interrupt(result.turn_id)
+replacement = await session.interrupt_and_submit(
+    result.turn_id,
+    "Stop and answer in one sentence.",
+)
+print(replacement.interrupted_turn_id)
+```
+
+## TypeScript
+
+```ts
+const result = await session.submit({
+  text: "Summarize this folder. Do not edit files.",
+});
+if (result.disposition === "started" && result.turn_id) {
+  const turn = await session.waitTurn(result.turn_id, { timeoutMs: 120_000 });
+  console.log(turn.state);
+}
+
+const queued = await session.enqueue({ text: "Also mention the date." });
+const stopped = await session.interrupt(result.turn_id!);
+const replacement = await session.interruptAndSubmit(result.turn_id!, {
+  text: "Stop and answer in one sentence.",
+});
+console.log(replacement.interrupted_turn_id);
+```

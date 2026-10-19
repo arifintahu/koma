@@ -1,0 +1,37 @@
+---
+title: Install koma
+description: Install koma on a Mac, Linux, or Windows computer.
+---
+
+# Install koma
+
+You install koma once. After that, you open it from a terminal.
+
+## Mac or Linux
+
+Open the Terminal app and paste this:
+
+```sh
+curl -fsSL https://koma.run/install.sh | sh
+```
+
+Koma installs into your user folder. You do not need an administrator password.
+
+## Windows
+
+Open PowerShell and paste this:
+
+```powershell
+irm https://koma.run/install.ps1 | iex
+```
+
+On Windows, koma cannot run the safety-check panel, and it cannot use full internet browsing. Search and ordinary page lookup still work.
+
+## Then
+
+Close that window if you like. The next page is how you open koma.
+
+:::note[If this is not what you see]
+If the installer says the command was not found, open a new terminal window and try `koma` again. The install adds koma to your user path, and an already-open window may not know that yet.
+:::
+

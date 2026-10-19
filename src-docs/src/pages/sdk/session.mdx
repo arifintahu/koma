@@ -1,0 +1,73 @@
+---
+title: Create and resume
+description: Bind one session and choose how careful it is.
+---
+
+# Create and resume
+
+Create takes an absolute directory on the machine running the daemon. The Python client rejects a relative path before it writes the request.
+
+```json
+{
+  "id": "1",
+  "method": "create",
+  "params": {
+    "cwd": "/absolute/path/on/the/koma/machine",
+    "model_id": "gpt-4.1",
+    "policy": { "plan": "forbid", "approval": "reject" },
+    "external_approvals": false
+  }
+}
+```
+
+model_id selects the session main model from the catalogue you already configured. It may be a model id, a name, or a uuid. An unknown id is not_found. Leave it out to use the configured default.
+
+policy defaults to plan forbid and approval reject. plan is allow or forbid. approval is default or reject. Reject means the session denies itself when nobody is there to answer. It is not approval, and it is not a sandbox.
+
+approval default requires external_approvals true on this call. Otherwise the request fails invalid_request before the policy changes.
+
+Resume keeps the stored policy when you leave policy out, even if that stored policy is default. external_approvals still defaults to false. A visible approval is not permission to call approve until this connection opted in.
+
+```json
+{
+  "id": "2",
+  "method": "resume",
+  "params": {
+    "session_id": "the-id-you-saved"
+  }
+}
+```
+
+Both methods return state only after the session is bound and the requested policy is in place. Repeating either on the same process returns invalid_state.
+
+## Python
+
+```python
+from koma_sdk import ApprovalPolicy, Client, PlanPolicy, Policy
+
+async with Client("koma") as client:
+    session = await client.create(
+        "/absolute/path/on/the/koma/machine",
+        model_id="gpt-4.1",
+        policy=Policy(plan=PlanPolicy.FORBID, approval=ApprovalPolicy.REJECT),
+        external_approvals=False,
+    )
+    print(session.session_id)
+    later = await client.resume(session.session_id)
+```
+
+## TypeScript
+
+```ts
+import { Client } from "@koma/sdk";
+
+const client = new Client({ executable: "koma" });
+const session = await client.create({
+  cwd: "/absolute/path/on/the/koma/machine",
+  model_id: "gpt-4.1",
+  policy: { plan: "forbid", approval: "reject" },
+  external_approvals: false,
+});
+console.log(session.sessionId);
+const later = await client.resume({ session_id: session.sessionId });
+```

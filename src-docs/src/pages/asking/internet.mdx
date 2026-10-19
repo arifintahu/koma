@@ -1,0 +1,24 @@
+---
+title: Let koma look things up
+description: Choose a light lookup or a real browser.
+---
+
+# Let koma look things up
+
+Koma can look outside the folder when you want a public fact, a page, or a citation. You choose how heavy that lookup is.
+
+import { Guide } from '../../components/Guide.client'
+import { internetSteps } from '../../guides/asking'
+
+<Guide steps={internetSteps} />
+
+Simple is the usual choice. Koma searches and opens pages without a full browser.
+
+Full uses a real browser for pages that refuse a simple fetch. It spends more. It is not available on Windows.
+
+Ctrl+E switches between simple and full. `/internet` opens the same choice. Web search, in settings, picks the search service. Built-in DuckDuckGo needs no key. Firecrawl, Tavily, and Exa need a key from that service.
+
+:::note[If this is not what you see]
+If a page comes back empty, switch to full and ask again. If you are on Windows, stay on simple.
+:::
+

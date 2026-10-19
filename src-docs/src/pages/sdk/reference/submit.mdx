@@ -1,0 +1,49 @@
+---
+title: submit
+description: Start a turn when the session is idle.
+method: submit
+---
+
+# submit
+
+Start a turn when the session is idle.
+
+text is required, non-blank, and at most 2 MiB of UTF-8. attachments is optional.
+
+```json
+{
+  "id": "4",
+  "method": "submit",
+  "params": {
+    "text": "Summarize this folder. Do not edit files."
+  }
+}
+```
+
+Started includes a new turn id. Rejected is a result, not a transport error, and does not queue the text.
+
+A busy session is rejected with reason code busy.
+
+The shared error object has code, message, and delivery. delivery is not_sent or unknown. A rejected turn disposition is a result, described on the turns page.
+
+## Python
+
+```python
+from koma_sdk import Disposition
+
+result = await session.submit("Summarize this folder. Do not edit files.")
+if result.disposition is Disposition.STARTED:
+    print(result.turn_id)
+else:
+    print(result.reason)
+```
+
+## TypeScript
+
+```ts
+const result = await session.submit({
+  text: "Summarize this folder. Do not edit files.",
+});
+if (result.disposition === "started") console.log(result.turn_id);
+else console.log(result.reason);
+```

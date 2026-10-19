@@ -1,0 +1,22 @@
+---
+title: Stop koma while it works
+description: Interrupt a request that is still running.
+---
+
+# Stop koma while it works
+
+You can stop koma in the middle of a request. The conversation stays. Only the work in progress stops.
+
+import { Guide } from '../../components/Guide.client'
+import { stopSteps } from '../../guides/start'
+
+<Guide steps={stopSteps} />
+
+Press Esc once. The bottom line returns to a stopped state, and you can type a clearer request.
+
+Esc does not close koma. Closing is a separate question, covered on the next page.
+
+:::note[If this is not what you see]
+If Esc seems to do nothing, click the terminal first so the key goes to koma. A second Esc, pressed twice, is a different action: it lets you edit an earlier message.
+:::
+

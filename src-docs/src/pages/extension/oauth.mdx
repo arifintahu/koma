@@ -1,0 +1,30 @@
+---
+title: Delegated OAuth
+description: Run the login without giving Koma the secret.
+---
+
+# Delegated OAuth
+
+Koma shows your provider in the sign-in list. The person picks it. Koma calls oauth.begin. You open the browser flow and keep the secret. Koma calls oauth.poll until you return a token or an error. oauth.cancel stops a login that is still open.
+
+This requires a daemon and the oauth:contribute grant.
+
+```json
+{ "method": "oauth.begin", "params": { "provider": "acme" } }
+```
+
+```json
+{ "method": "oauth.poll", "params": { "flow": "flow-id" } }
+```
+
+```json
+{ "method": "oauth.cancel", "params": { "flow": "flow-id" } }
+```
+
+Two outcomes.
+
+Account login. The person is connected. You may still be account-login only, which cannot anchor models.
+
+Gateway. You register an endpoint and a key, or you promote a model-capable connection, then you call models.register.
+
+The oauth demo walks both. Its comments are the sequence to copy. Do not put the client secret or the token into a frame the host will store in the transcript.

@@ -1,0 +1,26 @@
+---
+title: Choose how to connect
+description: Pick a free connection, an account you already have, or your own key.
+---
+
+# Choose how to connect
+
+The first time koma opens, it asks how you want to connect. This is the only setup it requires before you can talk to it.
+
+import { Guide } from '../../components/Guide.client'
+import { welcomeSteps } from '../../guides/start'
+
+<Guide steps={welcomeSteps} />
+
+Use the up and down arrows, then Enter.
+
+- **koma free** starts immediately. No account and no key.
+- **Connect a provider** is for an account you already have.
+- **Use an API key** is for an address and a key your company or a provider gave you.
+
+You can change this later. It is not a permanent choice.
+
+:::note[If this is not what you see]
+If you already use koma, this screen does not appear again. Open settings with `/settings` to change the connection.
+:::
+

@@ -1,0 +1,41 @@
+---
+title: interrupt
+description: Stop the active turn.
+method: interrupt
+---
+
+# interrupt
+
+Stop the active turn.
+
+The id must be the active turn. The echoed turn id is the one you sent, including when the stop is rejected. A stale id must not stop a newer turn.
+
+```json
+{
+  "id": "6",
+  "method": "interrupt",
+  "params": {
+    "turn_id": "turn-1"
+  }
+}
+```
+
+The disposition is interrupted or rejected.
+
+A mismatch is rejected with stale_turn.
+
+The shared error object has code, message, and delivery. delivery is not_sent or unknown. A rejected turn disposition is a result, described on the turns page.
+
+## Python
+
+```python
+result = await session.interrupt("turn-1")
+print(result.disposition, result.turn_id)
+```
+
+## TypeScript
+
+```ts
+const result = await session.interrupt("turn-1");
+console.log(result.disposition, result.turn_id);
+```

@@ -1,0 +1,22 @@
+---
+title: Notices
+description: Read a notice after it disappears.
+---
+
+# Notices
+
+Koma sometimes shows a short notice over the chat. It fades. The text is kept.
+
+import { Guide } from '../../components/Guide.client'
+import { noticeSteps } from '../../guides/account'
+
+<Guide steps={noticeSteps} />
+
+Type `/notification` and search. Enter opens one. Esc returns to the chat.
+
+Errors and ordinary notes are both kept, so you can tell a failure from a confirmation after the toast is gone.
+
+:::note[If this is not what you see]
+An empty list means this conversation has not raised a notice yet.
+:::
+

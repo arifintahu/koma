@@ -1,0 +1,22 @@
+---
+title: What this conversation cost
+description: See the spend for this conversation.
+---
+
+# What this conversation cost
+
+You can see what this conversation has spent without leaving the terminal.
+
+import { Guide } from '../../components/Guide.client'
+import { costSteps } from '../../guides/account'
+
+<Guide steps={costSteps} />
+
+Type `/usage`.
+
+The figures are for this conversation. A different conversation has its own ledger. The free connection still shows usage, even when the price is zero.
+
+:::note[If this is not what you see]
+A zero ledger on a brand-new conversation is expected. Send a request, then open `/usage` again.
+:::
+

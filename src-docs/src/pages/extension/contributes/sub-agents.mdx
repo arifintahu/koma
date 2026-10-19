@@ -1,0 +1,22 @@
+---
+title: Sub-agents
+description: Agent types you ship in the manifest.
+---
+
+# Sub-agents
+
+contributes.sub_agents adds agent types next to the built-in ones. Each entry can carry a system prompt, a model slug, a default effort, and a tool allow-list.
+
+```json
+{
+  "name": "researcher",
+  "description": "Looks things up and writes a short note.",
+  "model": "gpt-4.1-mini",
+  "effort": "medium",
+  "tools": ["web_search", "read_file"]
+}
+```
+
+The slug resolves when someone delegates work, not when the zip is unpacked. If you also register models at runtime, the slug can name one of those. Connected MCP tools are inherited in addition to the allow-list.
+
+Spawning one of these from your own process is not this contribution. That is agents.spawn under the agents:orchestrate grant. A sub-agent you spawn that way is silent in the person chat. You hear the result on agents.done when you passed notify true, or by calling agents.result.

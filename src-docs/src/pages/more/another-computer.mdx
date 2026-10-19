@@ -1,0 +1,24 @@
+---
+title: Work on another computer
+description: Save a computer, then start or resume a conversation there.
+---
+
+# Work on another computer
+
+You can point a conversation at another computer you can sign in to, such as an office machine or a build server.
+
+import { Guide } from '../../components/Guide.client'
+import { remoteSteps } from '../../guides/more'
+
+<Guide steps={remoteSteps} />
+
+Type `/remote` to save the computer. This is the address book.
+
+Type `/new remote` to start a new conversation there. Type `/resume remote` to open one that is already there.
+
+`/remote` alone does not move the conversation you are in.
+
+:::note[If this is not what you see]
+If the computer is not in the list, add it with `/remote` before `/new remote`. `/new remote` only picks a saved computer.
+:::
+

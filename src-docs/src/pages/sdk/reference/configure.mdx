@@ -1,0 +1,50 @@
+---
+title: configure
+description: Write providers and model roles.
+method: configure
+---
+
+# configure
+
+Write providers and model roles.
+
+Send providers, models, or both. See the configure page for the field rules. The result lists what this call changed, and it never includes an API key. Before a session this writes the config file and starts no daemon. On a session it updates the running catalogue.
+
+```json
+{
+  "id": "10",
+  "method": "configure",
+  "params": {
+    "models": {
+      "main": {
+        "provider": "openai",
+        "model_id": "gpt-4.1"
+      }
+    }
+  }
+}
+```
+
+The result lists changed providers and roles only.
+
+Extension-owned names are rejected. An empty API key is invalid_request. A save failure is unavailable.
+
+The shared error object has code, message, and delivery. delivery is not_sent or unknown. A rejected turn disposition is a result, described on the turns page.
+
+## Python
+
+```python
+changed = await session.configure(
+    models={"main": {"provider": "openai", "model_id": "gpt-4.1"}},
+)
+print(changed["models"]["main"]["model_id"])
+```
+
+## TypeScript
+
+```ts
+const changed = await session.configure({
+  models: { main: { provider: "openai", model_id: "gpt-4.1" } },
+});
+console.log(changed.models.main?.model_id);
+```

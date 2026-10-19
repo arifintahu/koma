@@ -1,0 +1,26 @@
+---
+title: Two directions
+description: Koma calls you, or you call Koma.
+---
+
+# Two directions
+
+Ask one question. Who starts the call?
+
+If Koma calls your program, list that under contributes. A tool, a panel, a terminal screen, a sign-in row, and an event subscription are this direction. You answer. You do not need a grant.
+
+If your program calls Koma, list the grant under requires. Spawning a helper, sending a prompt, and registering a model are this direction. A call without the grant does not touch the session.
+
+```json
+{ "error": "grant denied: agents.spawn requires agents:orchestrate" }
+```
+
+An unknown method is refused the same way, before any session change.
+
+```json
+{ "error": "unknown method: agents.spawn" }
+```
+
+One grant includes another. agents:orchestrate includes agents:read. Nothing else includes anything else.
+
+You can do both in one extension. The fleet board does. It contributes a panel, and it requires agents:orchestrate so that panel can spawn workers. Read the deadlock page before you copy that. The panel must not call Koma on the same stack that is waiting for the panel to answer.

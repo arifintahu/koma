@@ -1,0 +1,63 @@
+---
+title: Transport
+description: Rules for a client in any language.
+---
+
+# Transport
+
+Use this page when you are writing a client that is not the Python or TypeScript package. Those two packages already follow these rules. If you reimplement them, do not loosen them.
+
+Launch the Koma executable with two arguments and no shell.
+
+```sh
+koma sdk serve
+```
+
+Stdin and stdout are UTF-8 JSON lines. One JSON object, then a line feed. CRLF is accepted. No byte-order mark, no blank lines, no pretty printing, no logs, and no private daemon frames on stdout. Diagnostics go to stderr. Drain stderr. Keep at most 64 KiB.
+
+The first stdout frame is hello, before the adapter reads a request. There is no client hello. protocol must be 1. Reject anything else before you send. capabilities is the method names this binary implements.
+
+```json
+{
+  "type": "hello",
+  "protocol": 1,
+  "binary": { "path": "/Users/ada/.local/bin/koma", "version": "0.4.6" },
+  "diagnostics": [],
+  "capabilities": ["create", "resume", "state", "submit", "enqueue", "interrupt", "interrupt_and_submit", "approve", "detach", "configure"]
+}
+```
+
+A request has an id, a method, and a params object. The id is a non-empty string, unique for this process. A response is a result or an error, with the same id. Responses may arrive out of order. Events may sit between them. Never pair a response with the oldest outstanding request.
+
+```json
+{ "id": "1", "method": "state", "params": {} }
+```
+
+Hello, then at most one of create or resume, then the other methods, then detach. Detach flushes and exits 0. An unexpected end of stream is a transport failure. Requests you had already written become delivery unknown.
+
+Ignore unknown fields when reading. Write only specified fields. Ignore an unknown event name after the sequence check. Ignore a response id you do not have.
+
+A frame over 40 MiB is fatal on stdout. If you were about to write it, reject it locally instead of truncating.
+
+Keep at most 64 pending requests. Keep at most 256 event frames and 64 MiB of event bytes. On overflow, clear buffered events, pause, and report overflow once. Do not fail in-flight requests because of that.
+
+## Python
+
+```python
+from koma_sdk import Client
+
+async with Client("koma") as client:
+    hello = await client.probe()
+    print(hello.protocol, hello.capabilities)
+```
+
+## TypeScript
+
+```ts
+import { Client } from "@koma/sdk";
+
+const client = new Client({ executable: "koma" });
+const hello = await client.probe();
+console.log(hello.protocol, hello.capabilities);
+await client.close();
+```

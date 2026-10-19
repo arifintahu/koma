@@ -1,0 +1,28 @@
+---
+title: oauth:contribute
+description: The oauth:contribute grant.
+grant: "oauth:contribute"
+---
+
+# oauth:contribute
+
+
+Required for oauth.begin, oauth.poll, and oauth.cancel.
+
+The extension must be a daemon. Koma asks you to start the login, then polls you until you report a token or a failure, and can ask you to cancel. The client secret stays in your process. Koma stores the token.
+
+```json
+{ "method": "oauth.begin", "params": { "provider": "acme" } }
+```
+
+```json
+{ "method": "oauth.poll", "params": { "flow": "flow-id" } }
+```
+
+```json
+{ "method": "oauth.cancel", "params": { "flow": "flow-id" } }
+```
+
+After a person is connected, that connection can anchor models.register if it is model-capable. An account-login-only connection is not. Register a key-backed gateway with providers.register when you have an endpoint and a key instead of a browser login.
+
+The sample is oauth-demo-daemon. The step order is on the delegated OAuth page.

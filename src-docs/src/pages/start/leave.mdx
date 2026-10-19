@@ -1,0 +1,22 @@
+---
+title: Leave and come back
+description: Close the window without losing the conversation.
+---
+
+# Leave and come back
+
+Leaving the terminal is not the same as deleting the work. Koma asks you which one you mean.
+
+import { Guide } from '../../components/Guide.client'
+import { leaveSteps } from '../../guides/start'
+
+<Guide steps={leaveSteps} />
+
+Detach when the work should continue after you close the window. Quit when you want it to stop. Cancel when you pressed the wrong key.
+
+To come back, open koma and type `/resume`, or start with `koma agents`. Cooking lists conversations that are still open. History lists ones you can reopen.
+
+:::note[If this is not what you see]
+If you closed the window without seeing the question, open `koma agents` and look at Cooking. The conversation is usually still there.
+:::
+

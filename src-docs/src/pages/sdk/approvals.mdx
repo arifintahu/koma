@@ -1,0 +1,78 @@
+---
+title: Approvals
+description: Approve a tool call from your program.
+---
+
+# Approvals
+
+By default the session denies tool calls that need a person, and your connection is not allowed to approve them.
+
+To approve from your program, create or resume with external approvals on and approval set to default.
+
+```json
+{
+  "cwd": "/absolute/path",
+  "external_approvals": true,
+  "policy": { "plan": "forbid", "approval": "default" }
+}
+```
+
+Opt-in alone does not change a stored policy. On create you still get forbid and reject unless you pass a policy.
+
+pending_approval is null, or a call id and a reason. It is set only for an ordinary tool call that is waiting. You can see it even when external approvals are off. Seeing it is not permission to approve it.
+
+```json
+{ "call_id": "call-9", "reason": "run tests" }
+```
+
+gate is null, or kind, reason, and supported. kind is tool, plan, mission, or unknown. Classify a plan gate and a mission gate before you look at tool approval. supported is true only for an ordinary tool with a known call id, and only when this connection opted in. Plan, mission, and unknown are always unsupported.
+
+Approve takes that call id, never a turn id.
+
+```json
+{
+  "id": "3",
+  "method": "approve",
+  "params": { "call_id": "call-9", "approve": true }
+}
+```
+
+The result is approved true or false, after the daemon has acknowledged the decision. A missing or stale id is invalid_state. Do not retry it against a newer call.
+
+The SDK does not approve plan gates or mission gates.
+
+## Python
+
+```python
+from koma_sdk import ApprovalPolicy, Client, PlanPolicy, Policy
+
+async with Client("koma") as client:
+    session = await client.create(
+        "/absolute/path/on/the/koma/machine",
+        external_approvals=True,
+        policy=Policy(plan=PlanPolicy.FORBID, approval=ApprovalPolicy.DEFAULT),
+    )
+    state = await session.get_state()
+    pending = state.pending_approval
+    if pending is not None and state.gate is not None and state.gate.supported:
+        decision = await session.approve(pending.call_id, True)
+        print(decision.approved)
+```
+
+## TypeScript
+
+```ts
+import { Client } from "@koma/sdk";
+
+const client = new Client({ executable: "koma" });
+const session = await client.create({
+  cwd: "/absolute/path/on/the/koma/machine",
+  external_approvals: true,
+  policy: { plan: "forbid", approval: "default" },
+});
+const state = await session.getState();
+if (state.pending_approval && state.gate?.supported) {
+  const decision = await session.approve(state.pending_approval.call_id, true);
+  console.log(decision.approved);
+}
+```

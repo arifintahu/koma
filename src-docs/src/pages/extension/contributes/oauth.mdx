@@ -1,0 +1,20 @@
+---
+title: OAuth providers
+description: A login row that you run yourself.
+---
+
+# OAuth providers
+
+contributes.oauth_providers adds a row to the sign-in list. Koma delegates the login. You hold the client secret. Koma stores the resulting token and does not see the secret.
+
+```json
+{
+  "id": "acme",
+  "label": "Acme",
+  "description": "Sign in with your Acme account."
+}
+```
+
+The flow is oauth.begin, oauth.poll, and oauth.cancel. It requires kind daemon and the oauth:contribute grant. The steps are on the delegated OAuth page.
+
+A finished login can become a model gateway. Register a provider, or use a model-capable connection, then call models.register. An account-login-only provider cannot host models. The error text is: provider is account-login only.

@@ -1,0 +1,22 @@
+---
+title: Close this one and start fresh
+description: Finish the current conversation and open a new one.
+---
+
+# Close this one and start fresh
+
+Use this when you are done with the current conversation and want an empty one.
+
+import { Guide } from '../../components/Guide.client'
+import { closeSteps } from '../../guides/conversations'
+
+<Guide steps={closeSteps} />
+
+Type `/new kill` and press Enter.
+
+This conversation stops. It can still be reopened later from History, unless you delete it there.
+
+:::note[If this is not what you see]
+`/new` without `kill` keeps the current conversation running. Use that if you were not ready to close it.
+:::
+

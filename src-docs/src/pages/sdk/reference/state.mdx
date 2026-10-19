@@ -1,0 +1,60 @@
+---
+title: State
+description: The fields on every session projection.
+---
+
+# State
+
+Every state object is a public projection. It is not the daemon private struct. These fields are always present.
+
+```json
+{
+  "session_id": "sess-1",
+  "revision": 3,
+  "cwd": "/absolute/path",
+  "model_id": "gpt-4.1",
+  "policy": { "plan": "forbid", "approval": "reject" },
+  "external_approvals": false,
+  "turn": { "id": "turn-1", "state": "finished", "error": null },
+  "working": false,
+  "awaiting_approval": false,
+  "approval_reason": null,
+  "pending_approval": null,
+  "gate": null,
+  "pending_count": 0,
+  "messages": [{ "role": "assistant", "content": "The launch date is 4 June." }],
+  "streaming": null
+}
+```
+
+session_id is what you save for resume.
+
+revision is a positive integer for this connection. It starts at 1 and increases when the projection changes.
+
+turn is null before any tracked turn. Otherwise it has id, state, and error. States are running, finished, interrupted, and failed.
+
+working means the daemon is active. It is not the same as a turn whose state is running.
+
+pending_approval is null, or a call id and a reason, for an ordinary waiting tool.
+
+gate is null, or kind, reason, and supported. kind is tool, plan, mission, or unknown.
+
+pending_count is how many follow-ups are queued, from 0 to 5.
+
+messages are role and content, text only. streaming is in-progress assistant text, or null. It is not yet a message.
+
+Keep the last final turn until the next tracked turn starts. Idle does not mean the last turn succeeded. Read turn.state.
+
+## Python
+
+```python
+state = await session.get_state()
+print(state.session_id, state.revision, state.turn)
+```
+
+## TypeScript
+
+```ts
+const state = await session.getState();
+console.log(state.session_id, state.revision, state.turn);
+```

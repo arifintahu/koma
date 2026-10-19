@@ -1,0 +1,22 @@
+---
+title: Lifecycle
+description: Install, start, and remove an extension.
+---
+
+# Lifecycle
+
+Store install. The person is signed in to koma.run. Koma downloads a signed zip, checks it, and unpacks it under the extensions directory.
+
+Dev install. This sideloads an unsigned build. No store and no account. Use it while you are writing the extension.
+
+```sh
+koma ext install --dev /path/to/your.zip
+```
+
+Uninstall removes the files, the contributed tools, the panel, the OAuth row, and the providers and models you registered. That sweep is the supported way to delete an extension-owned provider. Settings will not delete it for the user.
+
+An installed daemon can start when Koma starts, and a panel can start it when the tab opens. A oneshot starts for the invoke and then exits. A daemon that crashes is down. Events fired while it is down are not replayed.
+
+chat.prompt stops after 10 injected turns until a person types. That counter is per extension and resets on real user input. It is there so a panel cannot talk forever without the person.
+
+The byte-level handshake, framing, and timeouts live in the architecture note docs/ARCH_EXTENSION.md. This page is the lifecycle a builder hits. The wire note is the one you need when a frame is rejected.

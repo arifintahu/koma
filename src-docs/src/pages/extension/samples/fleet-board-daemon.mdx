@@ -1,0 +1,29 @@
+---
+title: fleet-board-daemon
+description: A real panel page plus a spawn, using a command channel so it does not deadlock.
+sample: fleet-board-daemon
+---
+
+# fleet-board-daemon
+
+A real panel page plus a spawn, using a command channel so it does not deadlock.
+
+Kind is daemon. Tier is paid.
+
+Contributes: panels, sub-agents, and events.
+
+Requires: agents:orchestrate.
+
+The source tree is below.
+
+```text
+src-extension/example/fleet-board-daemon
+```
+
+Run it with no Koma attached. The process prints its manifest id, the hello, and the scripted frames.
+
+```sh
+cargo run -p fleet-board-daemon
+```
+
+Set KOMA_EXT_SOCKET and KOMA_EXT_TOKEN to connect that same binary to a running Koma.

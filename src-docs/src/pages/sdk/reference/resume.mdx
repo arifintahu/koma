@@ -1,0 +1,41 @@
+---
+title: resume
+description: Attach to a session that already exists.
+method: resume
+---
+
+# resume
+
+Attach to a session that already exists.
+
+Leave policy out to keep the stored policy. external_approvals defaults to false and is not remembered from last time.
+
+```json
+{
+  "id": "2",
+  "method": "resume",
+  "params": {
+    "session_id": "the-id-you-saved"
+  }
+}
+```
+
+The result is a state object.
+
+An unknown session is not_found. A second bind is invalid_state.
+
+The shared error object has code, message, and delivery. delivery is not_sent or unknown. A rejected turn disposition is a result, described on the turns page.
+
+## Python
+
+```python
+session = await client.resume("the-id-you-saved")
+print(session.session_id)
+```
+
+## TypeScript
+
+```ts
+const session = await client.resume({ session_id: "the-id-you-saved" });
+console.log(session.sessionId);
+```

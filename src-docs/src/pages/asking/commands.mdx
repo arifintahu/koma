@@ -1,0 +1,24 @@
+---
+title: Commands on your computer
+description: See the commands koma runs, and stop one.
+---
+
+# Commands on your computer
+
+Some requests need a command on your computer, such as a test or a status check. You can see those commands and stop them.
+
+import { Guide } from '../../components/Guide.client'
+import { bashSteps } from '../../guides/asking'
+
+<Guide steps={bashSteps} />
+
+Type `/bash`.
+
+A running row is still going. Ctrl+B lets a long one continue in the background so you can keep talking. Ctrl+X stops the selected one.
+
+In Normal, koma asks before a risky change. In Auto, it goes ahead. Planning does not run commands until you approve the plan.
+
+:::note[If this is not what you see]
+If the list is empty, koma has not run a command in this conversation. That is normal for a writing request.
+:::
+

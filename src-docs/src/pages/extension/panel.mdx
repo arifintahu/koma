@@ -1,0 +1,28 @@
+---
+title: Panel bridge
+description: How a panel page talks to its daemon.
+---
+
+# Panel bridge
+
+The page and the daemon exchange envelopes. Both directions use the same shape. Copy the helper from the fleet board sample.
+
+```text
+src-extension/example/fleet-board-daemon/ui/koma-panel.js
+```
+
+Do not trust identity fields inside the payload. The host already knows which extension and which panel the frame came from. A page cannot name a different extension and have that believed.
+
+Size is capped on the way in and on the way out. Stay under the cap in the extension reference rather than discovering it as a dropped frame.
+
+The helper follows the app theme. Read the theme before you paint a hard-coded white page.
+
+```js
+KomaPanel.onTheme((theme) => {
+  document.body.dataset.theme = theme
+})
+```
+
+A panel can auto-start its daemon when the tab opens. The page loads, the host starts the process if it is not running, the hello finishes, then messages flow. Do not assume the daemon was already up on the first paint.
+
+The deadlock rule applies the moment the page asks the daemon to call Koma.

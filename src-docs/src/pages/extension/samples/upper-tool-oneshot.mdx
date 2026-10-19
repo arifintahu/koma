@@ -1,0 +1,29 @@
+---
+title: upper-tool-oneshot
+description: The same tool idea, but the process answers once and exits.
+sample: upper-tool-oneshot
+---
+
+# upper-tool-oneshot
+
+The same tool idea, but the process answers once and exits.
+
+Kind is oneshot. Tier is free.
+
+Contributes: tools.
+
+Requires: none.
+
+The source tree is below.
+
+```text
+src-extension/example/upper-tool-oneshot
+```
+
+Run it with no Koma attached. The process prints its manifest id, the hello, and the scripted frames.
+
+```sh
+cargo run -p upper-tool-oneshot
+```
+
+Set KOMA_EXT_SOCKET and KOMA_EXT_TOKEN to connect that same binary to a running Koma.

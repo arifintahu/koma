@@ -1,0 +1,44 @@
+---
+title: General settings
+description: What each general switch does.
+---
+
+# General settings
+
+Type `/settings` and open General. Each row is one switch. Enter edits the row you are on. These names are what the screen shows.
+
+import { Guide } from '../../components/Guide.client'
+import { generalSteps } from '../../guides/account'
+
+<Guide steps={generalSteps} />
+
+**Session name.** The name of this conversation. Same result as `/rename`.
+
+**Workdir.** The folder this conversation is working in. Same idea as `/cd`.
+
+**Awareness.** On, koma reads the project and keeps a short picture of it. Off, it skips that and does not spend a model call on it.
+
+**Harness.** On, koma runs the extra safety check before it acts. Off, that check is skipped. Leave this on unless you have a reason to turn it off.
+
+**Allowed dirs.** Other folders this conversation may use, beyond the one you started in. Same idea as `/adddir`. Ignored when Harness is off.
+
+**Short-send.** On, koma sends a shorter packet of the conversation to the model. What you see on screen does not change.
+
+**Bash shorts.** On, koma keeps a tidier log of commands it runs. On is the usual choice.
+
+**Coding autosave.** This switch is for the desktop editor, not the terminal. Off means that editor saves only when you say so.
+
+**Internet mode.** Simple or full. Same choice as `/internet`.
+
+**Web search.** The search service. Built-in DuckDuckGo needs no key. Firecrawl, Tavily, and Exa ask for a key.
+
+**Mouse capture.** Auto lets the wheel scroll the chat. Off leaves the wheel to your terminal, which helps when you want to drag-select text. On forces scroll capture.
+
+**Max turns.** How many steps an extra assistant may take on one job. A higher number lets a helper keep going longer.
+
+**Max out tokens.** How long a single reply is allowed to be. 0 means the usual large limit. Leave it alone unless a reply is being cut off, or you want shorter answers.
+
+:::note[If this is not what you see]
+The quick settings page shows Appearance and General together when the window is wide. Open General from that list if you do not see every row at once.
+:::
+

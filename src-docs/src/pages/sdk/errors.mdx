@@ -1,0 +1,65 @@
+---
+title: Errors
+description: RPC errors, rejected turns, and delivery.
+---
+
+# Errors
+
+A response is a result or an error. The error has a code, a message, and a delivery.
+
+```json
+{
+  "type": "response",
+  "id": "1",
+  "error": {
+    "code": "invalid_request",
+    "message": "cwd must be absolute",
+    "delivery": "not_sent"
+  }
+}
+```
+
+delivery is not_sent or unknown.
+
+not_sent means the adapter guarantees it did not dispatch a change. Schema and preflight failures use this.
+
+unknown means a change might have been dispatched. A dropped daemon connection uses this. A client timeout after the request bytes may have been written must also use unknown.
+
+Do not retry a mutation on timeout, end of stream, cancellation, a malformed response, or delivery unknown. There is no deduplication and no replay in version 1. A late response after you timed out is ignored. Do not attach it to a new id.
+
+Codes include invalid_request, unsupported_method, invalid_state, not_found, unavailable, and internal. An adapter that does not list a method fails that method with unsupported_method. It must not pretend to implement it.
+
+A turn disposition of rejected is not this error object. It is a result. Read the turns page.
+
+Clients keep at most 64 pending requests and refuse to write another. The event queue is at most 256 frames and 64 MiB. Stderr is diagnostics only. Drain it. Keep at most a 64 KiB tail. Logs on stdout break the protocol.
+
+## Python
+
+```python
+from koma_sdk import DeliveryUnknown, RemoteError
+
+try:
+    await session.submit("Summarize this folder.")
+except DeliveryUnknown as error:
+    state = await session.get_state()
+    print("do not retry", error.method, state.turn)
+except RemoteError as error:
+    print(error.code, error.message)
+```
+
+## TypeScript
+
+```ts
+import { DeliveryUnknownError, SdkError } from "@koma/sdk";
+
+try {
+  await session.submit({ text: "Summarize this folder." });
+} catch (error) {
+  if (error instanceof DeliveryUnknownError) {
+    const state = await session.getState();
+    console.log("do not retry", error.method, state.turn);
+  } else if (error instanceof SdkError) {
+    console.log(error.code, error.message, error.delivery);
+  }
+}
+```

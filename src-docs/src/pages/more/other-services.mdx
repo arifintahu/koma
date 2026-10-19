@@ -1,0 +1,22 @@
+---
+title: Plug in another service
+description: Connect a service your team already runs.
+---
+
+# Plug in another service
+
+Some tools speak a common plug, called MCP. If your team hosts one, koma can use that service’s actions from the conversation.
+
+import { Guide } from '../../components/Guide.client'
+import { serviceSteps } from '../../guides/more'
+
+<Guide steps={serviceSteps} />
+
+Type `/mcp`. Add the service the way its owner described, usually an address and a name. Enter edits a row. Ctrl+X removes one.
+
+You do not need this for ordinary file work. Add a service when koma should read a system that is not a folder on this computer.
+
+:::note[If this is not what you see]
+If the service stays “not connected,” the address is wrong or the service is down. The owner of that service is the right person to ask for the address.
+:::
+

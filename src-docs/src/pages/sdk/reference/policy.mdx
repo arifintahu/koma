@@ -1,0 +1,72 @@
+---
+title: Policy and attachments
+description: How careful the session is, and what you can attach.
+---
+
+# Policy and attachments
+
+policy has no credentials. plan is allow or forbid. approval is default or reject.
+
+```json
+{ "plan": "forbid", "approval": "reject" }
+```
+
+Reject denies gates when nobody answers. It does not approve them, and it does not sandbox the process. An unsupported policy fails before any user text is accepted. Policy belongs to the session.
+
+external_approvals belongs to the connection. It defaults to false on create and on resume. It is never copied from the previous client. approval default without external_approvals true is invalid_request and does not change policy.
+
+Attachments belong to the request. They are ordered. They are not a shared composer.
+
+An image is an absolute path of a regular image file on the daemon machine. The model must accept images.
+
+```json
+{ "kind": "image_file", "path": "/absolute/path/slide.png" }
+```
+
+A pasted note is text, plus an optional display name. The daemon sanitizes the name.
+
+```json
+{ "kind": "pasted_text", "text": "The date moved to 18 June.", "name": "note" }
+```
+
+There is no base64 and no URL fetch. A path written inside the prompt text is not an attachment. The whole batch is checked before an interrupt or a submit. After acceptance, the bytes live in session storage. Changing the source file later does not change what was queued.
+
+At most 16 attachments. Each pasted text is at most 2 MiB of UTF-8. All attachments together are at most 32 MiB of raw bytes, images included. The prompt itself is non-blank and at most 2 MiB of UTF-8. Counts are bytes, not characters.
+
+A frame is at most 40 MiB. Escaping can push a legal 32 MiB batch over that line limit. Split the paste instead of truncating.
+
+## Python
+
+```python
+from koma_sdk import ApprovalPolicy, ImageFile, PastedText, PlanPolicy, Policy
+
+session = await client.create(
+    "/absolute/path/on/the/koma/machine",
+    external_approvals=True,
+    policy=Policy(plan=PlanPolicy.ALLOW, approval=ApprovalPolicy.DEFAULT),
+)
+await session.submit(
+    "Describe this slide.",
+    attachments=(
+        ImageFile("/absolute/path/slide.png"),
+        PastedText("The date moved to 18 June.", name="note"),
+    ),
+)
+```
+
+## TypeScript
+
+```ts
+const session = await client.create({
+  cwd: "/absolute/path/on/the/koma/machine",
+  external_approvals: true,
+  policy: { plan: "allow", approval: "default" },
+});
+await session.submit({
+  text: "Describe this slide.",
+  attachments: [
+    { kind: "image_file", path: "/absolute/path/slide.png" },
+    { kind: "pasted_text", text: "The date moved to 18 June.", name: "note" },
+  ],
+});
+```

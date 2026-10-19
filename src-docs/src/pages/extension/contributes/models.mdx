@@ -1,0 +1,20 @@
+---
+title: Models
+description: Declaring models is not the same as serving them.
+---
+
+# Models
+
+contributes.models in the manifest names what you intend to serve. The catalogue Koma can actually call is built at runtime with models.register, after a person has connected your account or you have registered a key with providers.register.
+
+```json
+{
+  "models": [
+    { "id": "acme-large", "name": "Acme Large", "default": true }
+  ]
+}
+```
+
+Both register verbs need the models:contribute grant. models:invoke is a different grant and does not let you register anything.
+
+A registered model is anchored to a provider you own. The user cannot delete that provider from Settings. Uninstall, or providers.unregister, is what removes it. Unregistering a provider also removes the models anchored to it.

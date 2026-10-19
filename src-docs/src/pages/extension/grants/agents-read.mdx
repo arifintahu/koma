@@ -1,0 +1,28 @@
+---
+title: agents:read
+description: The agents:read grant.
+grant: "agents:read"
+---
+
+# agents:read
+
+
+Read the sub-agents your extension spawned. The orchestrate grant also satisfies this one. The three verbs see only your own registry. They do not see another extension agents, the person own agents, or the raw session list.
+
+List takes no fields.
+
+```json
+{ "method": "agents.list", "params": {} }
+```
+
+A running entry has agentId, agent, and a status of running, done, killed, or error. A queued entry is only agentId and status queued. A closed one is agentId and status gone.
+
+Status takes an agent id, as a number or a numeric string.
+
+```json
+{ "method": "agents.status", "params": { "agentId": 7 } }
+```
+
+Success adds liveTextLen. A queued agent returns status queued and no length. A missing id, an unknown id, or a closed session is an error.
+
+Result uses the same params. Done includes output. Error includes error. Running, queued, and killed are reported as that status.

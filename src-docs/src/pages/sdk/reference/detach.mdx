@@ -1,0 +1,38 @@
+---
+title: detach
+description: Leave the session running.
+method: detach
+---
+
+# detach
+
+Leave the session running.
+
+Send an empty params object.
+
+```json
+{
+  "id": "9",
+  "method": "detach",
+  "params": {}
+}
+```
+
+The result is detached true. The adapter flushes stdout and exits 0. End of stdin is the same. This does not stop the session.
+
+A crashed process is a transport failure, not a detach result.
+
+The shared error object has code, message, and delivery. delivery is not_sent or unknown. A rejected turn disposition is a result, described on the turns page.
+
+## Python
+
+```python
+result = await session.detach()
+print(result.detached)
+```
+
+## TypeScript
+
+```ts
+await session.detach();
+```

@@ -1,0 +1,24 @@
+---
+title: chat:prompt
+description: The chat:prompt grant.
+grant: "chat:prompt"
+---
+
+# chat:prompt
+
+
+One verb. text is required.
+
+```json
+{ "method": "chat.prompt", "params": { "text": "Please summarize the notes." } }
+```
+
+Success is the new length of the buffer.
+
+```json
+{ "queued": 1 }
+```
+
+The text is not injected in the middle of a turn. It waits, and it becomes one user turn the next time that session is idle.
+
+Empty or whitespace text is rejected. Text over 16KB is rejected with: prompt exceeds 16KB. The queue holds 5. An exact repeat of the last entry is deduplicated and the length stays the same. A sixth distinct line is: prompt queue full (5). After 10 injected turns with no real user activity, the error is: extension turn budget exhausted; waiting for user activity. Real user input resets the count. No foreground session is: no active session.

@@ -1,0 +1,31 @@
+---
+title: TUI screens
+description: Draw a terminal screen from the extension.
+---
+
+# TUI screens
+
+Declare the screen in contributes.tui_screens. Push updates with the same panel verbs, tagged so the terminal host draws a screen instead of a webview.
+
+A screen is a tree of nodes. The host owns keyboard navigation. You own the tree and the pushes. Pushes are capped in size and in rate. Read those caps in the extension reference before you stream a ticker faster than the host will accept.
+
+A counter node is enough to see the shape.
+
+```json
+{
+  "kind": "screen",
+  "title": "Counter",
+  "nodes": [
+    { "kind": "text", "text": "Count: 3" },
+    { "kind": "menu", "items": ["Increment", "Reset"] }
+  ]
+}
+```
+
+If the manifest lists no screens, the terminal page for your extension is only details and uninstall.
+
+tui-demo-daemon is the walkthrough. It has a counter, a menu, and a five-second ticker. Run it with no socket to see the frames, or point it at a live Koma.
+
+```sh
+cargo run -p tui-demo-daemon
+```

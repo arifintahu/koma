@@ -1,0 +1,51 @@
+---
+title: Manifest fields
+description: Every field on manifest.json.
+---
+
+# Manifest fields
+
+The ExtensionManifest struct is the shape. A field that struct does not accept does not exist.
+
+```json
+{
+  "schema": "koma-extension/v0",
+  "id": "run.koma.example.echo-tool-daemon",
+  "name": "Echo Tool",
+  "version": "0.0.0",
+  "description": "One sentence a person can read.",
+  "tier": "free",
+  "kind": "daemon",
+  "runtime": { "exec": "echo-tool-daemon", "args": [] },
+  "contributes": {},
+  "requires": [],
+  "workspace_dir": "/absolute/path/this-extension-owns",
+  "mcp_servers": []
+}
+```
+
+schema is koma-extension/v0 today.
+
+id is reverse-DNS and stable for the life of the extension.
+
+name is the label a person sees.
+
+version is your version string.
+
+description is one sentence.
+
+tier is free or paid.
+
+kind is daemon or oneshot.
+
+runtime.exec is the binary name. runtime.args is an array.
+
+contributes is what Koma may call you for. Leave it out to contribute nothing.
+
+requires is the grant strings you need. Leave it out to call nothing.
+
+workspace_dir is a directory you own. Koma injects it as a writable root on every session that activates you. It is not a path you pass on each spawn.
+
+mcp_servers are MCP servers that belong to you. They install and leave with the extension.
+
+A sub-agent in the manifest may list a tools allow-list. It also inherits MCP tools that are connected. A model slug on a sub-agent resolves through the catalogue, including models you register at runtime. The manifest entry is not itself a served model. Serving models is models.register, which needs the models:contribute grant and a connected account or key.

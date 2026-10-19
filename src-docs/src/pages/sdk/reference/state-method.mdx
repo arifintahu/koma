@@ -1,0 +1,39 @@
+---
+title: state
+description: Replace your copy of the session.
+method: state
+---
+
+# state
+
+Replace your copy of the session.
+
+Send an empty params object.
+
+```json
+{
+  "id": "3",
+  "method": "state",
+  "params": {}
+}
+```
+
+The result is a state object. The revision matches the event revision numbers. An unchanged session may repeat the same revision.
+
+A state too large for one frame is unavailable, with delivery not_sent.
+
+The shared error object has code, message, and delivery. delivery is not_sent or unknown. A rejected turn disposition is a result, described on the turns page.
+
+## Python
+
+```python
+state = await session.get_state()
+print(state.revision, state.working, state.turn)
+```
+
+## TypeScript
+
+```ts
+const state = await session.getState();
+console.log(state.revision, state.working, state.turn);
+```

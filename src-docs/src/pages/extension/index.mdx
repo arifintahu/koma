@@ -1,0 +1,30 @@
+---
+title: Extensions
+description: Add a program that Koma launches and talks to.
+---
+
+# Extensions
+
+An extension is a program you write. Koma starts that program and talks to it. Your code does not get loaded into Koma. It stays in its own process.
+
+This protocol is still version 0. It will change. The pages here match the code that ships today.
+
+## Pick the job
+
+| You want | Start with |
+| --- | --- |
+| A tool the agent can call | [Smallest program](/extension/first) |
+| To hear when work finishes | [Events](/extension/contributes/events) |
+| To start work, call a model, or spawn a helper | [agents:orchestrate](/extension/grants/agents-orchestrate) |
+| A tab in the app | [Panels](/extension/contributes/panels) |
+| A full screen in the terminal | [TUI screens](/extension/contributes/tui) |
+| A sign-in row | [Delegated OAuth](/extension/oauth) |
+
+## Do it in this order
+
+1. Copy the echo sample and run it. Nothing else has to be installed yet. [Smallest program](/extension/first)
+2. Put your binary and manifest in a zip and install it on your machine. [Build and sideload](/extension/sideload)
+3. Decide if the process stays up or exits after one call. [Daemon or oneshot](/extension/kinds)
+4. If your program calls into Koma, declare the grant and read that one page. [Two directions](/extension/directions)
+
+The manifest, grant, and sample pages are the reference. Open one when the step above names it. You do not need to read them first.

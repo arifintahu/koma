@@ -1,0 +1,27 @@
+---
+title: Come back later
+description: Reattach to a session that is still running.
+---
+
+# Come back later
+
+Detach closes this client and leaves the session. The process exits 0. Closing stdin does the same. It does not stop the work.
+
+Save the session id from the state returned by create. A later process resumes with that id.
+
+```json
+{
+  "id": "2",
+  "method": "resume",
+  "params": {
+    "session_id": "the-id-you-saved",
+    "external_approvals": false
+  }
+}
+```
+
+Resume does not change the saved main model. Leave policy out to keep the policy already stored on the session. External approvals do not carry over. They are off unless this new connection sets them true.
+
+Create or resume may be called once on an adapter. A second bind returns invalid_state. One process, one session.
+
+The examples are src-core-sdk/python/examples/resume.py and src-core-sdk/typescript/examples/resume.ts.

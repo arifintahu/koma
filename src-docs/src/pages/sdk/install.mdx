@@ -1,0 +1,55 @@
+---
+title: Install
+description: Install Koma, then a local SDK package.
+---
+
+# Install
+
+Install the Koma binary first. The SDK will not install it for you.
+
+On Mac or Linux:
+
+```sh
+curl -fsSL https://koma.run/install.sh | sh
+```
+
+The installer puts koma in ~/.local/bin. Open a new terminal if the command is not found.
+
+On Windows, in PowerShell:
+
+```powershell
+irm https://koma.run/install.ps1 | iex
+```
+
+Then check the binary:
+
+```sh
+koma --version
+koma sdk --help
+```
+
+An older binary may not have sdk serve. The clients will not upgrade it. Point them at an SDK-capable executable instead.
+
+Python, from a checkout:
+
+```sh
+python3 -m venv .venv
+. .venv/bin/activate
+python -m pip install /path/to/koma/src-core-sdk/python
+```
+
+On Windows, activate with this path in PowerShell:
+
+```powershell
+.venv\Scripts\Activate.ps1
+```
+
+TypeScript, from a tarball you built out of src-core-sdk/typescript:
+
+```sh
+npm install /path/to/koma-sdk-0.1.0.tgz
+```
+
+The package is one ESM build with TypeScript declarations. There is no second JavaScript implementation.
+
+Windows sessions have the same limits as the app: no security-check panel, and no full internet browsing.
