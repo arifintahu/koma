@@ -48,3 +48,33 @@ Register a provider with a name, an http or https endpoint, api_type openai or a
 ```
 
 Success is a uuid. Unregister removes providers you own and every model anchored to them. The user cannot delete these providers from Settings. Uninstall can.
+
+```rust
+fn drive(koma: &mut Koma) {
+    let provider = koma.call(
+        "providers.register",
+        serde_json::json!({
+            "name": "acme",
+            "endpoint": "https://api.example.com/v1",
+            "api_type": "openai",
+            "key": "secret"
+        }),
+    );
+    let uuid = provider.get("uuid").and_then(|v| v.as_str()).unwrap_or("");
+
+    let registered = koma.call(
+        "models.register",
+        serde_json::json!({
+            "provider": uuid,
+            "models": [{ "id": "acme-large", "name": "Acme Large", "default": true }]
+        }),
+    );
+    println!("{registered}");
+
+    let removed = koma.call(
+        "models.unregister",
+        serde_json::json!({ "ids": ["acme-large"] }),
+    );
+    println!("{removed}");
+}
+```

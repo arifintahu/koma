@@ -24,3 +24,17 @@ Clear takes no fields. Clearing when nothing was set still succeeds.
 ```
 
 The text is appended after the cached prefix, keyed by your extension id. One entry per extension. Publishing does not break the cached head of the prompt. Over the cap, the error is: context exceeds 8KB.
+
+```rust
+fn drive(koma: &mut Koma) {
+    let set = koma.call(
+        "context.set",
+        serde_json::json!({ "text": "The client prefers short sentences." }),
+    );
+    let ok = set.get("ok").and_then(|v| v.as_bool()).unwrap_or(false);
+    println!("published {ok}");
+
+    let cleared = koma.call("context.clear", serde_json::json!({}));
+    println!("cleared {}", cleared.get("ok").and_then(|v| v.as_bool()).unwrap_or(false));
+}
+```

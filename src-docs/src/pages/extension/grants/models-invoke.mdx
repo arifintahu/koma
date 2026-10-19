@@ -32,3 +32,22 @@ prompt over 32KB is rejected. An unknown role is: unknown role. It does not fall
 The inner budget is 330 seconds. The wire budget for this verb is 360 seconds, so a stuck call still returns: model call timed out. Other verbs use a 120 second wire timeout.
 
 format json asks for a JSON object on OpenAI-compatible chat routes. On Codex and Anthropic-compatible routes the field is ignored, not rejected. Any other value, or a missing field, is ordinary text.
+
+```rust
+fn drive(koma: &mut Koma) {
+    let reply = koma.call(
+        "models.invoke",
+        serde_json::json!({
+            "role": "main",
+            "prompt": "List three risks in this brief."
+        }),
+    );
+    if let Some(message) = reply.get("error").and_then(|v| v.as_str()) {
+        println!("refused: {message}");
+        return;
+    }
+    let output = reply.get("output").and_then(|v| v.as_str()).unwrap_or("");
+    let model = reply.get("model").and_then(|v| v.as_str()).unwrap_or("");
+    println!("{model}: {output}");
+}
+```

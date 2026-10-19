@@ -173,7 +173,7 @@ export default defineConfig({
       ]),
     ],
     '/extension': [
-      { text: 'Extensions', link: '/extension' },
+      { text: 'How to use one', link: '/extension' },
       group('Start here', [
         ['Smallest program', '/extension/first'],
         ['Build and sideload', '/extension/sideload'],

@@ -39,3 +39,27 @@ Spawn into takes a session and a task, plus the same optional fields as agents.s
   }
 }
 ```
+
+```rust
+fn drive(koma: &mut Koma) {
+    let sessions = koma.call("sessions.list", serde_json::json!({}));
+    let first = sessions.as_array().and_then(|rows| rows.first()).cloned();
+    let Some(row) = first else { return };
+    let id = row.get("id").and_then(|v| v.as_str()).unwrap_or("");
+
+    let created = koma.call(
+        "sessions.create",
+        serde_json::json!({ "name": "launch notes" }),
+    );
+    println!("created {}", created.get("id").and_then(|v| v.as_str()).unwrap_or(""));
+
+    let switched = koma.call("sessions.switch", serde_json::json!({ "session": id }));
+    println!("delivery {}", switched.get("delivery").and_then(|v| v.as_str()).unwrap_or(""));
+
+    let spawned = koma.call(
+        "sessions.spawn_into",
+        serde_json::json!({ "session": id, "task": "Draft the reply." }),
+    );
+    println!("{spawned}");
+}
+```

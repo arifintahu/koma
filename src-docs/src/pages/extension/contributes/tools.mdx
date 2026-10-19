@@ -22,4 +22,22 @@ Koma does not load your function into the agent binary. When the model calls the
 
 A oneshot answers one invoke and exits. A daemon can answer many, and can keep state between them.
 
-The echo sample is the whole pattern. Read the invoke, return the same text, and do not request a grant.
+The echo sample is the whole pattern. Koma calls on_invoke with method tool.call. You read args.text and return output. That return value is what Koma gives back to the model.
+
+```rust
+fn on_invoke(&mut self, method: &str, params: serde_json::Value) -> serde_json::Value {
+    match method {
+        "tool.call" => {
+            let text = params
+                .get("args")
+                .and_then(|args| args.get("text"))
+                .and_then(|text| text.as_str())
+                .unwrap_or("");
+            serde_json::json!({ "output": text })
+        }
+        other => serde_json::json!({ "error": format!("unknown method: {other}") }),
+    }
+}
+```
+
+This is the body of src-extension/example/echo-tool-daemon. Run it with cargo run -p echo-tool-daemon and the demo prints that same call with text hello.

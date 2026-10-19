@@ -26,3 +26,30 @@ Status takes an agent id, as a number or a numeric string.
 Success adds liveTextLen. A queued agent returns status queued and no length. A missing id, an unknown id, or a closed session is an error.
 
 Result uses the same params. Done includes output. Error includes error. Running, queued, and killed are reported as that status.
+
+Put the call in the driver Koma hands you, not inside the function that answers an invoke.
+
+```rust
+fn drive(koma: &mut Koma) {
+    let list = koma.call("agents.list", serde_json::json!({}));
+    for row in list.as_array().into_iter().flatten() {
+        let id = row.get("agentId").and_then(|v| v.as_u64());
+        let status = row.get("status").and_then(|v| v.as_str()).unwrap_or("");
+        println!("{id:?} {status}");
+    }
+
+    let status = koma.call("agents.status", serde_json::json!({ "agentId": 7 }));
+    let live = status.get("liveTextLen").and_then(|v| v.as_u64());
+    println!("{status} live={live:?}");
+
+    let result = koma.call("agents.result", serde_json::json!({ "agentId": 7 }));
+    if let Some(output) = result.get("output").and_then(|v| v.as_str()) {
+        println!("done: {output}");
+    }
+    if let Some(error) = result.get("error").and_then(|v| v.as_str()) {
+        println!("failed: {error}");
+    }
+}
+```
+
+The same calls are in src-extension/example/agent-peek-oneshot.

@@ -1,30 +1,76 @@
 ---
-title: Extensions
-description: Add a program that Koma launches and talks to.
+title: How to use an extension
+description: Turn an extension on, or run the echo sample and install it.
 ---
 
-# Extensions
+import { Guide } from '../../components/Guide.client'
+import { installedSteps, storeSteps, useSteps } from '../../guides/extension'
 
-An extension is a program you write. Koma starts that program and talks to it. Your code does not get loaded into Koma. It stays in its own process.
+# How to use an extension
 
-This protocol is still version 0. It will change. The pages here match the code that ships today.
+An extension adds something Koma can do: a tool, a tab, a terminal screen, or a sign-in. You use one from inside Koma. You do not paste it into the chat.
 
-## Pick the job
+This protocol is still version 0. It will change.
 
-| You want | Start with |
-| --- | --- |
-| A tool the agent can call | [Smallest program](/extension/first) |
-| To hear when work finishes | [Events](/extension/contributes/events) |
-| To start work, call a model, or spawn a helper | [agents:orchestrate](/extension/grants/agents-orchestrate) |
-| A tab in the app | [Panels](/extension/contributes/panels) |
-| A full screen in the terminal | [TUI screens](/extension/contributes/tui) |
-| A sign-in row | [Delegated OAuth](/extension/oauth) |
+## Use one that is already on this computer
 
-## Do it in this order
+Open Koma. Type this and press Enter.
 
-1. Copy the echo sample and run it. Nothing else has to be installed yet. [Smallest program](/extension/first)
-2. Put your binary and manifest in a zip and install it on your machine. [Build and sideload](/extension/sideload)
-3. Decide if the process stays up or exits after one call. [Daemon or oneshot](/extension/kinds)
-4. If your program calls into Koma, declare the grant and read that one page. [Two directions](/extension/directions)
+```text
+/extension
+```
 
-The manifest, grant, and sample pages are the reference. Open one when the step above names it. You do not need to read them first.
+<Guide steps={installedSteps} />
+
+That list is installed software. It is not on for this conversation yet.
+
+Type this and press Enter.
+
+```text
+/extension use
+```
+
+<Guide steps={useSteps} />
+
+Highlight the row and press Enter. That add-on can now be called in this conversation. Other conversations stay as they were. Press Esc to go back to the chat.
+
+Then ask in a normal sentence. For the echo sample, the tool is named echo and it takes the text you want repeated.
+
+```text
+Use the echo tool. The text is hello.
+```
+
+Koma calls the extension, the extension answers, and you see the reply in the chat.
+
+## Use one from the store
+
+Type this when you want an add-on Koma publishes, instead of one you built.
+
+```text
+/store
+```
+
+<Guide steps={storeSteps} />
+
+Enter opens the row. Install asks before it downloads. After it is installed, go back and run /extension use so this conversation can call it.
+
+## Try the echo sample yourself
+
+This is the shortest extension. It adds one tool and does not call back into Koma. From the src-extension directory:
+
+```sh
+cargo run -p echo-tool-daemon
+```
+
+No Koma window is required for that command. The program prints the handshake and a pretend tool call whose text is hello. Read that printout. It is the same call Koma will make after you install the extension.
+
+When the printout looks right, pack it and install it on this machine.
+
+```sh
+./pack.sh
+koma ext install --dev dist/echo-tool-daemon.zip
+```
+
+Open Koma, run /extension, then /extension use, and choose Echo Tool. Ask it to echo hello, as above.
+
+The manifest, grants, and the other samples are the reference for when you write your own. You do not need them to use one. [Smallest program](/extension/first) is the next page if you want to change the echo tool.
