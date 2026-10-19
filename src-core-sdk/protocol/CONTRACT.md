@@ -111,6 +111,23 @@ immediate submit result. On resume the current/latest turn can already be final.
   mission, and unknown gates are unsupported, even if they share a pending tool
   representation: fail rather than synthesize keys or generic approvals.
 * `detach`: `{}` -> `{detached:true}`.
+* `configure`: `{providers?, models?}`. At least one is required. `providers` lists
+  `{name, endpoint, api_type, api_key?}`. `api_type` is `openai` or `anthropic`.
+  `endpoint` is an http(s) URL. Names in one call are unique. A new provider
+  requires `api_key`. The same user-owned name updates that provider and keeps
+  its uuid; omitting `api_key` (or JSON null) keeps the stored key, and an empty
+  key is `invalid_request`. Extension-owned names are rejected. `models` maps
+  `main`, `awareness`, `safeguard`, `compactor`, and `planner` to
+  `{provider, model_id, route?}`. The first call on an empty catalogue must
+  include `models.main`. A later call, including one on a live session, may name
+  any subset. Unmentioned roles stay. The same provider and model id share one
+  catalogue entry. Return `{providers:[{name,uuid}], models:{role:{uuid,model_id,provider}}}`
+  for what this call changed. The result, events, and errors never include an API
+  key. Before a session, the call writes `config.json` and does not start a
+  daemon. On a live session the running catalogue updates and the next turn uses
+  it; a turn already streaming keeps the model it started with. When `models.main`
+  is included on a live session, that session's Main is re-pinned. An already-open
+  Koma window keeps its in-memory catalogue until restart.
 
 TurnResult is `{disposition,turn_id,reason}`; reason is null on success or
 `{code,message}` on rejection. Rejected is a known negative domain outcome, not

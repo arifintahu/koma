@@ -247,5 +247,47 @@ class Conformance(unittest.IsolatedAsyncioTestCase):
         await s.submit('é雪')
         self.assertEqual((await s.get_state()).messages[0].content, 'é雪')
 
+    async def test_configure_two_providers_then_live_main_swap(self):
+        c = self.client()
+        configured = await c.configure(
+            providers=[
+                {'name': 'openai', 'endpoint': 'https://api.openai.com/v1', 'api_type': 'openai', 'api_key': 'sk-test'},
+                {'name': 'anthropic', 'endpoint': 'https://api.anthropic.com', 'api_type': 'anthropic', 'api_key': 'sk-ant'},
+            ],
+            models={
+                'main': {'provider': 'openai', 'model_id': 'gpt-4.1'},
+                'awareness': {'provider': 'openai', 'model_id': 'gpt-4.1-mini'},
+                'safeguard': {'provider': 'anthropic', 'model_id': 'claude-sonnet-4-5'},
+                'compactor': {'provider': 'openai', 'model_id': 'gpt-4.1-mini'},
+                'planner': {'provider': 'anthropic', 'model_id': 'claude-sonnet-4-5'},
+            })
+        self.assertEqual([item['name'] for item in configured['providers']], ['openai', 'anthropic'])
+        self.assertEqual(configured['providers'][0]['uuid'], 'prov-openai')
+        self.assertEqual(configured['models']['safeguard']['provider'], 'anthropic')
+        encoded = str(configured)
+        self.assertNotIn('api_key', encoded)
+        self.assertNotIn('sk-test', encoded)
+        session = await c.create('/fake/work')
+        swapped = await session.configure(models={'main': {'provider': 'anthropic', 'model_id': 'claude-sonnet-4-5'}})
+        self.assertEqual(swapped['providers'], [])
+        self.assertEqual(swapped['models']['main']['model_id'], 'claude-sonnet-4-5')
+        self.assertNotIn('api_key', str(swapped))
+
+    async def test_configure_refuses_empty_key_without_sending(self):
+        import os
+        import tempfile
+        log = tempfile.NamedTemporaryFile(prefix='koma-configure-', delete=False)
+        log.close()
+        os.environ['KOMA_FAKE_LOG'] = log.name
+        try:
+            with self.assertRaises(ValueError):
+                await self.client().configure(providers=[{
+                    'name': 'openai', 'endpoint': 'https://api.openai.com/v1',
+                    'api_type': 'openai', 'api_key': '   '}])
+            self.assertEqual(Path(log.name).read_text(), '')
+        finally:
+            os.environ.pop('KOMA_FAKE_LOG', None)
+            Path(log.name).unlink(missing_ok=True)
+
 if __name__ == '__main__':
     unittest.main()

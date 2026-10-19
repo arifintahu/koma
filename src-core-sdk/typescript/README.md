@@ -26,6 +26,8 @@ try {
 } finally { await client.close(); }
 ```
 
+`client.configure({providers, models})` fills an empty Koma before `create`. `session.configure(...)` swaps providers or roles while the session is running; the next `submit` uses them. A new provider needs `api_key`. Omitting it on a later call keeps the stored key. The reply contains names and uuids, never the key.
+
 `executable` defaults to `koma` on PATH. `create` defaults to `{plan:'forbid',approval:'reject'}`; reject denies approval-requiring gates, not every tool, and is not a sandbox.
 `resume({session_id})` preserves policy/cwd. Explicit policy changes honor daemon idle guards. External tool approvals require `external_approvals:true`; normally supply policy `{plan:'forbid',approval:'default'}` too.
 Get `pending_approval.call_id` from `getState()` and call `approve(callId, true/false)`; plan/mission gates are visible but unsupported.

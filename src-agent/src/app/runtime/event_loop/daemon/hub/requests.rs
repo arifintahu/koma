@@ -928,6 +928,10 @@ impl DaemonHub {
                 self.set_session_main(idx, state, model_uuid);
             }
 
+            ClientRequest::SdkConfigure { params } => {
+                self.sdk_configure(idx, state, params);
+            }
+
             // GUI /agents editor upsert (create / save / rename): scope-resolve +
             // built-in-protect, persist, rebuild the roster, re-push `AgentsValues`. The
             // whole request rides in (destructured in `set_agent`) to keep this arm compact.

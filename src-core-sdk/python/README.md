@@ -26,6 +26,8 @@ async def main():
 asyncio.run(main())
 ```
 
+`configure(providers=[...], models={...})` on `Client` fills an empty Koma before `create`. The same call on `Session` swaps providers or roles while the session is running; the next `submit` uses them. A new provider needs `api_key`. Omitting it on a later call keeps the stored key. The reply contains names and uuids, never the key.
+
 `create` defaults to `Policy(plan=FORBID, approval=REJECT)`. Reject denies gates requiring approval, not every tool, and is not a sandbox.
 `resume(id)` preserves cwd/policy; an explicit `policy=` requests an idle-guarded change.
 External approvals require `external_approvals=True` and normally `Policy(approval=ApprovalPolicy.DEFAULT)`.

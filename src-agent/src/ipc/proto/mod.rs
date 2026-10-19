@@ -496,6 +496,12 @@ pub enum ClientRequest {
     SetSessionMain {
         model_uuid: Option<String>,
     },
+    /// SDK `configure`. `params` is the public `{providers?, models?}` object.
+    /// Validation errors are `Error` text prefixed `configure: `; save failures
+    /// are prefixed `configure save failed: `. Success is [`DaemonEvent::Ack`].
+    SdkConfigure {
+        params: serde_json::Value,
+    },
     /// Rewind the foreground session's conversation to JUST BEFORE the message at
     /// `index` (the GUI's hover-edit pencil on a USER chat bubble) — the non-key
     /// equivalent of the TUI's double-Esc `Mode::MessageRewind` + Enter path.

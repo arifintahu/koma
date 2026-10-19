@@ -557,6 +557,172 @@
               "minLength": 1
             },
             "method": {
+              "const": "configure"
+            },
+            "params": {
+              "type": "object",
+              "properties": {
+                "providers": {
+                  "type": "array",
+                  "maxItems": 32,
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "name": {
+                        "type": "string",
+                        "minLength": 1
+                      },
+                      "endpoint": {
+                        "type": "string",
+                        "minLength": 1
+                      },
+                      "api_type": {
+                        "enum": [
+                          "openai",
+                          "anthropic"
+                        ]
+                      },
+                      "api_key": {
+                        "type": "string",
+                        "minLength": 1
+                      }
+                    },
+                    "required": [
+                      "name",
+                      "endpoint",
+                      "api_type"
+                    ]
+                  }
+                },
+                "models": {
+                  "type": "object",
+                  "properties": {
+                    "main": {
+                      "type": "object",
+                      "properties": {
+                        "provider": {
+                          "type": "string",
+                          "minLength": 1
+                        },
+                        "model_id": {
+                          "type": "string",
+                          "minLength": 1
+                        },
+                        "route": {
+                          "type": "string",
+                          "minLength": 1
+                        }
+                      },
+                      "required": [
+                        "provider",
+                        "model_id"
+                      ]
+                    },
+                    "awareness": {
+                      "type": "object",
+                      "properties": {
+                        "provider": {
+                          "type": "string",
+                          "minLength": 1
+                        },
+                        "model_id": {
+                          "type": "string",
+                          "minLength": 1
+                        },
+                        "route": {
+                          "type": "string",
+                          "minLength": 1
+                        }
+                      },
+                      "required": [
+                        "provider",
+                        "model_id"
+                      ]
+                    },
+                    "safeguard": {
+                      "type": "object",
+                      "properties": {
+                        "provider": {
+                          "type": "string",
+                          "minLength": 1
+                        },
+                        "model_id": {
+                          "type": "string",
+                          "minLength": 1
+                        },
+                        "route": {
+                          "type": "string",
+                          "minLength": 1
+                        }
+                      },
+                      "required": [
+                        "provider",
+                        "model_id"
+                      ]
+                    },
+                    "compactor": {
+                      "type": "object",
+                      "properties": {
+                        "provider": {
+                          "type": "string",
+                          "minLength": 1
+                        },
+                        "model_id": {
+                          "type": "string",
+                          "minLength": 1
+                        },
+                        "route": {
+                          "type": "string",
+                          "minLength": 1
+                        }
+                      },
+                      "required": [
+                        "provider",
+                        "model_id"
+                      ]
+                    },
+                    "planner": {
+                      "type": "object",
+                      "properties": {
+                        "provider": {
+                          "type": "string",
+                          "minLength": 1
+                        },
+                        "model_id": {
+                          "type": "string",
+                          "minLength": 1
+                        },
+                        "route": {
+                          "type": "string",
+                          "minLength": 1
+                        }
+                      },
+                      "required": [
+                        "provider",
+                        "model_id"
+                      ]
+                    }
+                  },
+                  "required": []
+                }
+              },
+              "required": []
+            }
+          },
+          "required": [
+            "id",
+            "method",
+            "params"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string",
+              "minLength": 1
+            },
+            "method": {
               "const": "detach"
             },
             "params": {
@@ -685,6 +851,151 @@
         "delivery"
       ]
     },
+    "configure_result": {
+      "type": "object",
+      "properties": {
+        "providers": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "name": {
+                "type": "string",
+                "minLength": 1
+              },
+              "uuid": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "required": [
+              "name",
+              "uuid"
+            ]
+          }
+        },
+        "models": {
+          "type": "object",
+          "properties": {
+            "main": {
+              "type": "object",
+              "properties": {
+                "uuid": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "model_id": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "provider": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "required": [
+                "uuid",
+                "model_id",
+                "provider"
+              ]
+            },
+            "awareness": {
+              "type": "object",
+              "properties": {
+                "uuid": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "model_id": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "provider": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "required": [
+                "uuid",
+                "model_id",
+                "provider"
+              ]
+            },
+            "safeguard": {
+              "type": "object",
+              "properties": {
+                "uuid": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "model_id": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "provider": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "required": [
+                "uuid",
+                "model_id",
+                "provider"
+              ]
+            },
+            "compactor": {
+              "type": "object",
+              "properties": {
+                "uuid": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "model_id": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "provider": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "required": [
+                "uuid",
+                "model_id",
+                "provider"
+              ]
+            },
+            "planner": {
+              "type": "object",
+              "properties": {
+                "uuid": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "model_id": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "provider": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "required": [
+                "uuid",
+                "model_id",
+                "provider"
+              ]
+            }
+          },
+          "required": []
+        }
+      },
+      "required": [
+        "providers",
+        "models"
+      ]
+    },
     "hello": {
       "type": "object",
       "properties": {
@@ -730,6 +1041,7 @@
               "interrupt",
               "interrupt_and_submit",
               "approve",
+              "configure",
               "detach"
             ]
           }
@@ -795,6 +1107,9 @@
                   "required": [
                     "detached"
                   ]
+                },
+                {
+                  "$ref": "#/$defs/configure_result"
                 }
               ]
             }

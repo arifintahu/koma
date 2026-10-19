@@ -12,6 +12,7 @@ pub const METHODS: &[&str] = &[
     "interrupt",
     "interrupt_and_submit",
     "approve",
+    "configure",
     "detach",
 ];
 #[derive(Debug, Deserialize)]
