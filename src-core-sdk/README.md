@@ -37,10 +37,12 @@ protocol; it does not upgrade an incompatible engine. Both clients accept an
 explicit executable path when PATH is unsuitable. See their package guides for
 that option and exact API examples.
 
-Configure provider/model credentials through Koma's existing configuration flow
-before running real inference. The SDK does not expose credentials or a global
-configuration API. Open SDK quickstarts require no Cargo, Bun, terminal preparation,
-or Koma source compilation.
+An empty Koma install has no providers. `Client.configure` writes providers, API
+keys, and the five model roles before `create`. `Session.configure` can change
+them again while a session is running; the next turn uses the new model. Keys are
+stored the same way as in Koma's own settings and are never returned. An
+already-open Koma window keeps its previous catalogue until it restarts. Open SDK
+quickstarts require no Cargo, Bun, terminal preparation, or Koma source compilation.
 
 ## Install a client
 

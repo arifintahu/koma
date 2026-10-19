@@ -1,0 +1,22 @@
+---
+title: Use your own key
+description: Connect an address and a key you were given.
+---
+
+# Use your own key
+
+Choose Use an API key when someone gave you an endpoint address and a secret key. This is also the path for a model that is not in the sign-in list.
+
+import { Guide } from '../../components/Guide.client'
+import { ownKeySteps } from '../../guides/start'
+
+<Guide steps={ownKeySteps} />
+
+Paste the address first, press Tab, then paste the key. The key is masked. Enter continues to the model list.
+
+The key stays on this computer. Koma does not ask you to put it in the chat.
+
+:::note[If this is not what you see]
+If koma says it cannot reach the address, check that the address ends the way your provider wrote it, often with `/v1`. Esc cancels and returns you to the welcome choices.
+:::
+

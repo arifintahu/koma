@@ -1,0 +1,40 @@
+---
+title: context:publish
+description: The context:publish grant.
+grant: "context:publish"
+---
+
+# context:publish
+
+
+Set replaces this extension entry in the system prompt. Empty or whitespace text clears the entry and still returns ok. The cap is 8KB for this extension.
+
+```json
+{ "method": "context.set", "params": { "text": "The client prefers short sentences." } }
+```
+
+```json
+{ "ok": true }
+```
+
+Clear takes no fields. Clearing when nothing was set still succeeds.
+
+```json
+{ "method": "context.clear", "params": {} }
+```
+
+The text is appended after the cached prefix, keyed by your extension id. One entry per extension. Publishing does not break the cached head of the prompt. Over the cap, the error is: context exceeds 8KB.
+
+```rust
+fn drive(koma: &mut Koma) {
+    let set = koma.call(
+        "context.set",
+        serde_json::json!({ "text": "The client prefers short sentences." }),
+    );
+    let ok = set.get("ok").and_then(|v| v.as_bool()).unwrap_or(false);
+    println!("published {ok}");
+
+    let cleared = koma.call("context.clear", serde_json::json!({}));
+    println!("cleared {}", cleared.get("ok").and_then(|v| v.as_bool()).unwrap_or(false));
+}
+```

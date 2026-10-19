@@ -1,4 +1,7 @@
 import assert from 'node:assert/strict';
+import { existsSync, readFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { Client, DeliveryUnknownError, TurnReplacedError, SdkError } from '../dist/index.js';
@@ -122,4 +125,46 @@ test('failed recovery retries and preserves newer observations in sequence order
   const it=s.events();const recovered=(await it.next()).value;assert.equal(recovered.resynced,true);
   const append=(await it.next()).value;assert.ok(append.seq>recovered.seq);assert.equal(append.text,'!');assert.equal(s.state.streaming,'é雪!');await it.return();
  }finally{await c.close();}
+});
+
+test('configure registers providers and swaps main without returning keys', async () => {
+ const c = client();
+ try {
+  const configured = await c.configure({
+   providers: [
+    { name: 'openai', endpoint: 'https://api.openai.com/v1', api_type: 'openai', api_key: 'sk-test' },
+    { name: 'anthropic', endpoint: 'https://api.anthropic.com', api_type: 'anthropic', api_key: 'sk-ant' },
+   ],
+   models: {
+    main: { provider: 'openai', model_id: 'gpt-4.1' },
+    awareness: { provider: 'openai', model_id: 'gpt-4.1-mini' },
+    safeguard: { provider: 'anthropic', model_id: 'claude-sonnet-4-5' },
+    compactor: { provider: 'openai', model_id: 'gpt-4.1-mini' },
+    planner: { provider: 'anthropic', model_id: 'claude-sonnet-4-5' },
+   },
+  });
+  assert.equal(configured.providers[0].uuid, 'prov-openai');
+  assert.equal(configured.providers[1].name, 'anthropic');
+  assert.equal(configured.models.safeguard.provider, 'anthropic');
+  assert.equal(JSON.stringify(configured).includes('api_key'), false);
+  assert.equal(JSON.stringify(configured).includes('sk-test'), false);
+  const session = await c.create({ cwd: '/fake/work' });
+  const swapped = await session.configure({ models: { main: { provider: 'anthropic', model_id: 'claude-sonnet-4-5' } } });
+  assert.deepEqual(swapped.providers, []);
+  assert.equal(swapped.models.main.model_id, 'claude-sonnet-4-5');
+  assert.equal(JSON.stringify(swapped).includes('sk-ant'), false);
+ } finally { await c.close(); }
+});
+
+test('configure refuses an empty key before sending', async () => {
+ const log = join(tmpdir(), `koma-configure-${process.pid}.log`);
+ rmSync(log, { force: true });
+ const c = client('normal', { env: { KOMA_FAKE_LOG: log } });
+ try {
+  await assert.rejects(
+   c.configure({ providers: [{ name: 'openai', endpoint: 'https://api.openai.com/v1', api_type: 'openai', api_key: '  ' }] }),
+   e => e instanceof SdkError && e.code === 'invalid_input',
+  );
+  if (existsSync(log)) assert.equal(readFileSync(log, 'utf8').includes('configure'), false);
+ } finally { await c.close(); rmSync(log, { force: true }); }
 });

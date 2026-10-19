@@ -1,0 +1,29 @@
+---
+title: orchestrator-daemon
+description: Every driving verb, with the real error strings in the comments. Demo mode only fakes agents calls.
+sample: orchestrator-daemon
+---
+
+# orchestrator-daemon
+
+Every driving verb, with the real error strings in the comments. Demo mode only fakes agents calls.
+
+Kind is daemon. Tier is free.
+
+Contributes: none.
+
+Requires: agents:orchestrate, sessions:manage, chat:prompt, models:invoke, context:publish.
+
+The source tree is below.
+
+```text
+src-extension/example/orchestrator-daemon
+```
+
+Run it with no Koma attached. The process prints its manifest id, the hello, and the scripted frames.
+
+```sh
+cargo run -p orchestrator-daemon
+```
+
+Set KOMA_EXT_SOCKET and KOMA_EXT_TOKEN to connect that same binary to a running Koma.

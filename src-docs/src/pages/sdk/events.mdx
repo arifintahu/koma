@@ -1,0 +1,67 @@
+---
+title: Events
+description: State, streaming text, and turn notices.
+---
+
+# Events
+
+After hello, events may arrive between responses. They have no request id. Match responses by id. Never assume the oldest request finished first.
+
+Every event has type event, a name, and seq. seq starts at 1 and increases by one for this process. It is not a saved cursor. A gap in seq means you must not apply a partial update. Call state and continue from that replacement.
+
+A state event replaces the whole projection. resynced is true when the adapter recovered from a gap, and false for an ordinary update.
+
+```json
+{
+  "type": "event",
+  "event": "state",
+  "seq": 4,
+  "resynced": false,
+  "state": { "revision": 4, "streaming": "Hello" }
+}
+```
+
+output_append changes only streaming. offset is the UTF-8 byte length of the previous streaming text, not a character count. text is a non-empty suffix. revision is the previous revision plus one. If the offset or revision does not match, ignore it and call state. A rewrite of the answer is a full state, not an append.
+
+```json
+{
+  "type": "event",
+  "event": "output_append",
+  "seq": 5,
+  "revision": 5,
+  "offset": 5,
+  "text": " world"
+}
+```
+
+A turn event tells you the current turn changed. It is sent immediately after the state event that already contains that turn. It does not change state and does not advance revision.
+
+state.revision starts at 1 when the session binds and increases when the projection changes. Ignore a replacement that is older or the same revision. A full state may skip numbers.
+
+You may ignore an event name you do not know, after you have checked seq. You may not drop events quietly. If your queue overflows, clear it, pause buffering, and surface one overflow error. That error does not fail requests and does not detach. After you observe it, start the iterator again. The next state is marked resynced true.
+
+Polling with wait_turn does not consume the event iterator. You can submit and wait without reading events at all. You will not see tokens as they arrive.
+
+## Python
+
+```python
+from koma_sdk import OutputAppendEvent, StateEvent
+
+async for event in session.events():
+    if isinstance(event, OutputAppendEvent):
+        print(event.text, end="")
+    elif isinstance(event, StateEvent) and event.resynced:
+        print("replaced state", event.state.revision)
+```
+
+## TypeScript
+
+```ts
+for await (const event of session.events()) {
+  if (event.event === "output_append") {
+    process.stdout.write(event.text);
+  } else if (event.event === "state" && event.resynced) {
+    console.log("replaced state", event.state.revision);
+  }
+}
+```

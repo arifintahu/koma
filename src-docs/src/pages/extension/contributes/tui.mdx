@@ -1,0 +1,19 @@
+---
+title: TUI screens
+description: A full-screen view in the terminal.
+---
+
+# TUI screens
+
+contributes.tui_screens is a panel for the terminal. It reuses the panel messages. The payload carries kind so the terminal host can tell a screen from a GUI panel. There is no second socket.
+
+```json
+{
+  "id": "counter",
+  "title": "Counter"
+}
+```
+
+You send a screen made of nodes. The host handles navigation. Pushes are capped. If you declare no screens, the terminal page for your extension is only details and uninstall.
+
+The reference program is tui-demo-daemon. It has a counter, a menu, and a ticker. Read the TUI screens page for the node model.

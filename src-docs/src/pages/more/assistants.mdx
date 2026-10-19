@@ -1,0 +1,24 @@
+---
+title: Extra assistants
+description: Create a helper and hand it a job.
+---
+
+# Extra assistants
+
+An assistant is a named helper with its own instructions. Use one when a job has a role you want to repeat, such as “editor” or “researcher.”
+
+import { Guide } from '../../components/Guide.client'
+import { assistantSteps } from '../../guides/more'
+
+<Guide steps={assistantSteps} />
+
+Type `/agents` to create, change, or remove a helper.
+
+Type `/task`, the helper’s name, and the job, to send it work. Type `/task` alone to see helpers that are working now.
+
+Ctrl+B moves a helper that is blocking you into the background. Ctrl+X stops the selected one.
+
+:::note[If this is not what you see]
+You do not need an assistant for ordinary requests. The main conversation is enough until a job is worth naming.
+:::
+

@@ -1,4 +1,5 @@
 //! Public JSONL adapter. Mutations are serialized through a single IPC owner.
+pub(crate) mod configure;
 mod connection;
 mod protocol;
 mod reconcile;
@@ -157,6 +158,9 @@ async fn dispatch(
 ) -> Result<Value, RpcError> {
     if !METHODS.contains(&r.method.as_str()) {
         return Err(RpcError::new("unsupported_method", "unsupported method"));
+    }
+    if r.method == "configure" {
+        return configure_call(r.params, conn).await;
     }
     if r.method == "create" || r.method == "resume" {
         if conn.is_some() {
@@ -374,6 +378,23 @@ async fn dispatch(
             Ok(json!({"approved":p.approve}))
         }
         _ => unreachable!(),
+    }
+}
+async fn configure_call(
+    params: Value,
+    conn: &mut Option<Connection>,
+) -> Result<Value, RpcError> {
+    if let Some(connection) = conn.as_mut() {
+        connection.configure(params).await
+    } else {
+        let mut config = crate::model::app_config::AppConfig::load();
+        let require_main = !configure::has_main(&config);
+        let applied = configure::apply(&mut config, &params, require_main)
+            .map_err(|message| RpcError::new("invalid_request", message))?;
+        config.save().map_err(|error| {
+            RpcError::new("unavailable", format!("configure save failed: {error}"))
+        })?;
+        Ok(applied.reply)
     }
 }
 fn turn_result(e: E) -> Value {

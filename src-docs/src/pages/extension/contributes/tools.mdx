@@ -1,0 +1,43 @@
+---
+title: Tools
+description: A tool the agent can call.
+---
+
+# Tools
+
+contributes.tools is a list. input_schema is a JSON Schema for the arguments.
+
+```json
+{
+  "name": "echo",
+  "description": "echo input back",
+  "input_schema": {
+    "type": "object",
+    "properties": { "text": { "type": "string" } }
+  }
+}
+```
+
+Koma does not load your function into the agent binary. When the model calls the tool, Koma sends an invoke to your process and waits for the result. Extension tools show up marked with your extension id. A person does not delete them one by one. Uninstalling the extension removes them.
+
+A oneshot answers one invoke and exits. A daemon can answer many, and can keep state between them.
+
+The echo sample is the whole pattern. Koma calls on_invoke with method tool.call. You read args.text and return output. That return value is what Koma gives back to the model.
+
+```rust
+fn on_invoke(&mut self, method: &str, params: serde_json::Value) -> serde_json::Value {
+    match method {
+        "tool.call" => {
+            let text = params
+                .get("args")
+                .and_then(|args| args.get("text"))
+                .and_then(|text| text.as_str())
+                .unwrap_or("");
+            serde_json::json!({ "output": text })
+        }
+        other => serde_json::json!({ "error": format!("unknown method: {other}") }),
+    }
+}
+```
+
+This is the body of src-extension/example/echo-tool-daemon. Run it with cargo run -p echo-tool-daemon and the demo prints that same call with text hello.

@@ -1,0 +1,22 @@
+---
+title: Providers
+description: The accounts and endpoints koma can call.
+---
+
+# Providers
+
+A provider is a place koma can send your request: an account you signed in to, or an address you configured with a key.
+
+import { Guide } from '../../components/Guide.client'
+import { providerSteps } from '../../guides/account'
+
+<Guide steps={providerSteps} />
+
+Press 2 inside settings, or open Providers from the menu. Enter edits the row. Ctrl+X deletes it after you confirm.
+
+Deleting a provider does not delete your conversations. Those conversations will need another provider the next time they ask for a model.
+
+:::note[If this is not what you see]
+If the list is empty, you are on the free connection, or setup was skipped. Add one from the welcome choices, or from this page.
+:::
+

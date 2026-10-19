@@ -1,0 +1,42 @@
+---
+title: approve
+description: Allow or deny one tool call.
+method: approve
+---
+
+# approve
+
+Allow or deny one tool call.
+
+call_id is the pending tool call id, never a turn id. This connection must have opted in to external approvals.
+
+```json
+{
+  "id": "8",
+  "method": "approve",
+  "params": {
+    "call_id": "call-9",
+    "approve": true
+  }
+}
+```
+
+The result is approved true or false, after the daemon acknowledges the decision.
+
+A stale id is invalid_state and must not be retried against a newer call. Plan and mission gates are unsupported. Fail them. Do not invent an approval.
+
+The shared error object has code, message, and delivery. delivery is not_sent or unknown. A rejected turn disposition is a result, described on the turns page.
+
+## Python
+
+```python
+decision = await session.approve("call-9", True)
+print(decision.approved)
+```
+
+## TypeScript
+
+```ts
+const decision = await session.approve("call-9", true);
+console.log(decision.approved);
+```

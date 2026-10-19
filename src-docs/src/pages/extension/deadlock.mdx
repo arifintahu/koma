@@ -1,0 +1,20 @@
+---
+title: Deadlock rule
+description: Do not call Koma from a turn that is waiting for you.
+---
+
+# Deadlock rule
+
+Koma and your process share one conversation at a time in each direction that is waiting.
+
+If a panel handler calls back into Koma, and that call waits, and the thing it waits for is the panel handler, both sides sit forever. The fleet board sample uses a command channel. The panel posts work. A different task performs the spawn.
+
+Do this.
+
+Answer an invoke on the invoke task.
+
+Put follow-up calls to Koma on another task.
+
+Do not wait for a Koma call inside the function that must return the invoke result.
+
+The orchestrator sample comments each grant call and the error it returns. Read that file before you write a panel that spawns agents.

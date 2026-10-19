@@ -1,0 +1,22 @@
+---
+title: Add-ons you already have
+description: See installed add-ons and turn one on for this conversation.
+---
+
+# Add-ons you already have
+
+An add-on is an extra capability installed on this computer, such as a calendar or a customer list. Installed does not mean this conversation is using it.
+
+import { Guide } from '../../components/Guide.client'
+import { addonSteps } from '../../guides/more'
+
+<Guide steps={addonSteps} />
+
+Type `/extension` to see what is installed, open one, or remove it.
+
+Type `/extension use` to turn one on for this conversation only.
+
+:::note[If this is not what you see]
+An empty `/extension` list means nothing extra is installed. The store is where you add one.
+:::
+

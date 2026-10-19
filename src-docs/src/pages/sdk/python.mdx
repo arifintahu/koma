@@ -1,0 +1,28 @@
+---
+title: Python
+description: The koma_sdk client.
+---
+
+# Python
+
+The package is koma_sdk. It needs Python 3.11 or newer.
+
+```python
+from koma_sdk import Client
+
+client = Client("koma")
+```
+
+No process starts until a method needs one. The normal arguments are sdk and serve. There is no shell.
+
+probe reads hello and closes. By default it requires create, resume, state, and detach. It does not require configure. Pass required_capabilities when you need to refuse an older binary.
+
+configure on the client connects, sends the call, and closes. It does not bind a session.
+
+create and resume return a Session. Use it as an async context manager. detach asks the adapter to exit. close closes the pipes.
+
+events is a single async iterator. A second consumer is not supported. wait_turn polls state and does not steal events from that iterator.
+
+The event queue holds 1 to 256 frames. The default is 256. Past that, the client reports overflow, clears the queue, and the next read returns a resynced state. Overflow does not fail the request that was in flight.
+
+The request timeout defaults to 30 seconds. A timeout after the bytes may have been written is delivery unknown. Do not send that mutation again.

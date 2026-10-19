@@ -1,0 +1,30 @@
+---
+title: Which model answers
+description: See which model does the talking, and which ones help.
+---
+
+# Which model answers
+
+You talk to one model. A few smaller jobs use their own models, so a long conversation does not have to spend the main model on every chore.
+
+import { Guide } from '../../components/Guide.client'
+import { modelSteps } from '../../guides/careful'
+
+<Guide steps={modelSteps} />
+
+**main** is the model that answers you.
+
+**awareness** reads the project and keeps a short picture of it.
+
+**safeguard** is the extra check on whether a request or an action looks safe. Normal and Auto can use it. Yooloo skips it.
+
+**compactor** writes the summary when you shorten a long conversation.
+
+**planner** is the model used when koma is drafting a plan.
+
+Type `/model`, pick the job, then pick the model. The line above the box shows the main model.
+
+:::note[If this is not what you see]
+On the free connection, these jobs share the free models. You do not have to assign each one before the first request.
+:::
+

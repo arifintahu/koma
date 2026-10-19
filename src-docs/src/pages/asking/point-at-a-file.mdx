@@ -1,0 +1,22 @@
+---
+title: Point at a file
+description: Mention a file in the folder so koma knows which one you mean.
+---
+
+# Point at a file
+
+When several files could match, name the one you mean.
+
+import { Guide } from '../../components/Guide.client'
+import { fileSteps } from '../../guides/asking'
+
+<Guide steps={fileSteps} />
+
+Type `@` and a few letters of the file name. Koma lists matches. Tab or Enter completes the one highlighted.
+
+You can also type the file name in the sentence. `@` is the faster way when you do not remember the whole name.
+
+:::note[If this is not what you see]
+If no files are listed, koma is looking in the conversation’s folder. Use `/cd` if you opened koma in the wrong place.
+:::
+

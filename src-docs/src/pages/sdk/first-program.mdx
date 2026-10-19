@@ -1,0 +1,63 @@
+---
+title: First program
+description: Configure, create, submit, and read the answer.
+---
+
+# First program
+
+The samples in the repo are src-core-sdk/python/examples/bot.py and src-core-sdk/typescript/examples/bot.mjs.
+
+Do these steps in order.
+
+1. Construct a client with the koma executable.
+2. Configure providers and the main model if the install is empty.
+3. Create a session with an absolute directory on the machine that runs Koma.
+4. Start reading events before you submit, or you will miss the first tokens.
+5. Submit a prompt. Started means a new turn id exists. Rejected is a normal answer, with a reason, and is not a transport failure.
+6. Wait until that turn is finished, interrupted, or failed.
+7. Detach, or close the client. Detach leaves the session running.
+
+Python:
+
+```python
+import asyncio
+import os
+from koma_sdk import Client
+
+async def main():
+    async with Client(os.environ.get("KOMA_EXECUTABLE", "koma")) as client:
+        await client.configure(
+            providers=[{
+                "name": "openai",
+                "endpoint": "https://api.openai.com/v1",
+                "api_type": "openai",
+                "api_key": os.environ["OPENAI_API_KEY"],
+            }],
+            models={"main": {"provider": "openai", "model_id": "gpt-4.1"}},
+        )
+        async with await client.create(os.path.abspath(".")) as session:
+            result = await session.submit("Summarize this folder. Do not edit files.")
+            if result.disposition.value == "started":
+                print(await session.wait_turn(result.turn_id, timeout=120))
+
+asyncio.run(main())
+```
+
+TypeScript uses sessionId and waitTurn. The event name is a field called event.
+
+```ts
+import { Client } from "@koma/sdk";
+import { resolve } from "node:path";
+
+const client = new Client({ executable: process.env.KOMA_EXECUTABLE ?? "koma" });
+const session = await client.create({ cwd: resolve(".") });
+const result = await session.submit({
+  text: "Summarize this folder. Do not edit files.",
+});
+if (result.disposition === "started") {
+  console.log(await session.waitTurn(result.turn_id, { timeoutMs: 120_000 }));
+}
+await client.close();
+```
+
+An output_append event carries only the new suffix of the answer. Print that text as it arrives. A state event replaces the whole projection. Do not also append that event streaming text, or you will print the answer twice.

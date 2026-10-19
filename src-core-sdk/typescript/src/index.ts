@@ -1,7 +1,7 @@
 import { isAbsolute } from 'node:path';
 import { Transport } from './transport.js';
-import { local, textId, validateInput, validatePolicy } from './validate.js';
-import { DeliveryUnknownError, SdkError, TurnReplacedError, type ClientOptions, type CreateOptions, type ResumeOptions, type RequestOptions, type State, type Hello, type Input, type SubmitResult, type EnqueueResult, type InterruptResult, type ReplacementResult, type Event, type Turn, type Method } from './types.js';
+import { configureParams, local, textId, validateInput, validatePolicy } from './validate.js';
+import { DeliveryUnknownError, SdkError, TurnReplacedError, type ClientOptions, type ConfigureOptions, type ConfigureResult, type CreateOptions, type ResumeOptions, type RequestOptions, type State, type Hello, type Input, type SubmitResult, type EnqueueResult, type InterruptResult, type ReplacementResult, type Event, type Turn, type Method } from './types.js';
 export * from './types.js';
 
 export class Client {
@@ -18,6 +18,13 @@ export class Client {
   }
   async release(t: Transport): Promise<void> { this.connections.delete(t); await t.close(); }
   async probe(): Promise<Hello> { const t = await this.connect(); try { return t.hello!; } finally { await this.release(t); } }
+  /** Write providers and model roles before a session exists. No daemon is started. */
+  async configure(options: ConfigureOptions, request?: RequestOptions): Promise<ConfigureResult> {
+    const params = configureParams(options);
+    const transport = await this.connect();
+    try { return await transport.request<ConfigureResult>('configure', params, request); }
+    finally { await this.release(transport); }
+  }
   async create(options: CreateOptions, request?: RequestOptions): Promise<Session> {
     textId(options.cwd);
     if (!isAbsolute(options.cwd)) throw new SdkError('invalid_input', 'cwd must be absolute on daemon host');
@@ -79,6 +86,10 @@ export class Session {
       } else if (event.revision !== this.state.revision) continue;
       yield event;
     }
+  }
+  /** Update providers or model roles on this live session. The next turn uses them. */
+  configure(options: ConfigureOptions, request?: RequestOptions): Promise<ConfigureResult> {
+    return this.request('configure', configureParams(options), request);
   }
   submit(input: Input, options?: RequestOptions): Promise<SubmitResult> { return this.request('submit', validateInput(input), options); }
   enqueue(input: Input, options?: RequestOptions): Promise<EnqueueResult> { return this.request('enqueue', validateInput(input), options); }

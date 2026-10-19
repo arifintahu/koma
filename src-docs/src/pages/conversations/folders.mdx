@@ -1,0 +1,26 @@
+---
+title: Choose the folder
+description: Tell koma which folder this conversation is working in.
+---
+
+# Choose the folder
+
+Koma works inside a folder. That folder is where it reads and where it is allowed to change things.
+
+import { Guide } from '../../components/Guide.client'
+import { folderSteps } from '../../guides/conversations'
+
+<Guide steps={folderSteps} />
+
+The folder you were in when you typed `koma` is the starting folder.
+
+Type `/cd` and a path to move this conversation to another folder.
+
+Type `/adddir` and a path to let koma see a second folder as well. Use that when the brief is in one folder and the assets are in another.
+
+You can also change Workdir and Allowed dirs in `/settings`.
+
+:::note[If this is not what you see]
+If koma refuses a folder, it is outside the places this conversation is allowed to use. Add it with `/adddir`, or pick a folder inside the project.
+:::
+

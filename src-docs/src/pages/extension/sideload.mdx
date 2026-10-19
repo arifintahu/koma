@@ -1,0 +1,34 @@
+---
+title: Build and sideload
+description: Install the extension you just built.
+---
+
+# Build and sideload
+
+Do this after the echo sample runs.
+
+From src-extension, pack the examples. The script builds them in release mode and writes one zip per sample under dist.
+
+```sh
+./pack.sh
+```
+
+Each zip has the manifest, the executable, and a ui folder only when the extension has a panel.
+
+```text
+manifest.json
+bin/echo-tool-daemon
+ui/index.html
+```
+
+The manifest in the zip must be the same file the process parses at startup. The samples embed that file and parse it before they serve, so a bad manifest fails immediately.
+
+Install the zip on this machine. This path skips the store, the signature, and sign-in. Use it for a program you just compiled. It is not how you publish to other people.
+
+```sh
+koma ext install --dev /path/to/your.zip
+```
+
+After it is installed, open Koma and use the tool, or open the tab, the way the sample describes.
+
+Removing the extension removes its tools, its models, and its providers together. Settings will not delete a provider an extension owns. Uninstall is the removal. See [Lifecycle](/extension/lifecycle).

@@ -1,0 +1,76 @@
+---
+title: agents:orchestrate
+description: The agents:orchestrate grant.
+grant: "agents:orchestrate"
+---
+
+# agents:orchestrate
+
+
+Spawn, steer, and stop sub-agents. This grant includes agents:read.
+
+Spawn requires a non-empty task. agent defaults to general. model, effort, and workspace are optional. notify defaults to false.
+
+```json
+{
+  "method": "agents.spawn",
+  "params": {
+    "task": "Rewrite the brief for a client.",
+    "agent": "editor",
+    "workspace": "/absolute/path/inside/a/session/root",
+    "notify": true
+  }
+}
+```
+
+Success is agentId and status spawned. When the five-slot cap is full, status is queued. An empty task, no foreground session, an unknown agent, or a bad workspace is an error.
+
+workspace, when you send it, is an absolute path. Koma canonicalizes it and requires it to sit inside a session root, compared by path components, not by string prefix. A folder named /a/bc is not inside /a/b. If the path does not exist, or it is outside every root, the spawn is rejected. Koma does not fall back to the wider session. Leave workspace out and the sub-agent inherits the session roots.
+
+Kill is idempotent. Killing an agent that is already finished still returns killed true and does not fire another terminal event.
+
+```json
+{ "method": "agents.kill", "params": { "agentId": 7 } }
+```
+
+Send requires a non-empty message. The text becomes a user turn at the next turn boundary, never in the middle of a stream. A queued agent still returns sent true, with status queued. An empty message is an error. A finished agent returns the text: agent is terminal.
+
+```json
+{
+  "method": "agents.send",
+  "params": { "agentId": 7, "message": "Lead with the date." }
+}
+```
+
+notify true sends agents.done to you when that agent finishes. The person chat does not show these agents. You read the result with agents.result or the notify event.
+
+The id you get is yours. It is not reused, and it is not shared with another extension.
+
+Call these from the driver, then read the id out of the value that comes back. Do not call them from inside on_invoke.
+
+```rust
+fn drive(koma: &mut Koma) {
+    let spawned = koma.call(
+        "agents.spawn",
+        serde_json::json!({
+            "task": "Rewrite the brief for a client.",
+            "agent": "editor",
+            "notify": true
+        }),
+    );
+    let id = spawned.get("agentId").and_then(|v| v.as_u64()).unwrap();
+    let state = spawned.get("status").and_then(|v| v.as_str()).unwrap_or("");
+    println!("spawned {id} {state}");
+
+    let sent = koma.call(
+        "agents.send",
+        serde_json::json!({ "agentId": id, "message": "Lead with the date." }),
+    );
+    println!("sent {sent}");
+
+    let killed = koma.call("agents.kill", serde_json::json!({ "agentId": id }));
+    println!("killed {}", killed.get("killed").and_then(|v| v.as_bool()).unwrap_or(false));
+}
+```
+
+src-extension/example/orchestrator-daemon spawns this way. src-extension/example/fleet-board-daemon does it from a side task so the panel does not deadlock.

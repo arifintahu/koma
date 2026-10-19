@@ -1,0 +1,26 @@
+---
+title: Safety checks
+description: Turn the extra checks on, and control Yooloo.
+---
+
+# Safety checks
+
+Safety checks are an optional panel. Leave them on when you want a second look at what koma is about to do. This panel is not available on Windows.
+
+import { Guide } from '../../components/Guide.client'
+import { safetySteps } from '../../guides/more'
+
+<Guide steps={safetySteps} />
+
+Type `/security`.
+
+The first row turns the checks on or off. The Yooloo row is the switch that allows `/mode yolo`. While Yooloo is off, koma refuses that mode. Turning Yooloo off while it is in use returns the conversation to Auto.
+
+Other rows are individual tools. Turning a tool off means koma will not offer that tool.
+
+This panel is for people who want that control. A first week of koma does not require opening it.
+
+:::note[If this is not what you see]
+On Windows, `/security` is not available. Use Normal when you want koma to ask before a risky change.
+:::
+

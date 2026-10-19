@@ -1,0 +1,36 @@
+---
+title: Open koma
+description: Open the terminal and wait until you can type.
+---
+
+# Open koma
+
+Open a terminal in the folder you want koma to work on, then type:
+
+```sh
+koma
+```
+
+Press Enter. Koma opens a conversation for that folder.
+
+import { Guide } from '../../components/Guide.client'
+import { openSteps } from '../../guides/start'
+
+<Guide steps={openSteps} />
+
+The first screen is either the welcome question, if this is the first launch, or the chat, if you have connected before.
+
+The window needs to be at least 50 columns wide. If koma says the terminal is too small, make the window wider.
+
+If you want the list of conversations instead of a new one, type:
+
+```sh
+koma agents
+```
+
+That opens the list and does not start a new conversation until you pick one.
+
+:::note[If this is not what you see]
+A line that says koma could not prepare the terminal means this computer could not start the new terminal. The last page of this book, The terminal cannot start, says what to do.
+:::
+

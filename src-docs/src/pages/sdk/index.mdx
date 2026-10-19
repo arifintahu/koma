@@ -1,0 +1,20 @@
+---
+title: SDK
+description: Drive a Koma session from your own program.
+---
+
+# SDK
+
+The Open SDK drives an installed Koma. Your program does not contain the model, and it does not download Koma. It starts one adapter process, talks JSON lines on stdin and stdout, and owns exactly one session for the life of that process.
+
+Protocol version is 1. The contract in the repo is the source of truth, next to the JSON Schema that checks each frame. This book is that contract, plus the Python and TypeScript clients that already speak it.
+
+Two clients ship in the repo. Python 3.11 and newer uses the koma_sdk package. Node.js 22 and newer uses the @koma/sdk package. Neither name is published on PyPI or npm. You install a local wheel or tarball.
+
+Both speak the same ten methods. TypeScript refuses a Koma binary whose hello does not list configure. Python probe still only requires create, resume, state, and detach.
+
+The adapter is started like this. It takes no flags.
+
+```sh
+koma sdk serve
+```

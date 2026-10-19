@@ -1,0 +1,44 @@
+---
+title: enqueue
+description: Add a follow-up to the turn that is already running.
+method: enqueue
+---
+
+# enqueue
+
+Add a follow-up to the turn that is already running.
+
+The input shape matches submit. Only a running, waiting turn accepts it. The queue holds 5. turn_id on a queued result is null. The item may be consumed before you observe the response. There is no per-item id.
+
+```json
+{
+  "id": "5",
+  "method": "enqueue",
+  "params": {
+    "text": "Also mention the date."
+  }
+}
+```
+
+A queued result has a null turn id.
+
+A full queue is rejected with queue_full. An idle session does not accept enqueue.
+
+The shared error object has code, message, and delivery. delivery is not_sent or unknown. A rejected turn disposition is a result, described on the turns page.
+
+## Python
+
+```python
+from koma_sdk import Disposition
+
+result = await session.enqueue("Also mention the date.")
+if result.disposition is Disposition.QUEUED:
+    print("queued", result.turn_id)
+```
+
+## TypeScript
+
+```ts
+const result = await session.enqueue({ text: "Also mention the date." });
+if (result.disposition === "queued") console.log("queued", result.turn_id);
+```

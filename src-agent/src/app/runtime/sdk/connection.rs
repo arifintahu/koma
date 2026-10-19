@@ -155,6 +155,30 @@ impl Connection {
         self.rpc(r, |e| matches!(e, DaemonEvent::Ack)).await?;
         Ok(())
     }
+    /// Live `configure`. The daemon acks after it saves; the reply is read back
+    /// from that file so the public result does not need a new daemon event.
+    pub async fn configure(
+        &mut self,
+        params: serde_json::Value,
+    ) -> Result<serde_json::Value, RpcError> {
+        let event = self
+            .rpc(
+                ClientRequest::SdkConfigure {
+                    params: params.clone(),
+                },
+                |event| matches!(event, DaemonEvent::Ack),
+            )
+            .await
+            .map_err(map_configure_error)?;
+        if !matches!(event, DaemonEvent::Ack) {
+            return Err(RpcError::new("unavailable", "configure did not ack"));
+        }
+        let config = crate::model::app_config::AppConfig::try_load().map_err(|error| {
+            RpcError::new("unavailable", format!("configure save failed: {error}"))
+        })?;
+        super::configure::reply(&config, &params)
+            .map_err(|message| RpcError::new("unavailable", message))
+    }
     pub async fn readback(&mut self) -> Result<RunState, RpcError> {
         self.seq += 1;
         let seq = self.seq;
@@ -188,6 +212,19 @@ impl Connection {
             )
         })
     }
+}
+
+fn map_configure_error(error: RpcError) -> RpcError {
+    if error.delivery == "unknown" {
+        return error;
+    }
+    if let Some(rest) = error.message.strip_prefix("configure save failed") {
+        return RpcError::new("unavailable", format!("configure save failed{rest}"));
+    }
+    if let Some(rest) = error.message.strip_prefix("configure: ") {
+        return RpcError::new("invalid_request", rest.to_string());
+    }
+    error
 }
 
 #[cfg(all(test, unix))]

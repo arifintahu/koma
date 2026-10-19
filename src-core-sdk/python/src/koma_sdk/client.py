@@ -4,7 +4,7 @@ from __future__ import annotations
 import asyncio
 import os
 from dataclasses import replace
-from collections.abc import AsyncIterator, Sequence
+from collections.abc import AsyncIterator, Mapping, Sequence
 from typing import Any
 
 from ._transport import Transport
@@ -12,6 +12,86 @@ from .errors import (DeliveryUnknown, IncompatibleAdapter, ProtocolError, Remote
                      RequestTimeout, TransportError)
 from .types import (ApprovalResult, Attachment, Binary, DetachResult, Hello, Policy,
                     ReplacementResult, State, StateEvent, Turn, TurnResult, TurnStatus, Event, OutputAppendEvent, TurnEvent, ApprovalPolicy)
+
+
+_ROLES = ("main", "awareness", "safeguard", "compactor", "planner")
+
+
+def _configure_params(providers: Sequence[Mapping[str, Any]] | None,
+                      models: Mapping[str, Mapping[str, Any]] | None) -> dict[str, Any]:
+    if providers is None and models is None:
+        raise ValueError("providers or models required")
+    params: dict[str, Any] = {}
+    if providers is not None:
+        if not isinstance(providers, (list, tuple)):
+            raise ValueError("providers must be a list")
+        cleaned = []
+        seen: set[str] = set()
+        for item in providers:
+            if not isinstance(item, Mapping):
+                raise ValueError("provider must be an object")
+            name = item.get("name")
+            endpoint = item.get("endpoint")
+            api_type = item.get("api_type")
+            if not isinstance(name, str) or not name.strip():
+                raise ValueError("provider name is empty")
+            name = name.strip()
+            if name in seen:
+                raise ValueError(f"duplicate provider name '{name}'")
+            seen.add(name)
+            if not isinstance(endpoint, str) or not endpoint.strip():
+                raise ValueError("endpoint must be an http(s) URL")
+            if api_type not in ("openai", "anthropic"):
+                raise ValueError("api_type must be 'openai' or 'anthropic'")
+            entry: dict[str, Any] = {"name": name, "endpoint": endpoint.strip(), "api_type": api_type}
+            if "api_key" in item and item.get("api_key") is not None:
+                key = item.get("api_key")
+                if not isinstance(key, str) or not key.strip():
+                    raise ValueError("api_key must be non-empty when provided")
+                entry["api_key"] = key.strip()
+            cleaned.append(entry)
+        params["providers"] = cleaned
+    if models is not None:
+        if not isinstance(models, Mapping):
+            raise ValueError("models must be an object")
+        cleaned_models: dict[str, Any] = {}
+        for role, spec in models.items():
+            if role not in _ROLES:
+                raise ValueError(f"unknown model role '{role}'")
+            if not isinstance(spec, Mapping):
+                raise ValueError("model assignment must be an object")
+            provider = spec.get("provider")
+            model_id = spec.get("model_id")
+            if not isinstance(provider, str) or not provider.strip() or not isinstance(model_id, str) or not model_id.strip():
+                raise ValueError("model provider and model_id are required")
+            assignment: dict[str, Any] = {"provider": provider.strip(), "model_id": model_id.strip()}
+            if "route" in spec and spec.get("route") is not None:
+                route = spec.get("route")
+                if not isinstance(route, str):
+                    raise ValueError("route must be a string")
+                assignment["route"] = route
+            cleaned_models[role] = assignment
+        params["models"] = cleaned_models
+    if not params.get("providers") and not params.get("models"):
+        raise ValueError("providers or models required")
+    return params
+
+
+def _validate_configure(result: dict[str, Any]) -> None:
+    providers = result["providers"]
+    models = result["models"]
+    if not isinstance(providers, list) or not isinstance(models, dict):
+        raise ValueError("configure result shape")
+    for provider in providers:
+        if (not isinstance(provider, dict) or not isinstance(provider.get("name"), str) or not provider["name"]
+                or not isinstance(provider.get("uuid"), str) or not provider["uuid"]
+                or "api_key" in provider or "key" in provider):
+            raise ValueError("configure provider")
+    for role, spec in models.items():
+        if (role not in _ROLES or not isinstance(spec, dict)
+                or any(not isinstance(spec.get(field), str) or not spec[field] for field in ("uuid", "model_id", "provider"))
+                or "api_key" in spec or "key" in spec):
+            raise ValueError("configure model")
 
 
 class ObservationUnavailable(TransportError):
@@ -126,6 +206,8 @@ def _validate_result(method: str, d: dict[str, Any]) -> None:
     elif method == "detach":
         if d["detached"] is not True:
             raise ValueError("detach not acknowledged")
+    elif method == "configure":
+        _validate_configure(d)
 
 
 class Client:
@@ -215,6 +297,20 @@ class Client:
                 raise ValueError("approval default requires external_approvals=True")
             params["policy"] = policy.to_wire()
         return await self._bind("resume", params)
+
+    async def configure(self, *, providers: Sequence[Mapping[str, Any]] | None = None,
+                        models: Mapping[str, Mapping[str, Any]] | None = None) -> dict[str, Any]:
+        """Write providers and model roles before a session exists. No daemon is started."""
+        params = _configure_params(providers, models)
+        transport, _hello = await self._connect(("configure",))
+        try:
+            return await transport.request(
+                "configure", params, mutation=True,
+                envelope=lambda i, m, p: {"id": i, "method": m, "params": p},
+                timeout=self.request_timeout)
+        finally:
+            await transport.close()
+            self._transports.discard(transport)
 
     async def _bind(self, method: str, params: dict[str, Any]) -> Session:
         t, hello = await self._connect((method, "state", "detach"))
@@ -344,6 +440,11 @@ class Session:
         d = await self._request("interrupt_and_submit", params, mutation=True)
         r = TurnResult.from_wire(d)
         return ReplacementResult(r.disposition, r.turn_id, r.reason, d["interrupted_turn_id"])
+
+    async def configure(self, *, providers: Sequence[Mapping[str, Any]] | None = None,
+                        models: Mapping[str, Mapping[str, Any]] | None = None) -> dict[str, Any]:
+        """Update providers or model roles on this live session. The next turn uses them."""
+        return await self._request("configure", _configure_params(providers, models), mutation=True)
 
     async def approve(self, call_id: str, approve: bool) -> ApprovalResult:
         if not self._external_approvals:

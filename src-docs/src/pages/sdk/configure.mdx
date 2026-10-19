@@ -1,0 +1,70 @@
+---
+title: Configure
+description: Change providers and model roles.
+---
+
+# Configure
+
+Configure is the tenth method. Send providers, models, or both. The field rules are on the empty-install page.
+
+```json
+{
+  "id": "4",
+  "method": "configure",
+  "params": {
+    "providers": [
+      {
+        "name": "openai",
+        "endpoint": "https://api.openai.com/v1",
+        "api_type": "openai",
+        "api_key": "sk-your-key"
+      }
+    ],
+    "models": {
+      "main": { "provider": "openai", "model_id": "gpt-4.1" }
+    }
+  }
+}
+```
+
+Before a session, configure on the client writes the file and starts no daemon. On a session, configure updates the running catalogue. Include models.main when this session should switch its main model. A turn already in flight keeps the model it started on.
+
+The reply lists only what this call changed. It never includes an API key. A validation failure is invalid_request and the message starts with configure. A save failure is unavailable and the message starts with configure save failed.
+
+Extension-owned provider names are rejected. This catalogue is the user catalogue.
+
+## Python
+
+```python
+await client.configure(
+    providers=[{
+        "name": "openai",
+        "endpoint": "https://api.openai.com/v1",
+        "api_type": "openai",
+        "api_key": "sk-your-key",
+    }],
+    models={"main": {"provider": "openai", "model_id": "gpt-4.1"}},
+)
+
+await session.configure(
+    models={"main": {"provider": "openai", "model_id": "gpt-4.1-mini"}},
+)
+```
+
+## TypeScript
+
+```ts
+await client.configure({
+  providers: [{
+    name: "openai",
+    endpoint: "https://api.openai.com/v1",
+    api_type: "openai",
+    api_key: "sk-your-key",
+  }],
+  models: { main: { provider: "openai", model_id: "gpt-4.1" } },
+});
+
+await session.configure({
+  models: { main: { provider: "openai", model_id: "gpt-4.1-mini" } },
+});
+```

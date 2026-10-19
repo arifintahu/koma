@@ -1,5 +1,5 @@
 import { isAbsolute } from 'node:path';
-import { SdkError, type Method, type Policy, type Input } from './types.js';
+import { SdkError, type ConfigureOptions, type Method, type ModelRoleName, type Policy, type Input } from './types.js';
 export function object(value: unknown): asserts value is Record<string, unknown> {
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new SdkError('protocol', 'Expected object');
 }
@@ -39,8 +39,70 @@ export function validateEvent(x: Record<string, unknown>): void {
     string(x.text, true);
   } else if (x.turn !== null) { object(x.turn); string(x.turn.id, true); member(x.turn.state, ['running','finished','interrupted','failed']); nullableString(x.turn.error); }
 }
+const ROLES: readonly ModelRoleName[] = ['main', 'awareness', 'safeguard', 'compactor', 'planner'];
+export function configureParams(options: ConfigureOptions): Record<string, unknown> {
+  return local(() => {
+    object(options);
+    const params: Record<string, unknown> = {};
+    if (options.providers !== undefined) {
+      if (!Array.isArray(options.providers) || options.providers.length > 32) throw new Error('providers must be a list of at most 32');
+      const seen = new Set<string>();
+      params.providers = options.providers.map(provider => {
+        object(provider);
+        string(provider.name, true);
+        string(provider.endpoint, true);
+        const name = provider.name.trim();
+        if (!name) throw new Error('provider name is empty');
+        if (seen.has(name)) throw new Error(`duplicate provider name '${name}'`);
+        seen.add(name);
+        if (provider.api_type !== 'openai' && provider.api_type !== 'anthropic') throw new Error("api_type must be 'openai' or 'anthropic'");
+        const entry: Record<string, unknown> = { name, endpoint: provider.endpoint.trim(), api_type: provider.api_type };
+        if (provider.api_key !== undefined && provider.api_key !== null) {
+          if (typeof provider.api_key !== 'string' || !provider.api_key.trim()) throw new Error('api_key must be non-empty when provided');
+          entry.api_key = provider.api_key.trim();
+        }
+        return entry;
+      });
+    }
+    if (options.models !== undefined) {
+      object(options.models);
+      const models: Record<string, unknown> = {};
+      for (const [role, spec] of Object.entries(options.models)) {
+        if (!ROLES.includes(role as ModelRoleName)) throw new Error(`unknown model role '${role}'`);
+        if (spec === undefined) continue;
+        object(spec);
+        string(spec.provider, true);
+        string(spec.model_id, true);
+        const provider = spec.provider.trim();
+        const modelId = spec.model_id.trim();
+        if (!provider || !modelId) throw new Error('model provider and model_id are required');
+        const assignment: Record<string, unknown> = { provider, model_id: modelId };
+        if (spec.route !== undefined) { string(spec.route); assignment.route = spec.route; }
+        models[role] = assignment;
+      }
+      params.models = models;
+    }
+    const listed = params.providers as unknown[] | undefined;
+    const assigned = params.models as Record<string, unknown> | undefined;
+    if ((!listed || listed.length === 0) && (!assigned || Object.keys(assigned).length === 0)) throw new Error('providers or models required');
+    return params;
+  });
+}
+function validateConfigure(result: Record<string, unknown>): void {
+  if (!Array.isArray(result.providers) || !result.models || typeof result.models !== 'object' || Array.isArray(result.models)) throw new SdkError('protocol', 'Invalid configure result');
+  for (const provider of result.providers) {
+    object(provider); string(provider.name, true); string(provider.uuid, true);
+    if ('api_key' in provider || 'key' in provider) throw new SdkError('protocol', 'Configure result must not include a key');
+  }
+  for (const [role, spec] of Object.entries(result.models)) {
+    if (!ROLES.includes(role as ModelRoleName)) throw new SdkError('protocol', 'Invalid configure role');
+    object(spec); string(spec.uuid, true); string(spec.model_id, true); string(spec.provider, true);
+    if ('api_key' in spec || 'key' in spec) throw new SdkError('protocol', 'Configure result must not include a key');
+  }
+}
 export function validateResult(method: Method, result: unknown, params: Record<string, unknown>): void {
   object(result);
+  if (method === 'configure') { validateConfigure(result); return; }
   if (method === 'create' || method === 'resume' || method === 'state') { validateState(result.state); return; }
   if (method === 'detach') { if (result.detached !== true) throw new SdkError('protocol', 'Invalid detach result'); return; }
   if (method === 'approve') { bool(result.approved); if (result.approved !== params.approve) throw new SdkError('protocol', 'Approval decision mismatch'); return; }

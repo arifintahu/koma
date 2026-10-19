@@ -1,0 +1,22 @@
+---
+title: Start another and keep this one
+description: Open a fresh conversation without stopping the current one.
+---
+
+# Start another and keep this one
+
+Use this when you want a second piece of work and the first one should keep going.
+
+import { Guide } from '../../components/Guide.client'
+import { anotherSteps } from '../../guides/conversations'
+
+<Guide steps={anotherSteps} />
+
+Type `/new` and press Enter.
+
+The new conversation opens in front of you. The previous one stays in Cooking. Come back to it with `/resume`.
+
+:::note[If this is not what you see]
+If you wanted the old one to close, use `/new kill` instead. `/new` never closes the one you were in.
+:::
+

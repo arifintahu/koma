@@ -1,0 +1,29 @@
+---
+title: agent-peek-oneshot
+description: Contributes nothing. Calls agents.list and exits.
+sample: agent-peek-oneshot
+---
+
+# agent-peek-oneshot
+
+Contributes nothing. Calls agents.list and exits.
+
+Kind is oneshot. Tier is free.
+
+Contributes: none.
+
+Requires: agents:read.
+
+The source tree is below.
+
+```text
+src-extension/example/agent-peek-oneshot
+```
+
+Run it with no Koma attached. The process prints its manifest id, the hello, and the scripted frames.
+
+```sh
+cargo run -p agent-peek-oneshot
+```
+
+Set KOMA_EXT_SOCKET and KOMA_EXT_TOKEN to connect that same binary to a running Koma.

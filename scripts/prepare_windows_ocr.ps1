@@ -12,7 +12,34 @@ $directory = Join-Path $scratchRoot ('koma-ocr-' + [guid]::NewGuid())
 New-Item -ItemType Directory -Path $directory | Out-Null
 $installer = Join-Path $directory 'tesseract-installer.exe'
 $installation = Join-Path $directory 'runtime'
-Invoke-WebRequest -Uri "https://github.com/tesseract-ocr/tesseract/releases/download/5.5.0/tesseract-ocr-w64-setup-$version.exe" -OutFile $installer
+# Release downloads redirect to release-assets.githubusercontent.com. A failed
+# lookup of that host is "No such host is known", and refreshing the signed
+# redirect in a browser is a 404. Retry a fresh redirect before giving up.
+function Save-PinnedFile {
+    param(
+        [Parameter(Mandatory = $true)][string]$Uri,
+        [Parameter(Mandatory = $true)][string]$OutFile
+    )
+    $curl = Get-Command curl.exe -ErrorAction SilentlyContinue
+    if ($curl) {
+        & $curl.Source --fail --location --retry 5 --retry-all-errors --retry-delay 2 --output $OutFile $Uri
+        if ($LASTEXITCODE -ne 0) { throw "download failed (${LASTEXITCODE}): $Uri" }
+        return
+    }
+    $ProgressPreference = 'SilentlyContinue'
+    $last = $null
+    foreach ($attempt in 1..5) {
+        try {
+            Invoke-WebRequest -Uri $Uri -OutFile $OutFile -UseBasicParsing
+            return
+        } catch {
+            $last = $_
+            if ($attempt -lt 5) { Start-Sleep -Seconds (2 * $attempt) }
+        }
+    }
+    throw "download failed: $Uri ($last)"
+}
+Save-PinnedFile -Uri "https://github.com/tesseract-ocr/tesseract/releases/download/5.5.0/tesseract-ocr-w64-setup-$version.exe" -OutFile $installer
 if ((Get-FileHash -Algorithm SHA256 $installer).Hash -ne $expected) { throw 'Tesseract installer checksum mismatch' }
 $sevenZipCandidates = @()
 if ($env:ProgramFiles) { $sevenZipCandidates += Join-Path $env:ProgramFiles '7-Zip\7z.exe' }
@@ -31,7 +58,7 @@ $plugins = Join-Path $installation '$PLUGINSDIR'
 if (Test-Path -LiteralPath $plugins) { Remove-Item -LiteralPath $plugins -Recurse -Force }
 $eng = Join-Path $installation 'tessdata\eng.traineddata'
 New-Item -ItemType Directory -Path (Split-Path -Parent $eng) -Force | Out-Null
-Invoke-WebRequest -Uri "https://raw.githubusercontent.com/tesseract-ocr/tessdata_fast/$engRevision/eng.traineddata" -OutFile $eng
+Save-PinnedFile -Uri "https://raw.githubusercontent.com/tesseract-ocr/tessdata_fast/$engRevision/eng.traineddata" -OutFile $eng
 if ((Get-FileHash -Algorithm SHA256 $eng).Hash -ne $engExpected) { throw 'English traineddata checksum mismatch' }
 python scripts/stage_windows_ocr.py $installation
 if ($LASTEXITCODE -ne 0) { throw 'OCR staging failed' }

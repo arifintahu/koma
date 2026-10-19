@@ -1,0 +1,24 @@
+---
+title: A conversation that got too long
+description: Summarize a long chat, or clear the screen.
+---
+
+# A conversation that got too long
+
+A long conversation still works. If answers get slow, or koma starts to miss the early context, shorten what it has to reread.
+
+import { Guide } from '../../components/Guide.client'
+import { longSteps } from '../../guides/asking'
+
+<Guide steps={longSteps} />
+
+`/compact` asks koma to summarize the conversation and continue from that summary. The older detail stays in the archive.
+
+`/clear` clears what you see and keeps the archive. Use it when you want a clean screen, not when you want a summary.
+
+Neither one deletes the conversation from History.
+
+:::note[If this is not what you see]
+If you wanted a brand-new subject, start another conversation with `/new` instead of clearing this one.
+:::
+

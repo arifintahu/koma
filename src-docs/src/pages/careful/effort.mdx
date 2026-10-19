@@ -1,0 +1,20 @@
+---
+title: How hard it thinks
+description: Ask the model for a quicker pass or a deeper one.
+---
+
+# How hard it thinks
+
+Effort is separate from how careful koma is. Careful controls asking. Effort controls how long the model spends on the answer.
+
+import { Guide } from '../../components/Guide.client'
+import { effortSteps } from '../../guides/careful'
+
+<Guide steps={effortSteps} />
+
+Type `/effort` and choose a level. A higher level usually costs more and takes longer. The level appears next to the model name when it is not the model’s usual one.
+
+:::note[If this is not what you see]
+If the list is a single level, this model does not offer a choice. The usual level is already in use.
+:::
+

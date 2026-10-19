@@ -1,0 +1,43 @@
+---
+title: Limits
+description: What the public session is not.
+---
+
+# Limits
+
+The SDK is not a sandbox. Approval reject only denies gates. A shell command runs as the operating-system user. A program you ask Koma to run can read paths outside the folder. File-tool path checks are not a jail.
+
+Messages in state are text only. The roles are system, user, assistant, and tool. Content is text, or empty. You do not receive private tool-call JSON, reasoning text, credentials, composer drafts, or attachment storage paths. streaming is the in-progress assistant text. It is not yet a message.
+
+```json
+{ "role": "assistant", "content": "The launch date is 4 June." }
+```
+
+Windows does not run the security-check panel and does not run full internet browsing.
+
+One adapter process binds one session. Detach returns detached true, flushes stdout, and exits 0. An unexpected end of stream is a transport failure, not a clean detach.
+
+A single frame is at most 40 MiB, not counting the line feed. Do not truncate. Split a large paste instead. Readers must cap the line while reading. Overlong or invalid UTF-8 on stdout is fatal, and requests already dispatched become delivery unknown.
+
+Unknown fields on a frame are ignored. Writers still emit only the specified fields.
+
+## Python
+
+```python
+state = await session.get_state()
+for message in state.messages:
+    print(message.role, message.content)
+print(state.streaming or "")
+await session.detach()
+```
+
+## TypeScript
+
+```ts
+const state = await session.getState();
+for (const message of state.messages) {
+  console.log(message.role, message.content);
+}
+console.log(state.streaming ?? "");
+await session.detach();
+```

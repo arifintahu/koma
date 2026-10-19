@@ -1,0 +1,28 @@
+---
+title: Quit
+description: Leave koma on purpose.
+---
+
+# Quit
+
+Quitting asks you to choose. It does not guess.
+
+import { Guide } from '../../components/Guide.client'
+import { quitSteps } from '../../guides/trouble'
+
+<Guide steps={quitSteps} />
+
+Type `/quit`, or press Ctrl+C.
+
+**Quit** stops the work in this conversation.
+
+**Detach** closes the window and keeps the work running.
+
+**Cancel** returns to the chat.
+
+`/q` and `/exit` are the same question as `/quit`.
+
+:::note[If this is not what you see]
+If you only wanted to stop the current request, press Esc once instead. Quit is for leaving.
+:::
+

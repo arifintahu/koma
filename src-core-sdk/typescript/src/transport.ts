@@ -6,7 +6,7 @@ import { validateHello, validateEvent, validateResult, object, string } from './
 type Incoming = Event & { gap?: boolean };
 export const MAX_FRAME_BYTES = 40 * 1024 * 1024;
 const MAX_EVENTS_BYTES = 64 * 1024 * 1024;
-const mutations = new Set<Method>(['create', 'resume', 'submit', 'enqueue', 'interrupt', 'interrupt_and_submit', 'approve']);
+const mutations = new Set<Method>(['create', 'resume', 'submit', 'enqueue', 'interrupt', 'interrupt_and_submit', 'approve', 'configure']);
 type Pending = { method: Method; params: Record<string, unknown>; written: boolean; resolve: (x: unknown) => void; reject: (e: unknown) => void; cleanup: () => void };
 
 export class Transport {

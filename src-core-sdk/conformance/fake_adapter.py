@@ -9,7 +9,7 @@ import time
 
 MAX_LINE = 40 * 1024 * 1024
 METHODS = ['create', 'resume', 'state', 'submit', 'enqueue', 'interrupt',
-           'interrupt_and_submit', 'approve', 'detach']
+           'interrupt_and_submit', 'approve', 'configure', 'detach']
 p = argparse.ArgumentParser(description=__doc__)
 p.add_argument('--scenario', choices=['normal', 'reject', 'partial', 'unknown',
     'eof', 'malformed', 'wrong_id', 'out_of_order', 'event_flood', 'approval',
@@ -48,6 +48,28 @@ def response(rid, result=None, code=None, delivery='not_sent'):
         frame['result'] = result
     return frame
 
+def configure_result(params):
+    raw_providers = params.get('providers', [])
+    raw_models = params.get('models', {})
+    if not isinstance(raw_providers, list) or not isinstance(raw_models, dict):
+        return None
+    providers = []
+    for item in raw_providers:
+        if not isinstance(item, dict) or not isinstance(item.get('name'), str) or not item['name'].strip():
+            return None
+        providers.append(dict(name=item['name'].strip(), uuid='prov-' + item['name'].strip()))
+    models = {}
+    for role, spec in raw_models.items():
+        if not isinstance(spec, dict):
+            return None
+        model_id, provider = spec.get('model_id'), spec.get('provider')
+        if not isinstance(model_id, str) or not model_id.strip() or not isinstance(provider, str) or not provider.strip():
+            return None
+        models[role] = dict(uuid='model-' + role, model_id=model_id.strip(), provider=provider.strip())
+    if not providers and not models:
+        return None
+    return dict(providers=providers, models=models)
+
 def outcome(disposition, turn_id=None, code=None, replacement=False, interrupted=None):
     value = dict(disposition=disposition, turn_id=turn_id,
                  reason=None if code is None else dict(code=code, message='fake ' + code))
@@ -81,6 +103,9 @@ while True:
         sys.exit(3)
     if method not in METHODS:
         frame = response(rid, code='unsupported_method')
+    elif method == 'configure':
+        result = configure_result(params)
+        frame = response(rid, result) if result is not None else response(rid, code='invalid_request')
     elif method in ('create', 'resume'):
         if session is not None:
             frame = response(rid, code='invalid_state')

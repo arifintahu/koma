@@ -1,0 +1,22 @@
+---
+title: The window is too narrow
+description: What to do when koma hides the chat.
+---
+
+# The window is too narrow
+
+Koma needs 50 columns. A phone in portrait, or a window dragged too thin, is not enough, and koma will not try to draw a broken chat.
+
+import { Guide } from '../../components/Guide.client'
+import { narrowSteps } from '../../guides/trouble'
+
+<Guide steps={narrowSteps} />
+
+Widen the window, or rotate the device, or use a smaller font in the terminal app. The chat returns as soon as the window is wide enough.
+
+q, Esc, or Ctrl+C leaves while the notice is up.
+
+:::note[If this is not what you see]
+If the window looks wide and the notice stays, the terminal app may be reporting fewer columns than you expect. Make it wider still, or lower the font size.
+:::
+

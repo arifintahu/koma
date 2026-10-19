@@ -633,6 +633,81 @@ impl DaemonHub {
         state.rest.reset_effort_if_main_changed(before_main);
         self.ack_or_error(idx, result);
     }
+
+    /// SDK `configure` on the session this connection is attached to. Applies the
+    /// catalogue in memory, saves and broadcasts, then re-pins local Main when
+    /// this call named `models.main`.
+    pub(super) fn sdk_configure(
+        &mut self,
+        idx: usize,
+        state: &mut AppState,
+        params: serde_json::Value,
+    ) {
+        if state.rest.fg().session.is_none() {
+            self.send_to(
+                idx,
+                DaemonEvent::Error("configure: no active session".to_string()),
+            );
+            return;
+        }
+        let mut config = state.rest.config.clone();
+        let applied = match crate::app::runtime::sdk::configure::apply(&mut config, &params, false)
+        {
+            Ok(applied) => applied,
+            Err(message) => {
+                self.send_to(idx, DaemonEvent::Error(format!("configure: {message}")));
+                return;
+            }
+        };
+        let previous = std::mem::replace(&mut state.rest.config, config);
+        if let Err(error) =
+            crate::app::runtime::actions::save_config_and_broadcast(&state.rest.config)
+        {
+            state.rest.config = previous;
+            self.send_to(
+                idx,
+                DaemonEvent::Error(format!("configure save failed: {error:#}")),
+            );
+            return;
+        }
+        if let Some(main_uuid) = applied.main_uuid {
+            use crate::model::app_config::{assign_role, ModelRole};
+            let before_main = state.rest.main_identity_now();
+            let chosen = state
+                .rest
+                .config
+                .models
+                .iter()
+                .find(|model| model.uuid == main_uuid)
+                .cloned();
+            let result = if chosen.is_none() {
+                Err(anyhow::anyhow!("unknown model reference"))
+            } else if let Some(session) = state.rest.fg_mut().session.as_mut() {
+                let previous_models = session.settings.session_models.clone();
+                assign_role(
+                    &mut session.settings.session_models,
+                    ModelRole::Main,
+                    chosen.as_ref(),
+                );
+                let saved = session.save();
+                if saved.is_err() {
+                    session.settings.session_models = previous_models;
+                }
+                saved
+            } else {
+                Err(anyhow::anyhow!("no active session"))
+            };
+            state.rest.reset_effort_if_main_changed(before_main);
+            if let Err(error) = result {
+                self.send_to(
+                    idx,
+                    DaemonEvent::Error(format!("configure save failed: {error:#}")),
+                );
+                return;
+            }
+        }
+        self.send_to(idx, DaemonEvent::Ack);
+    }
 }
 
 /// Map a lowercase role token (`"main"`/`"awareness"`/`"safeguard"`/`"compactor"`/

@@ -1,9 +1,17 @@
-export const METHODS = ['create', 'resume', 'state', 'submit', 'enqueue', 'interrupt', 'interrupt_and_submit', 'approve', 'detach'] as const;
+export const METHODS = ['create', 'resume', 'state', 'submit', 'enqueue', 'interrupt', 'interrupt_and_submit', 'approve', 'configure', 'detach'] as const;
 export type Method = typeof METHODS[number];
 export interface Policy { plan: 'allow' | 'forbid'; approval: 'default' | 'reject' }
 export type Attachment = { kind: 'image_file'; path: string } | { kind: 'pasted_text'; text: string; name?: string | null };
 export interface Input { text: string; attachments?: Attachment[] }
 export interface CreateOptions { cwd: string; model_id?: string; policy?: Policy; external_approvals?: boolean }
+export type ModelRoleName = 'main' | 'awareness' | 'safeguard' | 'compactor' | 'planner';
+export interface ProviderInput { name: string; endpoint: string; api_type: 'openai' | 'anthropic'; api_key?: string }
+export interface ModelAssignment { provider: string; model_id: string; route?: string }
+export interface ConfigureOptions { providers?: ProviderInput[]; models?: Partial<Record<ModelRoleName, ModelAssignment>> }
+export interface ConfigureResult {
+  providers: { name: string; uuid: string }[];
+  models: Partial<Record<ModelRoleName, { uuid: string; model_id: string; provider: string }>>;
+}
 export interface ResumeOptions { session_id: string; policy?: Policy; external_approvals?: boolean }
 export type Turn = { id: string; state: 'running'; error: string | null } | { id: string; state: 'finished' | 'interrupted' | 'failed'; error: string | null };
 export interface State {

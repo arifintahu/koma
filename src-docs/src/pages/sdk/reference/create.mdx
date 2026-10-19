@@ -1,0 +1,53 @@
+---
+title: create
+description: Start a session in a folder.
+method: create
+---
+
+# create
+
+Start a session in a folder.
+
+cwd is an absolute path. model_id and policy can be left out. policy defaults to plan forbid and approval reject.
+
+```json
+{
+  "id": "1",
+  "method": "create",
+  "params": {
+    "cwd": "/absolute/path/on/the/koma/machine",
+    "model_id": "gpt-4.1",
+    "policy": {
+      "plan": "forbid",
+      "approval": "reject"
+    },
+    "external_approvals": false
+  }
+}
+```
+
+The result is a state object, after the bind and the policy have succeeded.
+
+A second bind on this process is invalid_state. An unknown model_id is not_found. approval default without external_approvals is invalid_request.
+
+The shared error object has code, message, and delivery. delivery is not_sent or unknown. A rejected turn disposition is a result, described on the turns page.
+
+## Python
+
+```python
+session = await client.create(
+    "/absolute/path/on/the/koma/machine",
+    model_id="gpt-4.1",
+)
+print(session.session_id)
+```
+
+## TypeScript
+
+```ts
+const session = await client.create({
+  cwd: "/absolute/path/on/the/koma/machine",
+  model_id: "gpt-4.1",
+});
+console.log(session.sessionId);
+```

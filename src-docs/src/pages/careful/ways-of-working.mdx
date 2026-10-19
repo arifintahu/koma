@@ -1,0 +1,28 @@
+---
+title: How careful koma is
+description: Auto, Normal, Planning, SDLC, and Yooloo, in plain language.
+---
+
+# How careful koma is
+
+The word above the typing box is a choice about how much koma may do without asking. The five words are Auto, Normal, Planning, SDLC, and Yooloo.
+
+import { Guide } from '../../components/Guide.client'
+import { waysSteps } from '../../guides/careful'
+
+<Guide steps={waysSteps} />
+
+**Auto.** Koma goes ahead. It does not stop to ask before it reads, edits, or runs a command.
+
+**Normal.** Koma still reads on its own. It stops and asks before it writes, deletes, or does something else risky.
+
+**Planning.** Koma only looks, and it writes a plan. It does not change files or run commands until you approve the plan. The screen shows Planning.
+
+**SDLC.** Use this for a larger delivery. Koma agrees the goal, what done looks like, and the steps with you first. After you approve, it does the work on its own branch.
+
+**Yooloo.** Koma acts without asking and without the extra safety check. It can still only change files inside the project. You turn this on from Safety checks, so it does not happen by accident. The screen spells it Yooloo.
+
+:::note[If this is not what you see]
+The line may show a shorter SDLC label, such as a phase and a branch, once that delivery has started. It is still SDLC.
+:::
+

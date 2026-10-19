@@ -1,0 +1,22 @@
+---
+title: The store
+description: Browse and install an add-on.
+---
+
+# The store
+
+The store is the catalog on koma.run. You install from it onto this computer, then turn the add-on on for a conversation.
+
+import { Guide } from '../../components/Guide.client'
+import { storeSteps } from '../../guides/more'
+
+<Guide steps={storeSteps} />
+
+Type `/store`. Enter opens an add-on. Install asks you to confirm before anything is downloaded. R refreshes the list. Esc returns to the chat.
+
+After it installs, use `/extension use` if you want this conversation to use it.
+
+:::note[If this is not what you see]
+If the store cannot load, check that this computer can reach koma.run, then press R.
+:::
+

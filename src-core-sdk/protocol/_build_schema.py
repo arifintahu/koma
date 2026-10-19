@@ -20,14 +20,18 @@ d['gate']=obj({'kind':enum('tool','plan','mission','unknown'),'reason':nullable,
 d['state']=obj({'session_id':ident,'revision':revision,'external_approvals':boolean,'pending_approval':nullref('pending_approval'),'gate':nullref('gate'),'cwd':ident,'model_id':s,'policy':ref('policy'),'turn':nullref('turn'),'working':boolean,'awaiting_approval':boolean,'approval_reason':nullable,'pending_count':{'type':'integer','minimum':0,'maximum':5},'messages':{'type':'array','items':ref('message')},'streaming':nullable})
 d['attachment']={'oneOf':[obj({'kind':{'const':'image_file'},'path':ident}),obj({'kind':{'const':'pasted_text'},'text':s,'name':nullable},['kind','text'])]}
 input_props={'text':{'type':'string','minLength':1},'attachments':{'type':'array','maxItems':16,'items':ref('attachment')}}
-params={'create':obj({'cwd':ident,'model_id':ident,'policy':ref('policy'),'external_approvals':boolean},['cwd']),'resume':obj({'session_id':ident,'policy':ref('policy'),'external_approvals':boolean},['session_id']),'state':obj({}),'submit':obj(input_props,['text']),'enqueue':obj(input_props,['text']),'interrupt':obj({'turn_id':ident}),'interrupt_and_submit':obj({'turn_id':ident,**input_props},['turn_id','text']),'approve':obj({'call_id':ident,'approve':boolean}),'detach':obj({})}
+roles=('main','awareness','safeguard','compactor','planner')
+provider_in=obj({'name':ident,'endpoint':ident,'api_type':enum('openai','anthropic'),'api_key':ident},['name','endpoint','api_type'])
+assignment=obj({'provider':ident,'model_id':ident,'route':ident},['provider','model_id'])
+params={'create':obj({'cwd':ident,'model_id':ident,'policy':ref('policy'),'external_approvals':boolean},['cwd']),'resume':obj({'session_id':ident,'policy':ref('policy'),'external_approvals':boolean},['session_id']),'state':obj({}),'submit':obj(input_props,['text']),'enqueue':obj(input_props,['text']),'interrupt':obj({'turn_id':ident}),'interrupt_and_submit':obj({'turn_id':ident,**input_props},['turn_id','text']),'approve':obj({'call_id':ident,'approve':boolean}),'configure':obj({'providers':{'type':'array','maxItems':32,'items':provider_in},'models':obj({role:assignment for role in roles},[])},[]),'detach':obj({})}
 d['request']={'oneOf':[obj({'id':ident,'method':{'const':m},'params':p}) for m,p in params.items()]}
 d['reason']=obj({'code':ident,'message':s})
 d['turn_result']=obj({'disposition':enum('started','queued','rejected','interrupted'),'turn_id':nullable,'reason':nullref('reason')})
 d['replacement_result']=obj({'disposition':enum('started','rejected'),'turn_id':nullable,'reason':nullref('reason'),'interrupted_turn_id':nullable})
 d['error']=obj({'code':ident,'message':s,'delivery':enum('not_sent','unknown')})
+d['configure_result']=obj({'providers':{'type':'array','items':obj({'name':ident,'uuid':ident})},'models':obj({role:obj({'uuid':ident,'model_id':ident,'provider':ident}) for role in roles},[])},['providers','models'])
 d['hello']=obj({'type':{'const':'hello'},'protocol':{'const':1},'binary':obj({'path':ident,'version':ident}),'diagnostics':{'type':'array','items':s},'capabilities':{'type':'array','uniqueItems':True,'items':enum(*params)}})
-d['response']={'oneOf':[obj({'type':{'const':'response'},'id':ident,'result':{'oneOf':[obj({'state':ref('state')}),ref('turn_result'),ref('replacement_result'),obj({'approved':boolean}),obj({'detached':{'const':True}})]}}),obj({'type':{'const':'response'},'id':ident,'error':ref('error')})]}
+d['response']={'oneOf':[obj({'type':{'const':'response'},'id':ident,'result':{'oneOf':[obj({'state':ref('state')}),ref('turn_result'),ref('replacement_result'),obj({'approved':boolean}),obj({'detached':{'const':True}}),ref('configure_result')]}}),obj({'type':{'const':'response'},'id':ident,'error':ref('error')})]}
 # Forbid only mutually exclusive envelope keys; additive fields remain permitted.
 for variant in d['response']['oneOf']:
     variant['not']={'required':['error' if 'result' in variant['properties'] else 'result']}

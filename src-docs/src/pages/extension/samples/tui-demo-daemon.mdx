@@ -1,0 +1,29 @@
+---
+title: tui-demo-daemon
+description: A terminal screen with a counter, a menu, and a ticker.
+sample: tui-demo-daemon
+---
+
+# tui-demo-daemon
+
+A terminal screen with a counter, a menu, and a ticker.
+
+Kind is daemon. Tier is free.
+
+Contributes: terminal screens.
+
+Requires: none.
+
+The source tree is below.
+
+```text
+src-extension/example/tui-demo-daemon
+```
+
+Run it with no Koma attached. The process prints its manifest id, the hello, and the scripted frames.
+
+```sh
+cargo run -p tui-demo-daemon
+```
+
+Set KOMA_EXT_SOCKET and KOMA_EXT_TOKEN to connect that same binary to a running Koma.

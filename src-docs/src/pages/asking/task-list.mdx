@@ -1,0 +1,22 @@
+---
+title: The list koma keeps
+description: See the checklist for this conversation.
+---
+
+# The list koma keeps
+
+For a larger request, koma keeps a checklist of what it is doing. You can look at it without interrupting the chat.
+
+import { Guide } from '../../components/Guide.client'
+import { todoSteps } from '../../guides/asking'
+
+<Guide steps={todoSteps} />
+
+Type `/todo`.
+
+The list belongs to this conversation. It is not a project plan for the whole company. Esc returns you to the chat.
+
+:::note[If this is not what you see]
+An empty list means this conversation has no checklist yet. Ask for something with several parts, and koma will start one when it needs it.
+:::
+

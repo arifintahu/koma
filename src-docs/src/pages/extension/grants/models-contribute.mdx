@@ -1,0 +1,80 @@
+---
+title: models:contribute
+description: The models:contribute grant.
+grant: "models:contribute"
+---
+
+# models:contribute
+
+
+This grant covers models.register, models.unregister, providers.register, and providers.unregister. It does not let you call models.invoke. That grant does not let you register.
+
+Register 1 to 100 models. Each id and name is at most 200 characters. At most one default true. One bad entry rejects the whole batch. Re-registering the same provider and model id updates the name and keeps the uuid.
+
+```json
+{
+  "method": "models.register",
+  "params": {
+    "provider": "provider-uuid",
+    "models": [
+      { "id": "acme-large", "name": "Acme Large", "default": true }
+    ]
+  }
+}
+```
+
+If you omit provider, one eligible anchor you own is used. Zero anchors, or an account-login-only provider, fails. More than one anchor fails until you pass a uuid. The uuid must be one you own.
+
+Success is registered, uuids, and defaultUuid when you set a default. A default fills the main role only when main is unset or free in both the global catalogue and the session. The first fill wins. A later default becomes a hint, not a replacement.
+
+Unregister takes optional ids. Leave them out to remove every model you own. You cannot remove someone else models.
+
+```json
+{ "method": "models.unregister", "params": { "ids": ["acme-large"] } }
+```
+
+Register a provider with a name, an http or https endpoint, api_type openai or anthropic, and a key of at most 4096 characters. The same name updates the endpoint, the key, and the api type, and keeps the uuid, so you can rotate a key without rebinding models.
+
+```json
+{
+  "method": "providers.register",
+  "params": {
+    "name": "acme",
+    "endpoint": "https://api.example.com/v1",
+    "api_type": "openai",
+    "key": "secret"
+  }
+}
+```
+
+Success is a uuid. Unregister removes providers you own and every model anchored to them. The user cannot delete these providers from Settings. Uninstall can.
+
+```rust
+fn drive(koma: &mut Koma) {
+    let provider = koma.call(
+        "providers.register",
+        serde_json::json!({
+            "name": "acme",
+            "endpoint": "https://api.example.com/v1",
+            "api_type": "openai",
+            "key": "secret"
+        }),
+    );
+    let uuid = provider.get("uuid").and_then(|v| v.as_str()).unwrap_or("");
+
+    let registered = koma.call(
+        "models.register",
+        serde_json::json!({
+            "provider": uuid,
+            "models": [{ "id": "acme-large", "name": "Acme Large", "default": true }]
+        }),
+    );
+    println!("{registered}");
+
+    let removed = koma.call(
+        "models.unregister",
+        serde_json::json!({ "ids": ["acme-large"] }),
+    );
+    println!("{removed}");
+}
+```

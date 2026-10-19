@@ -1,0 +1,24 @@
+---
+title: Change how careful it is
+description: Move between Auto, Normal, Planning, and SDLC.
+---
+
+# Change how careful it is
+
+You can change the choice in the middle of a conversation. The next request uses the new one.
+
+import { Guide } from '../../components/Guide.client'
+import { changeModeSteps } from '../../guides/careful'
+
+<Guide steps={changeModeSteps} />
+
+Shift+Tab cycles Auto, Normal, Planning, and SDLC. Yooloo is not on that cycle.
+
+Or type `/mode` to move one step, or `/mode normal` to name one. The names you can type are auto, normal, plan, and sdlc. `/mode yolo` works only after Yooloo is turned on in Safety checks.
+
+Planning is the right choice when you want to read a plan before anything changes.
+
+:::note[If this is not what you see]
+If `/mode yolo` is refused, open `/security` and turn Yooloo on first. On Windows that panel is not available, so Yooloo is not available either.
+:::
+

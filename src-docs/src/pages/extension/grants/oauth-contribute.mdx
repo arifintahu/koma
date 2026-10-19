@@ -1,0 +1,55 @@
+---
+title: oauth:contribute
+description: The oauth:contribute grant.
+grant: "oauth:contribute"
+---
+
+# oauth:contribute
+
+
+Required for oauth.begin, oauth.poll, and oauth.cancel.
+
+The extension must be a daemon. Koma asks you to start the login, then polls you until you report a token or a failure, and can ask you to cancel. The client secret stays in your process. Koma stores the token.
+
+```json
+{ "method": "oauth.begin", "params": { "provider": "acme" } }
+```
+
+```json
+{ "method": "oauth.poll", "params": { "flow": "flow-id" } }
+```
+
+```json
+{ "method": "oauth.cancel", "params": { "flow": "flow-id" } }
+```
+
+After a person is connected, that connection can anchor models.register if it is model-capable. An account-login-only connection is not. Register a key-backed gateway with providers.register when you have an endpoint and a key instead of a browser login.
+
+The sample is oauth-demo-daemon. The step order is on the delegated OAuth page.
+
+Koma calls you. You do not call these three. Answer them from on_invoke. Every call carries providerId. begin returns a url, or a device code. poll returns pending until you have a token. cancel can return anything. Koma ignores that result.
+
+```rust
+fn on_invoke(&mut self, method: &str, params: serde_json::Value) -> serde_json::Value {
+    let provider_id = params.get("providerId").and_then(|v| v.as_str()).unwrap_or("");
+    match method {
+        "oauth.begin" => serde_json::json!({
+            "url": format!("https://example.com/login?provider={provider_id}")
+        }),
+        "oauth.poll" => serde_json::json!({ "status": "pending" }),
+        "oauth.cancel" => serde_json::json!({}),
+        other => serde_json::json!({ "error": format!("unknown method: {other}") }),
+    }
+}
+```
+
+When the login finishes, poll returns the token. Only access_token is required.
+
+```rust
+serde_json::json!({
+    "status": "success",
+    "token": { "access_token": "stored-by-koma" }
+})
+```
+
+A failed login is status failed plus error. Do this work off the invoke stack if it waits on the network. poll should only report progress.

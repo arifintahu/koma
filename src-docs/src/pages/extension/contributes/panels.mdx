@@ -1,0 +1,20 @@
+---
+title: Panels
+description: A tab whose page you ship.
+---
+
+# Panels
+
+contributes.panels adds a tab. Koma frames your ui page in its own webview origin. It does not share the app origin.
+
+```json
+{
+  "id": "board",
+  "title": "Fleet",
+  "entry": "ui/index.html"
+}
+```
+
+The page talks to your daemon through the panel bridge, not by importing Koma. The helper to copy is ui/koma-panel.js from the fleet-board-daemon sample. The message rules, the size caps, and the theme callbacks are on the panel bridge page.
+
+A panel that also drives agents must follow the deadlock rule. Do not call Koma from the same turn that is blocked waiting for the panel to answer.
