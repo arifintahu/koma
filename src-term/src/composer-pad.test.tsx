@@ -45,3 +45,28 @@ test("the prompt mark sits against the composer border", async () => {
     await act(async () => { await view.dispose() })
   }
 })
+
+test("the composer box grows with soft-wrapped rows", async () => {
+  const theme = themeFor("dark")
+  const rows = async (input: string) => {
+    const snapshot = fold(null, { Snapshot: {
+      foreground_id: "wrap",
+      sessions: [{ id: "wrap", name: "Wrap", cwd: "/tmp", messages: [] }],
+      global: { mode: "Chat", palette: "dark", input },
+    } })!
+    function Harness() {
+      const renderer = useRenderer()
+      const style = useMemo(() => SyntaxStyle.fromStyles({}, renderer.nativeScene), [renderer])
+      return <Chat snap={snapshot} theme={theme} syntaxStyle={style} focused send={() => {}} sendTracked={async () => "ack"} onFlushError={() => {}} />
+    }
+    const view = await testRender(<Harness />, { width: 30, height: 30 })
+    try {
+      await act(async () => { await view.waitForVisualIdle() })
+      await act(async () => { await view.waitForVisualIdle() })
+      return view.captureCharFrame().split("\n").filter((row) => row.includes("│") && !row.includes("╭") && !row.includes("╰") && row.includes("a")).length
+    } finally {
+      await act(async () => { await view.dispose() })
+    }
+  }
+  expect(await rows("a".repeat(70))).toBeGreaterThanOrEqual(3)
+})

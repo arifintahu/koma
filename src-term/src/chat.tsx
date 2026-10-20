@@ -967,8 +967,14 @@ function Composer({
   const flushToken = useRef(0)
   const [lines, setLines] = useState(Math.max(1, snap.global.input.split("\n").length))
   const [draft, setDraft] = useState(snap.global.input)
+  const [wrapped, setWrapped] = useState(1)
   const innerCap = session.awaiting_approval || compact ? 1 : Math.max(1, Math.floor(height / 2) - 2)
-  const boxHeight = Math.min(innerCap, Math.max(1, lines)) + 2
+  // Soft-wrapped rows count too, or the textarea scrolls inside a box that never grows.
+  const boxHeight = Math.min(innerCap, Math.max(1, lines, wrapped)) + 2
+  useEffect(() => {
+    const count = Math.max(1, area.current?.virtualLineCount ?? 1)
+    setWrapped((current) => current === count ? current : count)
+  }, [draft, width])
   const paletteOpen = commandSuggestions(snap.global.command_palette, snap.global.palette_sel).rows.length > 0 || (snap.global.file_palette?.length ?? 0) > 0
   const keyQueue = useRef(Promise.resolve())
   const lastPaletteKey = useRef({ code: "", at: 0 })
