@@ -113,7 +113,9 @@ pub fn managed_binary_path(id: &str, binary: &str) -> Option<PathBuf> {
         if let Some(entry) = m.get(id) {
             if let Some(rel) = entry.binary_rel.as_deref() {
                 let p = dir.join(rel);
-                if p.is_file() {
+                // Older Windows installs recorded a `.js` or extensionless npm
+                // file; those can't be spawned, so look for the real shim.
+                if p.is_file() && spawnable(&p) {
                     return Some(p);
                 }
             }
@@ -130,6 +132,9 @@ pub fn managed_binary_path(id: &str, binary: &str) -> Option<PathBuf> {
     }
     if let Some(p) = candidates.into_iter().find(|p| p.is_file()) {
         return Some(p);
+    }
+    if cfg!(windows) {
+        return None;
     }
     let base = binary.to_string();
     let js = format!("{base}.js");
@@ -174,23 +179,31 @@ fn find_file_named(root: &Path, name: &str) -> Option<PathBuf> {
 
 /// Candidate basenames for a managed binary on this platform.
 fn managed_binary_names(binary: &str) -> Vec<String> {
+    if cfg!(windows) {
+        let mut names = Vec::new();
+        for ext in ["cmd", "exe", "bat"] {
+            if binary.ends_with(&format!(".{ext}")) {
+                return vec![binary.to_string()];
+            }
+            names.push(format!("{binary}.{ext}"));
+        }
+        return names;
+    }
     let mut names = vec![binary.to_string()];
     if !binary.ends_with(".js") {
         names.push(format!("{binary}.js"));
     }
-    #[cfg(windows)]
-    {
-        if !binary.ends_with(".cmd") {
-            names.push(format!("{binary}.cmd"));
-        }
-        if !binary.ends_with(".exe") {
-            names.push(format!("{binary}.exe"));
-        }
-        if !binary.ends_with(".bat") {
-            names.push(format!("{binary}.bat"));
-        }
-    }
     names
+}
+
+/// Windows can only spawn `.exe` / `.cmd` / `.bat`; Unix relies on the exec bit.
+fn spawnable(path: &Path) -> bool {
+    if !cfg!(windows) {
+        return true;
+    }
+    path.extension()
+        .and_then(|e| e.to_str())
+        .is_some_and(|e| matches!(e.to_ascii_lowercase().as_str(), "exe" | "cmd" | "bat"))
 }
 
 #[cfg(windows)]
@@ -241,6 +254,20 @@ mod tests {
         let raw = serde_json::to_string(&m).unwrap();
         let back: Manifest = serde_json::from_str(&raw).unwrap();
         assert_eq!(back.servers.len(), 0);
+    }
+
+    #[test]
+    fn windows_names_are_spawnable_only() {
+        if cfg!(windows) {
+            assert_eq!(
+                managed_binary_names("vtsls"),
+                vec!["vtsls.cmd", "vtsls.exe", "vtsls.bat"]
+            );
+            assert!(!spawnable(Path::new("bin/vtsls.js")));
+            assert!(spawnable(Path::new("vtsls.CMD")));
+        } else {
+            assert_eq!(managed_binary_names("vtsls"), vec!["vtsls", "vtsls.js"]);
+        }
     }
 
     #[test]

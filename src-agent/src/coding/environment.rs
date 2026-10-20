@@ -21,7 +21,6 @@ pub(crate) fn language(program: &str) -> &str {
         "php" | "phpactor" | "intelephense" => "php",
         "lua" | "lua-language-server" => "lua",
         "zig" | "zls" => "zig",
-        "nix" | "nil" => "nix",
         "bash" | "bash-language-server" => "bash",
         _ => "",
     }
@@ -97,7 +96,6 @@ pub(crate) fn executable(root: &Path, program: &str) -> Result<PathBuf> {
             | "php"
             | "lua"
             | "zig"
-            | "nix"
             | "bash"
             | "clang"
     );
@@ -140,7 +138,6 @@ pub(super) fn select(
                 | "lua"
                 | "zig"
                 | "bash"
-                | "nix"
         ),
         "Unknown toolchain language"
     );
@@ -162,10 +159,6 @@ pub(super) fn select(
         anyhow::ensure!(
             self::language(spec.binary) == language,
             "Language server does not match the selected toolchain"
-        );
-        anyhow::ensure!(
-            !(cfg!(windows) && server == "phpactor"),
-            "Managed Phpactor is supported on Unix hosts"
         );
     }
     let mut config = super::workspace::read_config(root)?;
@@ -253,7 +246,17 @@ pub(crate) fn language_server(
             .any(|ext| ext.eq_ignore_ascii_case(extension))
     })
 }
+/// Process + registry PATH, then koma-managed runtimes (a system install wins).
 pub(crate) fn host_path() -> std::ffi::OsString {
+    let mut paths: Vec<PathBuf> = std::env::split_paths(&system_path()).collect();
+    for dir in super::runtimes::bin_dirs() {
+        if !paths.contains(&dir) {
+            paths.push(dir);
+        }
+    }
+    std::env::join_paths(paths).unwrap_or_else(|_| system_path())
+}
+fn system_path() -> std::ffi::OsString {
     let current = std::env::var_os("PATH").unwrap_or_default();
     #[cfg(not(windows))]
     {

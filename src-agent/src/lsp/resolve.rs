@@ -86,7 +86,6 @@ fn resolve_one(spec: &ServerSpec, manifest: &Manifest) -> ServerStatus {
     let install_kind = match spec.kind {
         catalog::InstallKind::GithubGz | catalog::InstallKind::GithubZip => "github",
         catalog::InstallKind::Npm => "npm",
-        catalog::InstallKind::PipVenv => "pip",
         catalog::InstallKind::GoInstall => "go",
         catalog::InstallKind::Composer => "composer",
     }
@@ -166,12 +165,15 @@ fn which(name: &str) -> Option<PathBuf> {
     for dir in std::env::split_paths(&path_var) {
         #[cfg(windows)]
         {
-            for ext in ["", ".exe", ".cmd", ".bat"] {
-                let candidate = if ext.is_empty() || name.ends_with(ext) {
-                    dir.join(name)
-                } else {
-                    dir.join(format!("{name}{ext}"))
-                };
+            // Only `.exe` / `.cmd` / `.bat` can be spawned. The extensionless
+            // sibling (npm's `npm`, `composer`) is a sh script, so a bare name
+            // must resolve through the extensions, never to that file.
+            let exact = dir.join(name);
+            if name.contains('.') && exact.is_file() {
+                return Some(exact);
+            }
+            for ext in [".exe", ".cmd", ".bat"] {
+                let candidate = dir.join(format!("{name}{ext}"));
                 if candidate.is_file() {
                     return Some(candidate);
                 }

@@ -41,14 +41,13 @@ pub fn install_one(id: &str, force: bool, mut progress: Option<ProgressFn>) -> R
         }
     }
 
-    let result = if matches!(id, "lua-language-server" | "zls" | "nil") {
+    let result = if matches!(id, "lua-language-server" | "zls") {
         crate::coding::provision::install(id)
     } else {
         match spec.kind {
             InstallKind::GithubGz => install_github_gz(spec, &mut progress),
             InstallKind::GithubZip => install_github_zip(spec, &mut progress),
             InstallKind::Npm => install_npm(spec, &mut progress),
-            InstallKind::PipVenv => install_pip_venv(spec, &mut progress),
             InstallKind::GoInstall => install_go(spec, &mut progress),
             InstallKind::Composer => crate::coding::provision::install(spec.id),
         }
@@ -137,7 +136,6 @@ fn managed_install_supported(spec: &ServerSpec) -> bool {
             | "phpactor"
             | "lua-language-server"
             | "zls"
-            | "nil"
     )
 }
 
@@ -422,12 +420,8 @@ fn find_named_file(root: &Path, name: &str) -> Option<PathBuf> {
 // ─── npm --prefix ────────────────────────────────────────────────────────────
 
 fn install_npm(spec: &ServerSpec, progress: &mut Option<ProgressFn>) -> Result<()> {
-    let npm = resolve::find_on_path("npm").ok_or_else(|| {
-        anyhow!(
-            "npm not found on PATH — install Node.js to manage {}",
-            spec.id
-        )
-    })?;
+    let npm = crate::coding::runtimes::ensure_tool("npm")
+        .with_context(|| format!("Node.js is required to manage {}", spec.id))?;
     let dir = prepare_server_dir(spec.id)?;
     report(progress, spec.id, 10, None);
     // `-g --prefix` is required: without `-g`, modern npm only links bins under
@@ -438,14 +432,17 @@ fn install_npm(spec: &ServerSpec, progress: &mut Option<ProgressFn>) -> Result<(
         dir.display(),
         spec.package
     );
-    let status = Command::new(&npm)
-        .args([
-            "install",
-            "-g",
-            "--prefix",
-            dir.to_str().ok_or_else(|| anyhow!("non-utf8 path"))?,
-            spec.package,
-        ])
+    let mut cmd = Command::new(&npm);
+    cmd.env("PATH", crate::coding::environment::host_path());
+    cmd.args([
+        "install",
+        "-g",
+        "--prefix",
+        dir.to_str().ok_or_else(|| anyhow!("non-utf8 path"))?,
+        spec.package,
+    ]);
+    crate::tool::shell::no_console_window(&mut cmd);
+    let status = cmd
         .status()
         .with_context(|| format!("spawn npm for {}", spec.id))?;
     if !status.success() {
@@ -473,52 +470,57 @@ fn install_npm(spec: &ServerSpec, progress: &mut Option<ProgressFn>) -> Result<(
 
 /// Locate an npm-installed binary under a `--prefix` root.
 ///
-/// Search order (covers `-g --prefix`, non-global, and nested package bins):
-/// 1. `<prefix>/bin/<name>`  (npm -g --prefix layout; often a symlink)
-/// 2. `<prefix>/node_modules/.bin/<name>`  (local --prefix without -g)
-/// 3. `<prefix>/lib/node_modules/*/**/bin/<name>`  (global package payload)
-/// 4. recursive basename match for `<name>`, `<name>.js`, `<name>.cmd`
+/// Unix (`-g --prefix`): `bin/<name>` symlink, then the package payload under
+/// `lib/node_modules`, then a whole-prefix walk (`<name>`, `<name>.js`).
+///
+/// Windows: npm writes `<name>.cmd` / `.ps1` / extensionless sh shims into the
+/// prefix root and the payload under `node_modules/`. Only `.cmd`/`.exe` can be
+/// spawned, so `.js` and extensionless files are never returned there.
 fn find_npm_binary(prefix: &Path, binary: &str) -> Option<PathBuf> {
-    let names = npm_binary_names(binary);
+    find_npm_binary_for(prefix, binary, cfg!(windows))
+}
+
+fn find_npm_binary_for(prefix: &Path, binary: &str, windows: bool) -> Option<PathBuf> {
+    let names = npm_binary_names(binary, windows);
+    let mut dirs = vec![
+        prefix.to_path_buf(),
+        prefix.join("bin"),
+        prefix.join("node_modules").join(".bin"),
+    ];
+    if !windows {
+        dirs.remove(0);
+    }
     for name in &names {
-        let candidates = [
-            prefix.join("bin").join(name),
-            prefix.join("node_modules").join(".bin").join(name),
-        ];
-        for c in candidates {
-            if path_is_runnable(&c) {
-                return Some(c);
+        for dir in &dirs {
+            let candidate = dir.join(name);
+            if path_is_runnable(&candidate) {
+                return Some(candidate);
             }
         }
+    }
+    if windows {
+        // Last resort: the shim sits somewhere unexpected.
+        return names
+            .iter()
+            .find_map(|name| find_named_file(prefix, name))
+            .filter(|p| path_is_runnable(p));
     }
     // Global npm puts the package under lib/node_modules/<pkg>/…; the bin/
     // shim normally points there, but if the shim is missing, dig for the
     // package-local bin script (e.g. bin/vtsls.js, bin/vscode-json-language-server).
-    let lib_nm = prefix.join("lib").join("node_modules");
-    if lib_nm.is_dir() {
+    for root in [
+        prefix.join("lib").join("node_modules"),
+        prefix.join("node_modules"),
+        prefix.to_path_buf(),
+    ] {
+        if !root.is_dir() {
+            continue;
+        }
         for name in &names {
-            if let Some(found) = find_named_file(&lib_nm, name) {
+            if let Some(found) = find_named_file(&root, name) {
                 if path_is_runnable(&found) {
                     return Some(found);
                 }
-            }
-        }
-    }
-    let local_nm = prefix.join("node_modules");
-    if local_nm.is_dir() {
-        for name in &names {
-            if let Some(found) = find_named_file(&local_nm, name) {
-                if path_is_runnable(&found) {
-                    return Some(found);
-                }
-            }
-        }
-    }
-    // Last resort: whole prefix walk.
-    for name in &names {
-        if let Some(found) = find_named_file(prefix, name) {
-            if path_is_runnable(&found) {
-                return Some(found);
             }
         }
     }
@@ -531,247 +533,37 @@ fn path_is_runnable(p: &Path) -> bool {
     p.is_file()
 }
 
-fn npm_binary_names(binary: &str) -> Vec<String> {
+fn npm_binary_names(binary: &str, windows: bool) -> Vec<String> {
+    if windows {
+        if binary.ends_with(".cmd") || binary.ends_with(".exe") {
+            return vec![binary.to_string()];
+        }
+        return vec![format!("{binary}.cmd"), format!("{binary}.exe")];
+    }
     let mut names = vec![binary.to_string()];
     // Package bins are often `name.js` (e.g. @vtsls/language-server → bin/vtsls.js).
     if !binary.ends_with(".js") {
         names.push(format!("{binary}.js"));
     }
-    #[cfg(windows)]
-    {
-        if !binary.ends_with(".cmd") {
-            names.push(format!("{binary}.cmd"));
-        }
-        if !binary.ends_with(".exe") {
-            names.push(format!("{binary}.exe"));
-        }
-        if !binary.ends_with(".ps1") {
-            names.push(format!("{binary}.ps1"));
-        }
-    }
     names
-}
-
-// ─── pip venv (basedpyright) ─────────────────────────────────────────────────
-
-/// Names tried in each PATH directory. On Windows `python.exe` comes first so a
-/// real CPython install is seen before a later `python3.exe`. The Microsoft
-/// Store alias is skipped separately (it is often named `python3.exe`).
-fn python_exe_names() -> &'static [&'static str] {
-    if cfg!(windows) {
-        &["python.exe", "python3.exe"]
-    } else {
-        &["python3", "python"]
-    }
-}
-
-/// True for `%LOCALAPPDATA%\Microsoft\WindowsApps\...`, the App Execution Alias
-/// that exits 9009 instead of running Python.
-fn is_windowsapps_path(path: &Path) -> bool {
-    let normalized = path
-        .to_string_lossy()
-        .replace('/', "\\")
-        .to_ascii_lowercase();
-    normalized.contains("\\microsoft\\windowsapps\\")
-}
-
-/// Store aliases are zero-byte reparse points. Reject those, and anything under
-/// WindowsApps, before spawning.
-fn rejected_python_candidate(path: &Path) -> bool {
-    if is_windowsapps_path(path) {
-        return true;
-    }
-    matches!(std::fs::metadata(path), Ok(meta) if meta.len() == 0)
-}
-
-/// `python -c` prints `major.minor`. basedpyright requires 3.10+.
-fn python_version_at_least_3_10(text: &str) -> bool {
-    let nums: Vec<u32> = text
-        .split(|c: char| !c.is_ascii_digit())
-        .filter(|s| !s.is_empty())
-        .filter_map(|s| s.parse().ok())
-        .take(2)
-        .collect();
-    match nums.as_slice() {
-        [major, minor] => *major > 3 || (*major == 3 && *minor >= 10),
-        _ => false,
-    }
-}
-
-fn python_version_text(program: &Path, prefix_args: &[&str]) -> String {
-    let mut cmd = Command::new(program);
-    cmd.args(prefix_args);
-    cmd.args(["-c", "import sys; print('%d.%d' % sys.version_info[:2])"]);
-    crate::tool::shell::no_console_window(&mut cmd);
-    match cmd.output() {
-        Ok(output) if output.status.success() => {
-            String::from_utf8_lossy(&output.stdout).into_owned()
-        }
-        _ => String::new(),
-    }
-}
-
-fn acceptable_python(path: &Path) -> bool {
-    path.is_file()
-        && !rejected_python_candidate(path)
-        && python_version_at_least_3_10(&python_version_text(path, &[]))
-}
-
-/// Absolute `KOMA_PYTHON_EXECUTABLE` from the language pack, when it is a real
-/// interpreter. A bare `python` name is ignored so PATH search can run.
-fn python_from_env() -> Option<PathBuf> {
-    let raw = std::env::var("KOMA_PYTHON_EXECUTABLE").ok()?;
-    let path = PathBuf::from(raw.trim());
-    if !path.is_absolute() {
-        return None;
-    }
-    acceptable_python(&path).then_some(path)
-}
-
-fn python_on_path() -> Option<PathBuf> {
-    let path_var = crate::coding::environment::host_path();
-    for dir in std::env::split_paths(&path_var) {
-        for name in python_exe_names() {
-            let candidate = dir.join(name);
-            if is_windowsapps_path(&candidate) {
-                continue;
-            }
-            if acceptable_python(&candidate) {
-                return Some(candidate);
-            }
-        }
-    }
-    None
-}
-
-/// `py -3` prints the real interpreter. Used when Python is installed but not
-/// on PATH (common right after a winget install).
-#[cfg(windows)]
-fn python_via_py_launcher() -> Option<PathBuf> {
-    let py = resolve::find_on_path("py")?;
-    if rejected_python_candidate(&py) {
-        return None;
-    }
-    let text = python_version_text(&py, &["-3"]);
-    if !python_version_at_least_3_10(&text) {
-        return None;
-    }
-    let mut cmd = Command::new(&py);
-    cmd.args(["-3", "-c", "import sys; print(sys.executable)"]);
-    crate::tool::shell::no_console_window(&mut cmd);
-    let output = cmd.output().ok()?;
-    if !output.status.success() {
-        return None;
-    }
-    let exe = String::from_utf8_lossy(&output.stdout).trim().to_string();
-    if exe.is_empty() {
-        return None;
-    }
-    let path = PathBuf::from(exe);
-    acceptable_python(&path).then_some(path)
-}
-
-fn find_python_for_pip(spec_id: &str) -> Result<PathBuf> {
-    if let Some(path) = python_from_env() {
-        return Ok(path);
-    }
-    if let Some(path) = python_on_path() {
-        return Ok(path);
-    }
-    #[cfg(windows)]
-    if let Some(path) = python_via_py_launcher() {
-        return Ok(path);
-    }
-    bail!(
-        "Python >= 3.10 not found on PATH — install Python 3.10 or newer to manage {spec_id}. \
-         The Microsoft Store python alias is ignored."
-    )
-}
-
-fn output_tail(output: &std::process::Output) -> String {
-    let mut text = String::from_utf8_lossy(&output.stderr).trim().to_string();
-    if text.is_empty() {
-        text = String::from_utf8_lossy(&output.stdout).trim().to_string();
-    }
-    const MAX: usize = 2000;
-    let count = text.chars().count();
-    if count > MAX {
-        text = text.chars().skip(count - MAX).collect();
-    }
-    text
-}
-
-fn run_checked(cmd: &mut Command, label: &str) -> Result<()> {
-    crate::tool::shell::no_console_window(cmd);
-    let output = cmd.output().with_context(|| format!("spawn {label}"))?;
-    if output.status.success() {
-        return Ok(());
-    }
-    let detail = output_tail(&output);
-    if detail.is_empty() {
-        bail!("{label} failed (status {})", output.status);
-    }
-    bail!("{label} failed (status {})\n{detail}", output.status)
-}
-
-fn install_pip_venv(spec: &ServerSpec, progress: &mut Option<ProgressFn>) -> Result<()> {
-    let python = find_python_for_pip(spec.id)?;
-    let dir = prepare_server_dir(spec.id)?;
-    let venv = dir.join("venv");
-    report(progress, spec.id, 10, None);
-    println!("python -m venv {} ...", venv.display());
-    let mut venv_cmd = Command::new(&python);
-    venv_cmd.args(["-m", "venv"]).arg(&venv);
-    run_checked(&mut venv_cmd, "python -m venv")?;
-    report(progress, spec.id, 40, None);
-    let pip = venv_python(&venv);
-    println!("pip install {} ...", spec.package);
-    let mut pip_cmd = Command::new(&pip);
-    pip_cmd.args(["-m", "pip", "install", "--upgrade", spec.package]);
-    run_checked(&mut pip_cmd, &format!("pip install {}", spec.package))?;
-    report(progress, spec.id, 90, None);
-    let bin_rel = format!(
-        "venv/{}/{}",
-        if cfg!(windows) { "Scripts" } else { "bin" },
-        exe_name(spec.binary)
-    );
-    let bin_path = dir.join(&bin_rel);
-    if !bin_path.exists() {
-        bail!(
-            "pip install succeeded but {} not found at {}",
-            spec.binary,
-            bin_path.display()
-        );
-    }
-    ensure_executable(&bin_path)?;
-    write_manifest(spec, "latest", "pip", &bin_rel)?;
-    println!("installed {} → {}", spec.id, bin_path.display());
-    Ok(())
-}
-
-fn venv_python(venv: &Path) -> PathBuf {
-    if cfg!(windows) {
-        venv.join("Scripts").join("python.exe")
-    } else {
-        venv.join("bin").join("python")
-    }
 }
 
 // ─── go install (gopls) ──────────────────────────────────────────────────────
 
 fn install_go(spec: &ServerSpec, progress: &mut Option<ProgressFn>) -> Result<()> {
-    let go = resolve::find_on_path("go")
-        .ok_or_else(|| anyhow!("go not found on PATH — install Go to manage {}", spec.id))?;
+    let go = crate::coding::runtimes::ensure_tool("go")
+        .with_context(|| format!("Go is required to manage {}", spec.id))?;
     let dir = prepare_server_dir(spec.id)?;
     let bin_dir = dir.join("bin");
     report(progress, spec.id, 10, None);
     let module = format!("{}@latest", spec.package);
     println!("GOBIN={} go install {module} ...", bin_dir.display());
-    let status = Command::new(&go)
-        .args(["install", &module])
+    let mut cmd = Command::new(&go);
+    cmd.args(["install", &module])
         .env("GOBIN", &bin_dir)
-        .status()
-        .context("spawn go install")?;
+        .env("PATH", crate::coding::environment::host_path());
+    crate::tool::shell::no_console_window(&mut cmd);
+    let status = cmd.status().context("spawn go install")?;
     if !status.success() {
         bail!("go install {module} failed (status {status})");
     }
@@ -855,9 +647,31 @@ mod tests {
 
     #[test]
     fn npm_binary_names_include_js_shim() {
-        let names = npm_binary_names("vtsls");
+        let names = npm_binary_names("vtsls", false);
         assert!(names.iter().any(|n| n == "vtsls"));
         assert!(names.iter().any(|n| n == "vtsls.js"));
+    }
+
+    #[test]
+    fn windows_npm_layout_picks_the_cmd_shim() {
+        // `npm install -g --prefix <dir>` on Windows: shims in the prefix root,
+        // payload (with a `.js` bin and an extensionless sh shim) elsewhere.
+        let tmp = tempfile_dir("koma-lsp-npm-win");
+        let pkg_bin = tmp
+            .join("node_modules")
+            .join("@vtsls")
+            .join("language-server")
+            .join("bin");
+        std::fs::create_dir_all(&pkg_bin).unwrap();
+        std::fs::write(pkg_bin.join("vtsls.js"), b"#!/usr/bin/env node\n").unwrap();
+        std::fs::write(tmp.join("vtsls"), b"#!/bin/sh\n").unwrap();
+        std::fs::write(tmp.join("vtsls.cmd"), b"@node\r\n").unwrap();
+        std::fs::write(tmp.join("vtsls.ps1"), b"node\r\n").unwrap();
+        let found = find_npm_binary_for(&tmp, "vtsls", true).expect("cmd shim");
+        assert_eq!(found, tmp.join("vtsls.cmd"));
+        std::fs::remove_file(tmp.join("vtsls.cmd")).unwrap();
+        assert!(find_npm_binary_for(&tmp, "vtsls", true).is_none());
+        let _ = std::fs::remove_dir_all(&tmp);
     }
 
     #[test]
@@ -941,69 +755,8 @@ mod tests {
     }
 
     #[test]
-    fn windowsapps_python_alias_is_rejected() {
-        let alias = Path::new(r"C:\Users\a\AppData\Local\Microsoft\WindowsApps\python3.exe");
-        assert!(is_windowsapps_path(alias));
-        assert!(rejected_python_candidate(alias));
-        let real = Path::new(r"C:\Users\a\AppData\Local\Programs\Python\Python313\python.exe");
-        assert!(!is_windowsapps_path(real));
-    }
-
-    #[test]
-    fn python_version_gate_requires_3_10() {
-        assert!(python_version_at_least_3_10("3.10\n"));
-        assert!(python_version_at_least_3_10("3.13"));
-        assert!(!python_version_at_least_3_10("3.9"));
-        assert!(!python_version_at_least_3_10("2.7"));
-        assert!(!python_version_at_least_3_10(""));
-    }
-
-    #[test]
-    fn empty_file_is_rejected_python_candidate() {
-        let dir = tempfile_dir("koma-py-empty");
-        let file = dir.join(if cfg!(windows) {
-            "python.exe"
-        } else {
-            "python"
-        });
-        std::fs::write(&file, b"").unwrap();
-        assert!(rejected_python_candidate(&file));
-        std::fs::write(&file, b"not-empty").unwrap();
-        assert!(!rejected_python_candidate(&file));
-        let _ = std::fs::remove_dir_all(&dir);
-    }
-
-    #[test]
-    fn python_candidates_follow_platform_name_order() {
-        let dir = tempfile_dir("koma-py-order");
-        for name in python_exe_names() {
-            std::fs::write(dir.join(name), b"x").unwrap();
-        }
-        let got: Vec<String> = python_exe_names()
-            .iter()
-            .map(|name| dir.join(name))
-            .filter(|path| path.is_file() && !rejected_python_candidate(path))
-            .map(|path| path.file_name().unwrap().to_string_lossy().into_owned())
-            .collect();
-        let expect: Vec<String> = python_exe_names()
-            .iter()
-            .map(|s| (*s).to_string())
-            .collect();
-        assert_eq!(got, expect);
-        assert_eq!(
-            got[0],
-            if cfg!(windows) {
-                "python.exe"
-            } else {
-                "python3"
-            }
-        );
-        let _ = std::fs::remove_dir_all(&dir);
-    }
-
-    #[test]
     fn additional_language_servers_have_managed_installers() {
-        for id in ["lua-language-server", "zls", "nil", "phpactor"] {
+        for id in ["lua-language-server", "zls", "phpactor"] {
             let spec = catalog::find(id).expect(id);
             assert!(managed_install_supported(spec), "{id}");
         }

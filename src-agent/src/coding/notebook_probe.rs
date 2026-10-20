@@ -19,8 +19,7 @@ fn default_langserver() -> PathBuf {
     if let Ok(p) = std::env::var("KOMA_BASED_PYRIGHT") {
         return PathBuf::from(p);
     }
-    dirs::home_dir()
-        .map(|h| h.join(".koma/lsp/basedpyright/venv/bin/basedpyright-langserver"))
+    crate::lsp::manifest::managed_binary_path("basedpyright", "basedpyright-langserver")
         .unwrap_or_else(|| PathBuf::from("basedpyright-langserver"))
 }
 

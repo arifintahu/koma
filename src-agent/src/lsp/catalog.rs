@@ -14,8 +14,6 @@ pub enum InstallKind {
     GithubZip,
     /// `npm i -g --prefix ~/.koma/lsp/<id> <pkg>` (needs Node/npm).
     Npm,
-    /// Isolated venv + `pip install <pkg>` (needs Python 3).
-    PipVenv,
     /// `GOBIN=... go install <module>@latest` (needs Go).
     GoInstall,
     /// Composer standalone project (Phpactor).
@@ -39,7 +37,6 @@ pub struct ServerSpec {
     ///
     /// - Github*: `"owner/repo"`
     /// - Npm: npm package name
-    /// - PipVenv: pip package name
     /// - GoInstall: `module@latest` path (without the `@latest` suffix stored here)
     pub package: &'static str,
     /// Extra argv after the binary when spawning (e.g. `["--stdio"]` for node CLIs).
@@ -74,7 +71,7 @@ pub const CATALOG: &[ServerSpec] = &[
         name: "BasedPyright",
         binary: "basedpyright-langserver",
         extensions: &["py", "pyi"],
-        kind: InstallKind::PipVenv,
+        kind: InstallKind::Npm,
         package: "basedpyright",
         args: &["--stdio"],
     },
@@ -161,15 +158,6 @@ pub const CATALOG: &[ServerSpec] = &[
         extensions: &["zig", "zon"],
         kind: InstallKind::GithubGz,
         package: "zigtools/zls",
-        args: &[],
-    },
-    ServerSpec {
-        id: "nil",
-        name: "nil (Nix)",
-        binary: "nil",
-        extensions: &["nix"],
-        kind: InstallKind::GithubGz,
-        package: "oxalica/nil",
         args: &[],
     },
 ];

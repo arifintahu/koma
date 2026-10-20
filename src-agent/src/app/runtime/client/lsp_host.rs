@@ -190,6 +190,9 @@ fn is_managed_installable(id: &str) -> bool {
             | "vscode-langservers"
             | "bash-language-server"
             | "intelephense"
+            | "phpactor"
+            | "lua-language-server"
+            | "zls"
     )
 }
 

@@ -37,7 +37,7 @@ fn client() -> Result<reqwest::blocking::Client> {
         .timeout(std::time::Duration::from_secs(300))
         .build()?)
 }
-fn download(url: &str, limit: u64) -> Result<Vec<u8>> {
+pub(super) fn download(url: &str, limit: u64) -> Result<Vec<u8>> {
     let response = client()?.get(url).send()?.error_for_status()?;
     anyhow::ensure!(
         response.content_length().is_none_or(|n| n <= limit),
@@ -51,7 +51,7 @@ fn download(url: &str, limit: u64) -> Result<Vec<u8>> {
     );
     Ok(bytes)
 }
-fn json_url(url: &str) -> Result<Value> {
+pub(super) fn json_url(url: &str) -> Result<Value> {
     Ok(serde_json::from_slice(&download(url, 4 * 1024 * 1024)?)?)
 }
 fn safe_name(path: &Path) -> bool {
@@ -63,7 +63,7 @@ fn safe_name(path: &Path) -> bool {
             )
         })
 }
-fn extract(bytes: &[u8], name: &str, dest: &Path) -> Result<()> {
+pub(super) fn extract(bytes: &[u8], name: &str, dest: &Path) -> Result<()> {
     let mut total = 0u64;
     if name.ends_with(".zip") || name.ends_with(".vsix") {
         let mut archive = zip::ZipArchive::new(std::io::Cursor::new(bytes))?;
@@ -133,7 +133,7 @@ fn extract(bytes: &[u8], name: &str, dest: &Path) -> Result<()> {
     }
     Ok(())
 }
-fn find_file(root: &Path, name: &str) -> Result<PathBuf> {
+pub(super) fn find_file(root: &Path, name: &str) -> Result<PathBuf> {
     for entry in ignore::WalkBuilder::new(root)
         .hidden(false)
         .ignore(false)
@@ -151,13 +151,21 @@ fn find_file(root: &Path, name: &str) -> Result<PathBuf> {
     anyhow::bail!("Installed component does not contain {name}")
 }
 fn run(command: &str, args: &[String], cwd: &Path, env: &[(&str, String)]) -> Result<()> {
-    let status = Command::new(command)
-        .args(args)
+    // Bare names resolve through the host PATH (`.cmd`/`.bat` shims, runtimes
+    // installed after koma started, koma-managed runtimes).
+    let program = if Path::new(command).components().count() == 1 {
+        crate::lsp::resolve::find_on_path(command).unwrap_or_else(|| command.into())
+    } else {
+        command.into()
+    };
+    let mut cmd = Command::new(program);
+    cmd.args(args)
         .current_dir(cwd)
+        .env("PATH", super::environment::host_path())
         .envs(env.iter().map(|(k, v)| (*k, v)))
-        .stdin(std::process::Stdio::null())
-        .status()
-        .with_context(|| format!("Start {command}"))?;
+        .stdin(std::process::Stdio::null());
+    crate::tool::shell::no_console_window(&mut cmd);
+    let status = cmd.status().with_context(|| format!("Start {command}"))?;
     anyhow::ensure!(status.success(), "{command} failed with {status}");
     Ok(())
 }
@@ -169,9 +177,15 @@ fn github_asset(id: &str, dest: &Path) -> Result<(PathBuf, String, String)> {
         _ => anyhow::bail!("Unknown release component"),
     };
     let release = if id == "zls" {
-        let zig = std::env::var("KOMA_ZIG_EXECUTABLE").unwrap_or_else(|_| "zig".into());
-        let output = Command::new(zig)
-            .arg("version")
+        let zig = match std::env::var_os("KOMA_ZIG_EXECUTABLE") {
+            Some(path) => PathBuf::from(path),
+            None => super::runtimes::ensure_tool("zig")
+                .context("Zig must be installed before selecting ZLS")?,
+        };
+        let mut zig_version = Command::new(zig);
+        zig_version.arg("version");
+        crate::tool::shell::no_console_window(&mut zig_version);
+        let output = zig_version
             .output()
             .context("Zig must be installed before selecting ZLS")?;
         anyhow::ensure!(output.status.success(), "Could not read Zig version");
@@ -298,6 +312,37 @@ fn vsix(id: &str, dest: &Path) -> Result<(PathBuf, String, String)> {
         hash,
     ))
 }
+/// Phpactor ships a self-contained phar; run it with `php` (see
+/// `spawn_server_process`), so no Composer or checkout is needed.
+fn phpactor_phar(dest: &Path) -> Result<(PathBuf, String, String)> {
+    super::runtimes::ensure_tool("php").context("PHP must be installed before selecting Phpactor")?;
+    let release = json_url("https://api.github.com/repos/phpactor/phpactor/releases/latest")?;
+    let asset = release["assets"]
+        .as_array()
+        .context("Release has no assets")?
+        .iter()
+        .find(|a| a["name"] == "phpactor.phar")
+        .context("Phpactor release has no phar")?;
+    let url = asset["browser_download_url"]
+        .as_str()
+        .context("Missing release URL")?;
+    println!("Downloading phpactor: {url}");
+    let bytes = download(url, 128 * 1024 * 1024)?;
+    let hash = format!("{:x}", Sha256::digest(&bytes));
+    if let Some(expected) = asset["digest"]
+        .as_str()
+        .and_then(|s| s.strip_prefix("sha256:"))
+    {
+        anyhow::ensure!(hash == expected, "Release digest mismatch");
+    }
+    let path = dest.join("phpactor.phar");
+    std::fs::write(&path, &bytes)?;
+    Ok((
+        path,
+        release["tag_name"].as_str().unwrap_or("release").into(),
+        hash,
+    ))
+}
 pub(crate) fn install(id: &str) -> Result<()> {
     anyhow::ensure!(
         matches!(
@@ -307,7 +352,6 @@ pub(crate) fn install(id: &str) -> Result<()> {
                 | "js-debug"
                 | "debugpy"
                 | "delve"
-                | "nil"
                 | "phpactor"
                 | "php-debug"
                 | "bash-debug"
@@ -377,50 +421,7 @@ pub(crate) fn install(id: &str) -> Result<()> {
                 String::new(),
             )
         }
-        "nil" => {
-            run(
-                "cargo",
-                &[
-                    "install".into(),
-                    "--locked".into(),
-                    "--git".into(),
-                    "https://github.com/oxalica/nil".into(),
-                    "--root".into(),
-                    version_dir.to_string_lossy().into(),
-                    "nil".into(),
-                ],
-                &version_dir,
-                &[],
-            )?;
-            (
-                version_dir.join(if cfg!(windows) {
-                    "bin/nil.exe"
-                } else {
-                    "bin/nil"
-                }),
-                "cargo-resolved".into(),
-                String::new(),
-            )
-        }
-        "phpactor" => {
-            run(
-                "composer",
-                &[
-                    "create-project".into(),
-                    "--no-interaction".into(),
-                    "--no-dev".into(),
-                    "phpactor/phpactor".into(),
-                    "phpactor".into(),
-                ],
-                &version_dir,
-                &[],
-            )?;
-            (
-                version_dir.join("phpactor/bin/phpactor"),
-                "composer-resolved".into(),
-                String::new(),
-            )
-        }
+        "phpactor" => phpactor_phar(&version_dir)?,
         _ => unreachable!(),
     };
     anyhow::ensure!(
