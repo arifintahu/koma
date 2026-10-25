@@ -44,7 +44,7 @@ export function DesignLayers({
   useEffect(() => {
     if (!selectedId) return
     document.querySelector(`[data-layer-id="${CSS.escape(selectedId)}"]`)?.scrollIntoView({ block: 'nearest' })
-  }, [collapsed, doc, selectedId])
+  }, [collapsed, selectedId])
   const screens = doc.screens.slice().reverse()
   return (
     <aside className="flex min-h-0 flex-1 flex-col" onContextMenu={(event) => event.preventDefault()}>

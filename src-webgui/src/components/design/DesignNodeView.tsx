@@ -1,4 +1,4 @@
-import type { PointerEvent as ReactPointerEvent } from 'react'
+import { memo, type PointerEvent as ReactPointerEvent } from 'react'
 import {
   cornerPixels,
   designLayerName,
@@ -39,7 +39,35 @@ import {
   weightCss,
 } from './tabShared'
 
-export function DesignNodeView({
+export type DesignNodeHandlers = {
+  onSelect: (id: string, event: ReactPointerEvent<HTMLDivElement>) => void
+  onEnterContainer: (id: string, event: ReactPointerEvent<HTMLDivElement>) => void
+  onEdit: (id: string) => void
+  onOpenFill: (id: string) => void
+  onText: (id: string, text: string) => void
+  onTextRange: (id: string, start: number, end: number) => void
+  onTextBlur: () => void
+  onMenu: (id: string, clientX: number, clientY: number) => void
+}
+
+/** Handlers that never change identity and call whatever the ref holds now, so memoized nodes keep their props. */
+export function stableNodeHandlers(ref: { current: DesignNodeHandlers | null }): DesignNodeHandlers {
+  return {
+    onSelect: (id, event) => ref.current?.onSelect(id, event),
+    onEnterContainer: (id, event) => ref.current?.onEnterContainer(id, event),
+    onEdit: (id) => ref.current?.onEdit(id),
+    onOpenFill: (id) => ref.current?.onOpenFill(id),
+    onText: (id, text) => ref.current?.onText(id, text),
+    onTextRange: (id, start, end) => ref.current?.onTextRange(id, start, end),
+    onTextBlur: () => ref.current?.onTextBlur(),
+    onMenu: (id, clientX, clientY) => ref.current?.onMenu(id, clientX, clientY),
+  }
+}
+
+const NO_IDS: string[] = []
+
+/** Re-renders only when its node, selection, or paint context changes. Unchanged siblings keep their object identity. */
+export const DesignNodeView = memo(function DesignNodeView({
   doc,
   node,
   selectedIds,
@@ -59,14 +87,12 @@ export function DesignNodeView({
   onEnterContainer,
   clipPath,
   maskStyle,
-  zoom = 1,
 }: {
   doc: DesignDoc
   node: DesignNode
   selectedIds: string[]
   editing: string | null
   dragCursor: string | null
-  zoom?: number
   locked?: boolean
   enteredContainerId?: string | null
   overrideTargetId?: string | null
@@ -123,7 +149,7 @@ export function DesignNodeView({
   const opaqueUntilEnter = node.kind === 'group' || node.kind === 'instance'
   const enteredHere = enteredContainerId === node.id
   const lockChildren = locked || !!node.locked || (opaqueUntilEnter && !enteredHere)
-  const childIds = lockChildren ? [] : selectedIds
+  const childIds = lockChildren ? NO_IDS : selectedIds
   const hitHere = !locked
   const textColor = paintCss(doc, style.color, TEXT_COLOR_DEFAULT)
   const textTypeStyle = {
@@ -340,7 +366,6 @@ export function DesignNodeView({
             selectedIds={childIds}
             editing={editing}
             dragCursor={dragCursor}
-            zoom={zoom}
             locked={lockChildren}
             enteredContainerId={enteredContainerId}
             overrideTargetId={overrideTargetId}
@@ -360,7 +385,7 @@ export function DesignNodeView({
       </div>
     </div>
   )
-}
+})
 
 function StrokeShape({
   doc,

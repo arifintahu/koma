@@ -1258,6 +1258,21 @@ export function frameAtPoint(doc: DesignDoc, x: number, y: number, ignoreId: str
   return null
 }
 
+/**
+ * True when two documents hold the same content. Shared parts compare by identity,
+ * so only the screens and fields an edit replaced are stringified.
+ */
+export function sameDesign(a: DesignDoc, b: DesignDoc): boolean {
+  if (a === b) return true
+  const keys = new Set([...Object.keys(a), ...Object.keys(b)]) as Set<keyof DesignDoc>
+  for (const key of keys) {
+    if (key === 'screens') continue
+    if (a[key] !== b[key] && JSON.stringify(a[key]) !== JSON.stringify(b[key])) return false
+  }
+  if (a.screens.length !== b.screens.length) return false
+  return a.screens.every((screen, index) => screen === b.screens[index] || JSON.stringify(screen) === JSON.stringify(b.screens[index]))
+}
+
 export function updateDesignNode(doc: DesignDoc, id: string, fn: (node: DesignNode) => DesignNode): DesignDoc {
   let changed = false
   const screens = doc.screens.map((screen) => {
@@ -1535,9 +1550,20 @@ export function resetInstanceOverrides(doc: DesignDoc, id: string): DesignDoc {
 
 /** Lay out the chosen variant and paint this instance's text and fill overrides. */
 export function resolveInstanceTree(doc: DesignDoc, node: DesignNode): DesignNode | null {
-  if (node.kind !== 'instance' || !node.component) return null
+  if (node.kind !== 'instance' || !node.component || resolving.has(node.component)) return null
+  const cached = resolvedInstances.get(node)
+  if (cached && cached.components === doc.components && cached.tokens === doc.tokens && cached.mode === doc.mode) return cached.tree
+  const tree = resolveInstanceUncached(doc, node)
+  resolvedInstances.set(node, { components: doc.components, tokens: doc.tokens, mode: doc.mode, tree })
+  return tree
+}
+
+/** Resolved trees per instance node. Nodes are immutable, so a node plus the inputs it reads identifies its tree. */
+const resolvedInstances = new WeakMap<DesignNode, { components: DesignComponent[]; tokens: DesignToken[]; mode: string; tree: DesignNode | null }>()
+
+function resolveInstanceUncached(doc: DesignDoc, node: DesignNode): DesignNode | null {
   const component = doc.components.find((item) => item.id === node.component)
-  if (!component || resolving.has(component.id)) return null
+  if (!component) return null
   const variant = pickVariant(component, node.variant)
   if (!variant) return null
   const overridden = applyOverrides(variant.node, { text: node.text, fill: node.fill, overrides: node.overrides })
@@ -1615,16 +1641,25 @@ export function syncLinkedComponents(doc: DesignDoc): DesignDoc {
     let touched = false
     const variants = component.variants.map((variant) => {
       const screen = doc.screens.find((item) => item.id === variant.node.id)
-      if (!screen) return variant
-      const node = zeroRoot(screen)
+      if (!screen || sameExceptPosition(variant.node, screen)) return variant
       touched = true
-      return { ...variant, node }
+      return { ...variant, node: zeroRoot(screen) }
     })
     if (!touched) return component
     changed = true
     return syncAxes({ ...component, variants })
   })
   return changed ? { ...doc, components } : doc
+}
+
+/** The variant root already mirrors this screen, apart from the screen's canvas position. */
+function sameExceptPosition(root: DesignNode, screen: DesignNode): boolean {
+  if (root.x !== 0 || root.y !== 0) return false
+  const keys = new Set([...Object.keys(root), ...Object.keys(screen)]) as Set<keyof DesignNode>
+  for (const key of keys) {
+    if (key !== 'x' && key !== 'y' && root[key] !== screen[key]) return false
+  }
+  return true
 }
 
 function applyLinkedScreens(screens: DesignNode[], variants: DesignVariant[]): DesignNode[] {
@@ -2401,18 +2436,29 @@ export function designSelectionCanvasBox(doc: DesignDoc, ids: string[]): DesignR
 }
 
 /** The moving union, and every other visible box. A moving node's descendants are not targets. */
-export function designSnapScene(doc: DesignDoc, ids: string[]): { moving: DesignRect; targets: DesignRect[] } | null {
+/**
+ * The moving union, and the boxes it can snap to: every root screen, plus the shapes inside the
+ * screens being moved. A moving node's descendants, shapes a clipping frame hides, and boxes outside
+ * the optional viewport are left out, so off-screen work does not pull the drag.
+ */
+export function designSnapScene(doc: DesignDoc, ids: string[], viewport?: DesignRect): { moving: DesignRect; targets: DesignRect[] } | null {
   const movingBoxes: DesignRect[] = []
+  const homes = new Set<string>()
   for (const id of designRoots(doc, ids)) {
     const box = designCanvasBox(doc, id)
     if (box) movingBoxes.push(box)
+    const root = pathToNode(doc, id)?.[0]
+    if (root) homes.add(root.id)
   }
   const moving = unionRects(movingBoxes)
   if (!moving) return null
   const targets: DesignRect[] = []
   const skip = new Set(ids)
-  for (const screen of doc.screens) collectSnapBoxes(screen, (x, y) => ({ x, y }), skip, targets)
-  return { moving, targets }
+  for (const screen of doc.screens) {
+    if (homes.has(screen.id)) collectSnapBoxes(screen, (x, y) => ({ x, y }), skip, targets, null)
+    else if (screen.visible !== false && !skip.has(screen.id)) targets.push(canvasBox(screen, (x, y) => ({ x, y })))
+  }
+  return { moving, targets: viewport ? targets.filter((box) => boxesIntersect(box, viewport)) : targets }
 }
 
 /**
@@ -2721,16 +2767,26 @@ function collectSnapBoxes(
   toCanvas: (x: number, y: number) => DesignVectorPoint,
   skip: Set<string>,
   into: DesignRect[],
+  clip: DesignRect | null,
 ) {
   if (node.visible === false || skip.has(node.id)) return
-  into.push(canvasBox(node, toCanvas))
+  const box = canvasBox(node, toCanvas)
+  if (clip && !boxesIntersect(box, clip)) return
+  into.push(box)
   if (!node.children?.length) return
   const outer = toCanvas
   const next = (x: number, y: number) => {
     const spun = spinToParent(node, x, y)
     return outer(spun.x, spun.y)
   }
-  for (const child of node.children) collectSnapBoxes(child, next, skip, into)
+  const inner = designClips(node) ? (clip ? overlapRect(box, clip) : box) : clip
+  for (const child of node.children) collectSnapBoxes(child, next, skip, into, inner)
+}
+
+function overlapRect(a: DesignRect, b: DesignRect): DesignRect {
+  const x = Math.max(a.x, b.x)
+  const y = Math.max(a.y, b.y)
+  return { x, y, w: Math.max(0, Math.min(a.x + a.w, b.x + b.w) - x), h: Math.max(0, Math.min(a.y + a.h, b.y + b.h) - y) }
 }
 
 function snapAxis(

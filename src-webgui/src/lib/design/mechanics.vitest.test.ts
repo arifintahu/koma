@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   createComponentFromFrame,
   designAxisAligned,
+  designSnapScene,
   designCanvasBox,
   designTurnSign,
   emptyDesign,
@@ -12,7 +13,9 @@ import {
   parseDesign,
   resizeDesignNode,
   resolveInstanceTree,
+  sameDesign,
   serializeDesign,
+  syncLinkedComponents,
   type DesignDoc,
   type DesignHandle,
   type DesignNode,
@@ -149,5 +152,41 @@ describe('instances', () => {
     const parsed = parseDesign(serializeDesign({ ...doc, screens: [pinned] })).doc.screens[0]
     expect(parsed).toMatchObject({ wMode: 'hug', hMode: 'hug' })
     expect(parsed.maxW).toBeUndefined()
+  })
+})
+
+describe('smoothness helpers', () => {
+  it('compares documents by content, reusing shared parts', () => {
+    const doc = docOf(rect('a'), rect('b'))
+    expect(sameDesign(doc, { ...doc, screens: [...doc.screens] })).toBe(true)
+    expect(sameDesign(doc, { ...doc, screens: [rect('a'), { ...rect('b'), x: 1 }] })).toBe(false)
+    expect(sameDesign(doc, { ...doc, grid: 4 })).toBe(false)
+  })
+
+  it('snaps only to root screens, its own screen, unclipped shapes and the viewport', () => {
+    const hidden = rect('hidden', { x: 500, y: 0, w: 20, h: 20 })
+    const home: DesignNode = { id: 'home', kind: 'frame', x: 0, y: 0, w: 200, h: 200, children: [rect('mover', { x: 10, y: 10, w: 20, h: 20 }), rect('peer', { x: 100, y: 100, w: 20, h: 20 }), hidden] }
+    const away: DesignNode = { id: 'away', kind: 'frame', x: 400, y: 0, w: 200, h: 200, children: [rect('inner', { x: 10, y: 10, w: 20, h: 20 })] }
+    const far = rect('far', { x: 5000, y: 5000, w: 10, h: 10 })
+    const doc = docOf(home, away, far)
+    const scene = designSnapScene(doc, ['mover'], { x: -50, y: -50, w: 800, h: 400 })
+    const xs = scene?.targets.map((box) => box.x).sort((a, b) => a - b)
+    // home, peer, away; not inner (another screen), hidden (clipped out) or far (off screen).
+    expect(xs).toEqual([0, 100, 400])
+  })
+
+  it('leaves linked components alone when their screen did not change', () => {
+    const doc = createComponentFromFrame(docOf({ id: 'b', kind: 'frame', x: 0, y: 0, w: 80, h: 40 }), 'b', 'cmp', () => 'x')
+    if (!doc) throw new Error('component')
+    const synced = syncLinkedComponents(doc)
+    expect(syncLinkedComponents(synced).components).toBe(synced.components)
+  })
+
+  it('caches a resolved instance until its node or component changes', () => {
+    const doc = createComponentFromFrame(docOf({ id: 'b', kind: 'frame', x: 0, y: 0, w: 80, h: 40 }), 'b', 'cmp', () => 'x')
+    const instance = doc && makeInstance(doc, 'cmp', 'i', 0, 0)
+    if (!doc || !instance) throw new Error('instance')
+    expect(resolveInstanceTree(doc, instance)).toBe(resolveInstanceTree({ ...doc, screens: [] }, instance))
+    expect(resolveInstanceTree(doc, { ...instance })).not.toBe(resolveInstanceTree(doc, instance))
   })
 })

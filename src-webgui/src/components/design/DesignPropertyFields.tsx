@@ -484,7 +484,7 @@ function penCurve(points: DesignPenPoint[], closed: boolean): string {
 }
 
 export function PenOverlay({ draft, hover, zoom }: { draft: PenDraft; hover: { x: number; y: number } | null; zoom: number }) {
-  const unit = 1 / Math.max(zoom, 0.25)
+  const unit = 1 / zoom
   const points = draft.points
   const last = points[points.length - 1]
   const first = points[0]

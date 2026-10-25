@@ -18,8 +18,12 @@ import {
 
 export const DESIGN_PATCH_DEBOUNCE_MS = 200
 export const UNDO_CAP = 50
-export const ZOOM_MIN = 0.25
+export const ZOOM_MIN = 0.02
 export const ZOOM_MAX = 64
+/** Zoom change per wheel pixel: about 14% for one mouse notch. */
+export const ZOOM_PER_PIXEL = 0.0015
+/** Idle time after a zoom gesture before the canvas re-lays out at the new zoom. */
+export const ZOOM_SETTLE_MS = 150
 export const SELECTION = 'var(--koma-accent)'
 export const SHAPE_FILL = '#d9d9d9'
 /** Default text color on the canvas — not tied to the app theme. */
@@ -163,10 +167,23 @@ export function editingDoc(stored: DesignDoc, focusId: string | null): DesignDoc
   return componentView(stored, focusId) ?? stored
 }
 
-export function projectDoc(stored: DesignDoc, focusId: string | null, view: DesignDoc): DesignDoc {
-  if (!focusId) return layoutDesign(syncLinkedComponents(view))
+/** Lay out an edited view and write it back to the stored document. A frozen id keeps the node a drag is previewing out of auto layout. */
+export function projectDoc(stored: DesignDoc, focusId: string | null, view: DesignDoc, frozenId?: string): DesignDoc {
+  if (!focusId) return layoutDesign(syncLinkedComponents(view), frozenId)
   const written = writeComponentView(stored, focusId, view)
-  return written ? layoutDesign(written) : stored
+  return written ? layoutDesign(written, frozenId) : stored
+}
+
+/**
+ * The document with no screens, kept as the same object while tokens, components, images and mode stay put.
+ * Nodes paint from it, so a geometry edit re-renders only the nodes it replaced.
+ */
+export function paintOnlyDoc(ref: { current: DesignDoc | null }, doc: DesignDoc): DesignDoc {
+  const prev = ref.current
+  if (prev && prev.tokens === doc.tokens && prev.components === doc.components && prev.images === doc.images && prev.mode === doc.mode && prev.modes === doc.modes) return prev
+  const next = { ...doc, screens: [] }
+  ref.current = next
+  return next
 }
 
 export function paintCss(doc: DesignDoc, ref: string, fallback: string): string {
