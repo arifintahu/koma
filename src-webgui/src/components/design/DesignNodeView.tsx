@@ -1,7 +1,6 @@
 import { memo, type PointerEvent as ReactPointerEvent } from 'react'
 import {
   cornerPixels,
-  designLayerName,
   nodeChrome,
   designImageSize,
   firstVisiblePaint,
@@ -41,7 +40,8 @@ import {
 import { DesignTextEditor } from './DesignTextEditor'
 
 export type DesignNodeHandlers = {
-  onSelect: (id: string, event: ReactPointerEvent<HTMLDivElement>) => void
+  /** `exact` selects this id as is, skipping the hit test at the pointer. */
+  onSelect: (id: string, event: ReactPointerEvent<HTMLDivElement>, exact?: boolean) => void
   onEnterContainer: (id: string, event: ReactPointerEvent<HTMLDivElement>) => void
   onEdit: (id: string) => void
   onOpenFill: (id: string) => void
@@ -54,7 +54,7 @@ export type DesignNodeHandlers = {
 /** Handlers that never change identity and call whatever the ref holds now, so memoized nodes keep their props. */
 export function stableNodeHandlers(ref: { current: DesignNodeHandlers | null }): DesignNodeHandlers {
   return {
-    onSelect: (id, event) => ref.current?.onSelect(id, event),
+    onSelect: (id, event, exact) => ref.current?.onSelect(id, event, exact),
     onEnterContainer: (id, event) => ref.current?.onEnterContainer(id, event),
     onEdit: (id) => ref.current?.onEdit(id),
     onOpenFill: (id) => ref.current?.onOpenFill(id),
@@ -65,13 +65,10 @@ export function stableNodeHandlers(ref: { current: DesignNodeHandlers | null }):
   }
 }
 
-const NO_IDS: string[] = []
-
-/** Re-renders only when its node, selection, or paint context changes. Unchanged siblings keep their object identity. */
+/** Re-renders only when its node or paint context changes. Unchanged siblings keep their object identity. */
 export const DesignNodeView = memo(function DesignNodeView({
   doc,
   node,
-  selectedIds,
   editing,
   dragCursor,
   locked = false,
@@ -91,7 +88,6 @@ export const DesignNodeView = memo(function DesignNodeView({
 }: {
   doc: DesignDoc
   node: DesignNode
-  selectedIds: string[]
   editing: string | null
   dragCursor: string | null
   locked?: boolean
@@ -115,9 +111,7 @@ export const DesignNodeView = memo(function DesignNodeView({
   const boxH = visual?.h ?? node.h
   const chrome = nodeChrome(visual ?? node)
   const style = textStyle(visual && node.kind !== 'instance' ? visual : node)
-  const selected = selectedIds.includes(node.id)
   const overrideMark = overrideTargetId === node.id
-  const container = node.kind === 'frame' || node.kind === 'group'
   const bareFill = node.fill === 'none' || chrome.fill === 'none'
   const bareStroke = (node.kind === 'frame' || node.kind === 'group') && (!node.stroke || node.stroke === 'none')
   const strokeOff = chrome.stroke === 'none' || ((node.kind === 'rect' || node.kind === 'ellipse') && node.stroke == null)
@@ -150,7 +144,6 @@ export const DesignNodeView = memo(function DesignNodeView({
   const opaqueUntilEnter = node.kind === 'group' || node.kind === 'instance'
   const enteredHere = enteredContainerId === node.id
   const lockChildren = locked || !!node.locked || (opaqueUntilEnter && !enteredHere)
-  const childIds = lockChildren ? NO_IDS : selectedIds
   const hitHere = !locked
   const textColor = paintCss(doc, style.color, TEXT_COLOR_DEFAULT)
   const textTypeStyle = {
@@ -211,22 +204,6 @@ export const DesignNodeView = memo(function DesignNodeView({
         }
       }}
     >
-      {container ? (
-        <span
-          className={`absolute left-0 truncate text-[11px] ${selected ? 'text-koma-fg' : 'text-koma-dim'} ${hitHere && !locked && !node.locked ? 'pointer-events-auto' : 'pointer-events-none'}`}
-          style={{ top: -16, maxWidth: Math.max(boxW, 80) }}
-          onPointerDown={
-            hitHere && !locked && !node.locked
-              ? (event) => {
-                  event.stopPropagation()
-                  onSelect(node.id, event)
-                }
-              : undefined
-          }
-        >
-          {designLayerName(node)}
-        </span>
-      ) : null}
       {cropEdit && cropRect && cropUrl ? (
         <span
           aria-hidden
@@ -250,9 +227,7 @@ export const DesignNodeView = memo(function DesignNodeView({
           border: undefined,
           borderRadius: radius,
           overflow: clips ? 'hidden' : undefined,
-          boxShadow: painted.effects?.filter((item) => item.visible !== false && (item.kind === 'drop-shadow' || item.kind === 'inner-shadow')).map((item) => `${item.kind === 'inner-shadow' ? 'inset ' : ''}${item.x ?? 0}px ${item.y ?? 4}px ${item.blur ?? 8}px ${item.spread ?? 0}px ${item.color && item.color !== 'none' ? item.color : 'rgba(0,0,0,0.25)'}`).join(', ') || undefined,
-          filter: painted.effects?.some((item) => item.visible !== false && item.kind === 'layer-blur') ? `blur(${painted.effects.find((item) => item.kind === 'layer-blur')?.blur ?? 4}px)` : undefined,
-          backdropFilter: painted.effects?.some((item) => item.visible !== false && item.kind === 'background-blur') ? `blur(${painted.effects.find((item) => item.kind === 'background-blur')?.blur ?? 8}px)` : undefined,
+          ...effectStyle(doc, painted.effects, node.kind === 'text' || node.kind === 'line' || node.kind === 'vector'),
           mixBlendMode: painted.blend && painted.blend !== 'normal' && painted.blend !== 'pass-through' ? painted.blend : undefined,
         }}
       >
@@ -339,11 +314,18 @@ export const DesignNodeView = memo(function DesignNodeView({
             {node.layoutGrids.map((grid, index) => {
               const color = grid.color || 'rgba(255,0,0,0.18)'
               if (grid.kind === 'square') {
-                const size = grid.size ?? 8
-                const lines = []
-                for (let x = grid.offset ?? 0; x < boxW; x += size) lines.push(<line key={`v${index}-${x}`} x1={x} y1={0} x2={x} y2={boxH} stroke={color} strokeWidth={1} />)
-                for (let y = grid.offset ?? 0; y < boxH; y += size) lines.push(<line key={`h${index}-${y}`} x1={0} y1={y} x2={boxW} y2={y} stroke={color} strokeWidth={1} />)
-                return lines
+                // One pattern tile instead of a line per cell, so a fine grid on a big frame stays cheap.
+                const size = Math.max(1, grid.size ?? 8)
+                const offset = grid.offset ?? 0
+                const pattern = `grid-${node.id.replace(/[^\w-]/g, '_')}-${index}`
+                return [
+                  <defs key={`d${index}`}>
+                    <pattern id={pattern} width={size} height={size} x={offset} y={offset} patternUnits="userSpaceOnUse">
+                      <path d={`M ${size} 0 L 0 0 0 ${size}`} fill="none" stroke={color} strokeWidth={1} />
+                    </pattern>
+                  </defs>,
+                  <rect key={`r${index}`} width={boxW} height={boxH} fill={`url(#${pattern})`} />,
+                ]
               }
               return layoutGridBands(grid, boxW, boxH).map((band, at) => (
                 <rect key={`${grid.kind}${index}-${at}`} x={band.x} y={band.y} width={band.w} height={band.h} fill={color} />
@@ -358,7 +340,6 @@ export const DesignNodeView = memo(function DesignNodeView({
             key={child.id}
             doc={doc}
             node={child}
-            selectedIds={childIds}
             editing={editing}
             dragCursor={dragCursor}
             locked={lockChildren}
@@ -381,6 +362,25 @@ export const DesignNodeView = memo(function DesignNodeView({
     </div>
   )
 })
+
+/**
+ * Effects as CSS. A box shadow follows the box, so text, lines and vectors take drop-shadow
+ * filters that follow their glyphs or path. Several blurs of one kind all apply.
+ */
+function effectStyle(doc: DesignDoc, effects: DesignNode['effects'], followsShape: boolean): { boxShadow?: string; filter?: string; backdropFilter?: string } {
+  const on = (effects ?? []).filter((item) => item.visible !== false)
+  const color = (item: { color?: string }) => paintCss(doc, item.color && item.color !== 'none' ? item.color : '', 'rgba(0,0,0,0.25)')
+  const shadows = on.filter((item) => item.kind === 'drop-shadow' || (item.kind === 'inner-shadow' && !followsShape))
+  const blurs = on.filter((item) => item.kind === 'layer-blur').map((item) => `blur(${item.blur ?? 4}px)`)
+  const drops = followsShape ? shadows.map((item) => `drop-shadow(${item.x ?? 0}px ${item.y ?? 4}px ${item.blur ?? 8}px ${color(item)})`) : []
+  const boxShadow = followsShape ? '' : shadows.map((item) => `${item.kind === 'inner-shadow' ? 'inset ' : ''}${item.x ?? 0}px ${item.y ?? 4}px ${item.blur ?? 8}px ${item.spread ?? 0}px ${color(item)}`).join(', ')
+  const backdrop = on.filter((item) => item.kind === 'background-blur').map((item) => `blur(${item.blur ?? 8}px)`).join(' ')
+  return {
+    boxShadow: boxShadow || undefined,
+    filter: [...drops, ...blurs].join(' ') || undefined,
+    backdropFilter: backdrop || undefined,
+  }
+}
 
 function StrokeShape({
   doc,

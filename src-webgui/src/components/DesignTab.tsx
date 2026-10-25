@@ -207,8 +207,6 @@ import { FrameToolFlyout, ShapeToolFlyout } from './design/DesignTools'
 import { NodeSettings } from './design/DesignNodeSettings'
 import { PenOverlay } from './design/DesignPropertyFields'
 
-const NO_SELECTION: string[] = []
-
 export function DesignTab({ tab }: { tab: Extract<Tab, { kind: 'design' }> }) {
   const key = fileKey(tab.root, tab.path)
   const file = useKoma((s) => s.design?.docs?.[key])
@@ -1531,10 +1529,10 @@ export function DesignTab({ tab }: { tab: Extract<Tab, { kind: 'design' }> }) {
       }
       let next = open.doc
       const pasted: DesignNode[] = []
-      for (const source of nodes) {
-        const node = copyTree(source, () => mintId('n'))
-        node.x = snapDesign(source.x + shift.x, open.doc.grid, open.doc.snap)
-        node.y = snapDesign(source.y + shift.y, open.doc.grid, open.doc.snap)
+      for (const item of nodes) {
+        const node = copyTree(item, () => mintId('n'))
+        node.x = snapDesign(item.x + shift.x, open.doc.grid, open.doc.snap)
+        node.y = snapDesign(item.y + shift.y, open.doc.grid, open.doc.snap)
         if (parentId) next = insertDesignNode(next, parentId, node)
         else if (focusRef.current && node.kind !== 'frame' && node.kind !== 'group' && next.screens[0]) next = insertDesignNode(next, next.screens[0].id, node)
         else if (focusRef.current && node.kind !== 'frame' && node.kind !== 'group') {
@@ -2234,7 +2232,7 @@ export function DesignTab({ tab }: { tab: Extract<Tab, { kind: 'design' }> }) {
       if (!selection.includes(id)) setSelection([id])
       if (point) setMenu({ x: clientX, y: clientY, canvasX: point.x, canvasY: point.y })
     },
-    onSelect: (id, event) => {
+    onSelect: (id, event, exact) => {
       setOverrideTargetId(null)
       if (event.button === 0) setMenu(null)
       if (event.button === 1 || spaceRef.current || toolRef.current === 'pan') {
@@ -2250,7 +2248,7 @@ export function DesignTab({ tab }: { tab: Extract<Tab, { kind: 'design' }> }) {
       const current = storedNow ? editingDoc(storedNow, focusRef.current) : doc
       const point = toDoc(event.clientX, event.clientY)
       let target = id
-      if (point) {
+      if (point && !exact) {
         const deepId = deepSelectKey(event) ? hitDesignDeepest(current, point.x, point.y)?.id : undefined
         const resolved = deepId ? { kind: 'hit' as const, id: deepId } : resolveDesignSelectHit(current, point.x, point.y, enteredContainerRef.current)
         if (resolved.kind === 'clear') {
@@ -2474,7 +2472,6 @@ export function DesignTab({ tab }: { tab: Extract<Tab, { kind: 'design' }> }) {
                 key={screen.id}
                 doc={paintDoc}
                 node={screen}
-                selectedIds={vectorEditId ? NO_SELECTION : selection}
                 editing={editing}
                 dragCursor={dragCursor}
                 enteredContainerId={enteredContainerId}
@@ -2641,6 +2638,29 @@ export function DesignTab({ tab }: { tab: Extract<Tab, { kind: 'design' }> }) {
             </div>
             </div>
           </div>
+          {/* Root screen names stay one size on screen, like Penpot board titles. Click one to select and drag that screen. */}
+          <div className="pointer-events-none absolute inset-0">
+            {visibleDesignScreens(doc).filter((screen) => screen.kind === 'frame').map((screen) => {
+              const box = designCanvasBox(doc, screen.id)
+              if (!box) return null
+              return (
+                <div
+                  key={screen.id}
+                  className={`absolute truncate text-[11px] leading-4 ${selection.includes(screen.id) ? 'text-koma-accent' : 'text-koma-dim'} ${screen.locked || tool !== 'select' ? '' : 'pointer-events-auto cursor-default'}`}
+                  style={{ left: view.panX + box.x * view.zoom, top: view.panY + box.y * view.zoom - 18, maxWidth: Math.max(box.w * view.zoom, 24) }}
+                  onPointerEnter={() => setDesignHover(screen.id)}
+                  onPointerLeave={() => setDesignHover(null)}
+                  onPointerDown={(event) => {
+                    if (event.button !== 0) return
+                    event.stopPropagation()
+                    nodeHandlers.onSelect(screen.id, event, true)
+                  }}
+                >
+                  {designLayerName(screen)}
+                </div>
+              )
+            })}
+          </div>
           <DesignSelectionChrome
             doc={doc}
             panX={view.panX}
@@ -2650,7 +2670,7 @@ export function DesignTab({ tab }: { tab: Extract<Tab, { kind: 'design' }> }) {
             dragCursor={dragCursor}
             enteredContainerId={enteredContainerId}
             cropEditId={cropEdit ? selectedId : null}
-            hoverId={tool === 'select' && !vectorEditId ? hoverId : null}
+            hoverId={tool === 'select' && !vectorEditId && !editing ? hoverId : null}
             onCorner={(id, corner, event) => {
               event.preventDefault()
               event.stopPropagation()
