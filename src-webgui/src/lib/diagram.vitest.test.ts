@@ -3,10 +3,18 @@ import {
   arrowHead,
   arrowTarget,
   entityRoute,
+  ER_LINE,
   parseDiagram,
   routeCrossings,
   routePath,
+  rowAnchor,
+  rowCenterY,
   serializeDiagram,
+  TABLE_HEADER,
+  TABLE_ROW,
+  tableHeight,
+  tableRowAt,
+  updateTableRows,
   connectInDirection,
   connectionEnd,
   copyDiagramShapes,
@@ -32,7 +40,8 @@ import {
   type DiagramDoc,
   type DiagramNode,
 } from './diagram'
-import { diagramToMermaid, parseMermaidDiagram } from './diagramMermaid'
+import { diagramToMermaid, parseMermaidDiagram, splitDiagramMessage } from './diagramMermaid'
+import { parseSqlTables, sqlToDiagram } from './diagramSql'
 import { SHAPE_KINDS } from './diagramShapes'
 
 const box = (id: string, x: number, y: number, extra: Partial<DiagramNode> = {}): DiagramNode => ({
@@ -251,6 +260,19 @@ describe('diagram lines', () => {
     expect(d).not.toContain('L')
   })
 
+  it('tables survive a save', () => {
+    const rows = [
+      { id: 'r1', name: 'id', type: 'int', key: 'pk' as const },
+      { id: 'r2', name: 'org_id', type: 'int', key: 'fk' as const },
+    ]
+    const doc: DiagramDoc = {
+      ...emptyDiagram(),
+      nodes: [box('users', 16, 32, { kind: 'table', text: 'users', w: 220, h: tableHeight(rows), rows })],
+      edges: [{ id: 'e', from: 'users', to: 'users', fromRow: 'r1', toRow: 'r2', ...ER_LINE }],
+    }
+    expect(parseDiagram(serializeDiagram(doc)).doc).toEqual(doc)
+  })
+
   it('new line options survive a save', () => {
     const doc: DiagramDoc = {
       ...threeInARow(),
@@ -260,5 +282,129 @@ describe('diagram lines', () => {
     const start = arrowHead('start', 'erZeroToMany')
     expect(start?.knockout).toBe(true)
     expect(start?.circle?.cx).toBe(8.5)
+  })
+})
+
+const SCHEMA = `
+  CREATE TABLE orgs (
+    id int PRIMARY KEY,
+    name text NOT NULL
+  );
+  CREATE TABLE users (
+    id int,
+    org_id int REFERENCES orgs (id),
+    PRIMARY KEY (id),
+    CONSTRAINT fk_org FOREIGN KEY (org_id) REFERENCES orgs (id)
+  );
+`
+
+describe('diagram tables', () => {
+  it('reads inline and table-level keys and foreign keys', () => {
+    const parsed = parseSqlTables(SCHEMA)
+    const orgs = parsed.tables[0]
+    const users = parsed.tables[1]
+    expect(parsed.tables.map((table) => table.name)).toEqual(['orgs', 'users'])
+    expect(orgs?.columns[0]).toMatchObject({ name: 'id', type: 'int', pk: true, fk: false })
+    expect(orgs?.columns[1]).toMatchObject({ name: 'name', type: 'text', pk: false })
+    expect(users?.columns.find((column) => column.name === 'id')).toMatchObject({ pk: true, fk: false })
+    expect(users?.columns.find((column) => column.name === 'org_id')).toMatchObject({ type: 'int', fk: true })
+    expect(parsed.relations).toEqual([
+      { table: 'users', column: 'org_id', refTable: 'orgs', refColumn: 'id' },
+      { table: 'users', column: 'org_id', refTable: 'orgs', refColumn: 'id' },
+    ])
+  })
+
+  it('draws one ER line from the parent row to the child row', () => {
+    let n = 0
+    const built = sqlToDiagram(
+      parseSqlTables('CREATE TABLE orgs (id int PRIMARY KEY); CREATE TABLE users (org_id int REFERENCES orgs(id));'),
+      { x: 0, y: 0 },
+      (prefix) => `${prefix}${++n}`,
+    )
+    const orgs = built.nodes.find((node) => node.text === 'orgs')
+    const users = built.nodes.find((node) => node.text === 'users')
+    expect(built.edges).toEqual([
+      {
+        id: 'e3',
+        from: orgs?.id,
+        to: users?.id,
+        fromRow: orgs?.rows?.find((row) => row.name === 'id')?.id,
+        toRow: users?.rows?.find((row) => row.name === 'org_id')?.id,
+        ...ER_LINE,
+      },
+    ])
+  })
+
+  it('anchors a line on the row and drops the anchor when the row goes away', () => {
+    const rows = [
+      { id: 'r1', name: 'id', key: 'pk' as const },
+      { id: 'r2', name: 'org_id', key: 'fk' as const },
+    ]
+    const table = box('t', 0, 0, { kind: 'table', w: 200, h: tableHeight(rows), rows })
+    expect(rowCenterY(table, 'r2')).toBe(TABLE_HEADER + TABLE_ROW + TABLE_ROW / 2)
+    expect(tableRowAt(table, { x: 10, y: 10 })).toBe(-1)
+    expect(tableRowAt(table, { x: 10, y: TABLE_HEADER + 4 })).toBe(0)
+    expect(rowAnchor(table, 'r1', { x: -20, y: 0 })).toEqual({ x: 0, y: TABLE_HEADER + TABLE_ROW / 2 })
+    expect(rowAnchor(table, 'r1', { x: 500, y: 0 })?.x).toBe(200)
+    const doc: DiagramDoc = {
+      ...emptyDiagram(),
+      nodes: [table, box('o', 400, 0)],
+      edges: [{ id: 'e', from: 't', to: 'o', fromRow: 'r2' }],
+    }
+    expect(updateTableRows(doc, 't', [rows[0]]).edges[0]?.fromRow).toBeUndefined()
+  })
+
+  it('round-trips an ER diagram and leaves a table alone when the flowchart repeats it', () => {
+    const orgsRows = [{ id: 'r1', name: 'id', type: 'int', key: 'pk' as const }]
+    const userRows = [{ id: 'r1', name: 'org_id', type: 'int', key: 'fk' as const }]
+    const doc: DiagramDoc = {
+      ...emptyDiagram(),
+      nodes: [
+        box('orgs', 0, 0, { kind: 'table', text: 'orgs', w: 220, h: tableHeight(orgsRows), rows: orgsRows }),
+        box('users', 300, 0, { kind: 'table', text: 'users', w: 220, h: tableHeight(userRows), rows: userRows }),
+        box('note', 300, 200, { kind: 'text', text: 'see schema' }),
+      ],
+      edges: [{ id: 'e', from: 'orgs', to: 'users', ...ER_LINE, text: 'has' }],
+    }
+    const mermaid = diagramToMermaid(doc, 'schema')
+    expect(mermaid).toContain('erDiagram')
+    expect(mermaid).toContain('int id PK')
+    expect(mermaid).toContain('int org_id FK')
+    expect(mermaid).toContain('||--o{')
+    expect(mermaid).toContain('flowchart TD')
+    expect(splitDiagramMessage(mermaid).diagrams).toHaveLength(2)
+    const parsed = parseMermaidDiagram(mermaid).doc
+    const orgs = parsed.nodes.find((node) => node.text === 'orgs')
+    const users = parsed.nodes.find((node) => node.text === 'users')
+    expect(orgs?.kind).toBe('table')
+    expect(orgs?.rows?.[0]).toMatchObject({ name: 'id', type: 'int', key: 'pk' })
+    expect(users?.rows?.[0]).toMatchObject({ name: 'org_id', type: 'int', key: 'fk' })
+    expect(parsed.nodes.filter((node) => node.kind === 'table')).toHaveLength(2)
+    expect(parsed.edges.find((edge) => edge.from === orgs?.id && edge.to === users?.id)).toMatchObject({
+      route: 'entity',
+      start: 'erMandOne',
+      end: 'erZeroToMany',
+      text: 'has',
+    })
+    expect(parsed.nodes.find((node) => node.kind === 'text')?.text).toBe('see schema')
+    const repeated = parseMermaidDiagram('```mermaid\nerDiagram\n  orgs {\n    int id PK\n  }\n```\n```mermaid\nflowchart TD\n  orgs["Nope"]\n```').doc
+    expect(repeated.nodes.filter((node) => node.id === 'orgs')).toHaveLength(1)
+    expect(repeated.nodes[0]).toMatchObject({ kind: 'table', text: 'orgs' })
+  })
+
+  it('copies keep row ids so lines between tables stay attached', () => {
+    const rows = [{ id: 'r1', name: 'id', key: 'pk' as const }]
+    const doc: DiagramDoc = {
+      ...emptyDiagram(),
+      nodes: [
+        box('a', 0, 0, { kind: 'table', text: 'a', h: tableHeight(rows), rows }),
+        box('b', 280, 0, { kind: 'table', text: 'b', h: tableHeight(rows), rows: rows.map((row) => ({ ...row })) }),
+      ],
+      edges: [{ id: 'e', from: 'a', to: 'b', fromRow: 'r1', toRow: 'r1', ...ER_LINE }],
+    }
+    let n = 0
+    const copy = copyDiagramShapes(doc, { nodes: ['a', 'b'], edges: [] }, () => `c${++n}`, 16, 16)
+    expect(copy.nodes.map((node) => node.rows?.map((row) => row.id))).toEqual([['r1'], ['r1']])
+    expect(copy.edges[0]).toMatchObject({ fromRow: 'r1', toRow: 'r1' })
   })
 })

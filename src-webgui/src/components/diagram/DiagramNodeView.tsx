@@ -1,30 +1,54 @@
 import { memo } from 'react'
 import { inlineToHtml } from '../../lib/markdownNote'
-import { nodeStyle, type DiagramNode } from '../../lib/diagram'
+import { TABLE_HEADER, TABLE_ROW, nodeStyle, type DiagramKey, type DiagramNode } from '../../lib/diagram'
 import { DiagramShapeSvg } from './DiagramShapeSvg'
+
+export type DiagramCellField = 'name' | 'type'
+export type DiagramCell = { rowId: string; field: DiagramCellField }
+/** What a key press in a table cell asks for. */
+export type DiagramCellMove = 'next' | 'prev' | 'add' | 'delete' | 'done'
+
+export type DiagramNodeEdit = {
+  text: (id: string, text: string) => void
+  done: () => void
+  cellText: (id: string, cell: DiagramCell, text: string) => void
+  cellMove: (id: string, cell: DiagramCell, move: DiagramCellMove) => void
+}
+
+/** Width of a table's key column (PK, FK). */
+export const TABLE_KEY_WIDTH = 36
+
+export function keyLabel(key: DiagramKey | undefined): string {
+  return key === 'pk' ? 'PK' : key === 'fk' ? 'FK' : key === 'pk,fk' ? 'PK FK' : ''
+}
 
 /**
  * One shape in doc coordinates. The world layer scales it, so it never reads the zoom.
- * Pointer handling lives on the canvas (geometric hits); only the label editor takes input.
+ * Pointer handling lives on the canvas (geometric hits); only the editors take input.
  */
 export const DiagramNodeView = memo(function DiagramNodeView({
   node,
   highlight,
   editing,
-  onEditText,
-  onEditDone,
+  cell,
+  edit,
 }: {
   node: DiagramNode
   /** Accent outline: the start of a click-to-connect, or a connection target. */
   highlight: boolean
   /** Editing starts with the whole label selected, or with the caret after typed text. */
   editing: false | 'select' | 'end'
-  onEditText: (id: string, text: string) => void
-  onEditDone: () => void
+  /** The table cell being edited, when `editing` is set on a table. */
+  cell: DiagramCell | null
+  edit: DiagramNodeEdit
 }) {
   const paint = nodeStyle(node)
   const fill = paint.fill ? paint.fillColor || 'var(--color-koma-panel)' : 'none'
   const stroke = highlight ? 'var(--color-koma-accent)' : paint.stroke ? paint.strokeColor || 'var(--color-koma-border)' : 'none'
+  const color = paint.textColor || 'var(--color-koma-fg)'
+  if (node.kind === 'table') {
+    return <TableView node={node} fill={fill} stroke={stroke} color={color} editing={editing} cell={cell} edit={edit} />
+  }
   return (
     <div
       className="absolute flex items-center justify-center"
@@ -40,38 +64,177 @@ export const DiagramNodeView = memo(function DiagramNodeView({
         <DiagramShapeSvg kind={node.kind} w={node.w} h={node.h} fill={fill} stroke={stroke} />
       </svg>
       {editing ? (
-        <textarea
-          autoFocus
-          defaultValue={node.text}
-          rows={Math.max(1, node.text.split('\n').length)}
-          className="pointer-events-auto z-10 max-h-full w-full resize-none overflow-hidden border-0 bg-transparent px-2 text-center text-[12px] leading-4 shadow-none outline-none"
-          style={{ color: paint.textColor || 'var(--color-koma-fg)' }}
-          onFocus={(e) => {
-            const field = e.currentTarget
-            if (editing === 'select') field.select()
-            else field.setSelectionRange(field.value.length, field.value.length)
-          }}
-          onPointerDown={(e) => e.stopPropagation()}
-          onChange={(e) => {
-            e.currentTarget.rows = Math.max(1, e.currentTarget.value.split('\n').length)
-            onEditText(node.id, e.target.value)
-          }}
-          onKeyDown={(e) => {
-            // Shift+Enter breaks the line; Enter and Escape finish, as in draw.io.
-            if ((e.key === 'Enter' && !e.shiftKey) || e.key === 'Escape') {
-              e.preventDefault()
-              onEditDone()
-            }
-          }}
-          onBlur={onEditDone}
-        />
+        <LabelEditor text={node.text} mode={editing} color={color} onText={(text) => edit.text(node.id, text)} onDone={edit.done} />
       ) : (
         <span
           className="z-10 max-h-full overflow-hidden whitespace-pre-wrap break-words px-2 text-center text-[12px] leading-4"
-          style={{ color: paint.textColor || 'var(--color-koma-fg)' }}
+          style={{ color }}
           dangerouslySetInnerHTML={{ __html: inlineToHtml(node.text || ' ') }}
         />
       )}
     </div>
   )
 })
+
+function LabelEditor({
+  text,
+  mode,
+  color,
+  onText,
+  onDone,
+}: {
+  text: string
+  mode: 'select' | 'end'
+  color: string
+  onText: (text: string) => void
+  onDone: () => void
+}) {
+  return (
+    <textarea
+      autoFocus
+      defaultValue={text}
+      rows={Math.max(1, text.split('\n').length)}
+      className="pointer-events-auto z-10 max-h-full w-full resize-none overflow-hidden border-0 bg-transparent px-2 text-center text-[12px] leading-4 shadow-none outline-none"
+      style={{ color }}
+      onFocus={(e) => {
+        const field = e.currentTarget
+        if (mode === 'select') field.select()
+        else field.setSelectionRange(field.value.length, field.value.length)
+      }}
+      onPointerDown={(e) => e.stopPropagation()}
+      onChange={(e) => {
+        e.currentTarget.rows = Math.max(1, e.currentTarget.value.split('\n').length)
+        onText(e.target.value)
+      }}
+      onKeyDown={(e) => {
+        // Shift+Enter breaks the line; Enter and Escape finish, as in draw.io.
+        if ((e.key === 'Enter' && !e.shiftKey) || e.key === 'Escape') {
+          e.preventDefault()
+          onDone()
+        }
+      }}
+      onBlur={onDone}
+    />
+  )
+}
+
+/** draw.io-style entity: a bold header, then one row per column with its key, name and type. */
+function TableView({
+  node,
+  fill,
+  stroke,
+  color,
+  editing,
+  cell,
+  edit,
+}: {
+  node: DiagramNode
+  fill: string
+  stroke: string
+  color: string
+  editing: false | 'select' | 'end'
+  cell: DiagramCell | null
+  edit: DiagramNodeEdit
+}) {
+  const rows = node.rows ?? []
+  const line = stroke === 'none' ? 'transparent' : stroke
+  return (
+    <div
+      className="absolute overflow-hidden rounded text-[12px]"
+      style={{
+        left: node.x,
+        top: node.y,
+        width: node.w,
+        height: node.h,
+        background: fill === 'none' ? 'transparent' : fill,
+        boxShadow: `inset 0 0 0 1px ${line}`,
+        color,
+      }}
+    >
+      <div className="flex items-center justify-center px-2 font-semibold" style={{ height: TABLE_HEADER, borderBottom: `1px solid ${line}` }}>
+        {editing && !cell ? (
+          <LabelEditor text={node.text} mode={editing} color={color} onText={(text) => edit.text(node.id, text)} onDone={edit.done} />
+        ) : (
+          <span className="truncate">{node.text || ' '}</span>
+        )}
+      </div>
+      {rows.length ? (
+        rows.map((row) => {
+          const editingField = editing && cell?.rowId === row.id ? cell.field : null
+          return (
+            <div key={row.id} className="flex items-center" style={{ height: TABLE_ROW }}>
+              <span className="flex-none text-center text-[10px] font-semibold opacity-70" style={{ width: TABLE_KEY_WIDTH }}>
+                {keyLabel(row.key)}
+              </span>
+              {editingField === 'name' ? (
+                <CellEditor value={row.name} cell={{ rowId: row.id, field: 'name' }} node={node} edit={edit} className="min-w-0 flex-1" />
+              ) : (
+                <span className={`min-w-0 flex-1 truncate ${row.key?.includes('pk') ? 'underline' : ''}`}>{row.name || ' '}</span>
+              )}
+              {editingField === 'type' ? (
+                <CellEditor value={row.type ?? ''} cell={{ rowId: row.id, field: 'type' }} node={node} edit={edit} className="w-2/5 text-right" />
+              ) : (
+                <span className="max-w-[40%] flex-none truncate pr-2 text-right opacity-60">{row.type ?? ''}</span>
+              )}
+            </div>
+          )
+        })
+      ) : (
+        <div className="flex items-center justify-center opacity-50" style={{ height: TABLE_ROW }}>
+          No columns
+        </div>
+      )}
+    </div>
+  )
+}
+
+/**
+ * One table cell being typed into. Tab walks the cells, Enter adds a row below,
+ * Backspace on an empty name removes the row, Escape finishes.
+ */
+function CellEditor({
+  value,
+  cell,
+  node,
+  edit,
+  className,
+}: {
+  value: string
+  cell: DiagramCell
+  node: DiagramNode
+  edit: DiagramNodeEdit
+  className: string
+}) {
+  return (
+    <input
+      autoFocus
+      defaultValue={value}
+      data-diagram-cell=""
+      className={`pointer-events-auto border-0 bg-transparent px-0 pr-2 text-[12px] shadow-none outline-none ${className}`}
+      onFocus={(e) => e.currentTarget.select()}
+      onPointerDown={(e) => e.stopPropagation()}
+      onChange={(e) => edit.cellText(node.id, cell, e.target.value)}
+      onKeyDown={(e) => {
+        const move: DiagramCellMove | null =
+          e.key === 'Tab'
+            ? e.shiftKey
+              ? 'prev'
+              : 'next'
+            : e.key === 'Enter'
+              ? 'add'
+              : e.key === 'Escape'
+                ? 'done'
+                : e.key === 'Backspace' && cell.field === 'name' && !e.currentTarget.value
+                  ? 'delete'
+                  : null
+        if (!move) return
+        e.preventDefault()
+        edit.cellMove(node.id, cell, move)
+      }}
+      onBlur={(e) => {
+        // Tab to another cell of the table refocuses right away; only leaving the table ends editing.
+        if (!(e.relatedTarget as HTMLElement | null)?.closest('[data-diagram-cell]')) edit.done()
+      }}
+    />
+  )
+}

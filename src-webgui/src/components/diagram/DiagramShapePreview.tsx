@@ -7,7 +7,7 @@ export type DiagramPaletteEntry = {
   id: string
   kind: DiagramKind
   label: string
-  group: 'Basic' | 'Flowchart'
+  group: 'Basic' | 'Flowchart' | 'Database'
   /** Size override for presets such as the circle. */
   size?: { w: number; h: number }
 }
@@ -29,6 +29,7 @@ export const DIAGRAM_PALETTE: DiagramPaletteEntry[] = [
   { id: 'cylinder', kind: 'cylinder', label: 'Database', group: 'Flowchart' },
   { id: 'document', kind: 'document', label: 'Document', group: 'Flowchart' },
   { id: 'cloud', kind: 'cloud', label: 'Cloud', group: 'Flowchart' },
+  { id: 'table', kind: 'table', label: 'Table', group: 'Database' },
 ]
 
 export function paletteEntry(id: string): DiagramPaletteEntry | undefined {
@@ -39,6 +40,15 @@ export function paletteEntry(id: string): DiagramPaletteEntry | undefined {
 export function ShapePreview({ entry }: { entry: DiagramPaletteEntry }) {
   if (entry.kind === 'text') {
     return <span className="flex h-8 w-12 items-center justify-center text-[13px] leading-none text-koma-fg/80">Text</span>
+  }
+  if (entry.kind === 'table') {
+    return (
+      <svg viewBox="0 0 40 30" width={40} height={30} className="m-auto block" aria-hidden="true">
+        <rect x="0.75" y="0.75" width="38.5" height="28.5" rx="2" fill="var(--color-koma-bg)" stroke="currentColor" strokeWidth="1.25" />
+        <path d="M0.75 8.5 H39.25 M9 8.5 V29.25" fill="none" stroke="currentColor" strokeWidth="1" />
+        <path d="M12 14.5 H32 M12 20 H28 M12 25.5 H30" fill="none" stroke="currentColor" strokeWidth="1" opacity="0.6" />
+      </svg>
+    )
   }
   const size = entry.size ?? SHAPE_SIZES[entry.kind]
   const scale = Math.min(46 / size.w, 28 / size.h)

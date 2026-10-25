@@ -1,9 +1,13 @@
 import { useState, type ReactNode } from 'react'
+import { ChevronDown, ChevronUp, Plus, X } from 'lucide-react'
+import { keyLabel } from './DiagramNodeView'
 import { Toggle } from '../panels/form'
 import { InlineMarkdownInput, MarkdownNote } from '../MarkdownNote'
 import { diagramShapeFolder, shapeHeadingFor } from '../../lib/diagramNotes'
 import {
+  TABLE_ROW_LIMIT,
   edgeStyle,
+  nextKey,
   nodeStyle,
   type DiagramArrow,
   type DiagramDoc,
@@ -11,6 +15,7 @@ import {
   type DiagramJump,
   type DiagramNode,
   type DiagramRoute,
+  type DiagramRow,
 } from '../../lib/diagram'
 
 export type DiagramPanelSelection = { type: 'node' | 'edge'; id: string }
@@ -187,6 +192,7 @@ export function Properties({
   onEdgeText,
   onDetail,
   onTextDone,
+  onRows,
   count = 0,
 }: {
   doc: DiagramDoc
@@ -200,6 +206,8 @@ export function Properties({
   onEdgeText: (id: string, text: string) => void
   onDetail: (kind: 'node' | 'edge', id: string, detail: string) => void
   onTextDone: () => void
+  /** Table columns. `live` groups typing into one undo step, like labels. */
+  onRows?: (id: string, rows: DiagramRow[], live: boolean) => void
   /** Items selected when more than one is picked. The panel edits one at a time. */
   count?: number
 }) {
@@ -244,7 +252,13 @@ export function Properties({
         </>
       ) : node ? (
         <div className="min-h-0 flex-1 overflow-y-auto">
-          <CardSettings node={node} onChange={(patch) => onNode(node.id, patch)} onText={(text) => onText(node.id, text)} onTextDone={onTextDone} />
+          <CardSettings
+            node={node}
+            onChange={(patch) => onNode(node.id, patch)}
+            onText={(text) => onText(node.id, text)}
+            onRows={(rows, live) => onRows?.(node.id, rows, live)}
+            onTextDone={onTextDone}
+          />
         </div>
       ) : edge ? (
         <div className="min-h-0 flex-1 overflow-y-auto">
@@ -274,11 +288,13 @@ function CardSettings({
   node,
   onChange,
   onText,
+  onRows,
   onTextDone,
 }: {
   node: DiagramNode
   onChange: (patch: Partial<DiagramNode>) => void
   onText: (text: string) => void
+  onRows: (rows: DiagramRow[], live: boolean) => void
   onTextDone: () => void
 }) {
   const style = nodeStyle(node)
@@ -324,6 +340,85 @@ function CardSettings({
         onToggle={(stroke) => onChange({ stroke })}
         onColor={(strokeColor) => onChange({ strokeColor, stroke: true })}
       />
+      {node.kind === 'table' ? <ColumnSettings rows={node.rows ?? []} onRows={onRows} onTextDone={onTextDone} /> : null}
+    </div>
+  )
+}
+
+const KEY_NAMES: Record<string, string> = { '': 'No key', pk: 'Primary key', fk: 'Foreign key', 'pk,fk': 'Primary and foreign key' }
+
+/** A table's columns: key, name and type per row, with add, move and remove. */
+function ColumnSettings({
+  rows,
+  onRows,
+  onTextDone,
+}: {
+  rows: DiagramRow[]
+  onRows: (rows: DiagramRow[], live: boolean) => void
+  onTextDone: () => void
+}) {
+  const field = 'h-7 min-w-0 rounded border border-koma-border bg-koma-bg px-1.5 text-[12px] text-koma-fg outline-none focus:border-koma-fg/40'
+  const icon = 'flex h-6 w-5 flex-none items-center justify-center rounded text-koma-dim hover:bg-koma-hover hover:text-koma-fg disabled:opacity-30'
+  const set = (index: number, patch: Partial<DiagramRow>, live: boolean) =>
+    onRows(rows.map((row, i) => (i === index ? { ...row, ...patch } : row)), live)
+  const move = (index: number, by: number) => {
+    const next = [...rows]
+    const [row] = next.splice(index, 1)
+    if (row) next.splice(index + by, 0, row)
+    onRows(next, false)
+  }
+  return (
+    <div className="flex flex-col gap-1">
+      <span className="text-[10px] font-semibold uppercase tracking-wider text-koma-dim">Columns</span>
+      {rows.map((row, index) => (
+        <div key={row.id} className="flex items-center gap-1">
+          <button
+            type="button"
+            title={`${KEY_NAMES[row.key ?? '']}. Click to change.`}
+            aria-label={KEY_NAMES[row.key ?? '']}
+            className="h-7 w-9 flex-none rounded border border-koma-border bg-koma-bg text-[10px] font-semibold text-koma-fg hover:border-koma-fg/40"
+            onClick={() => set(index, { key: nextKey(row.key) }, false)}
+          >
+            {keyLabel(row.key) || '—'}
+          </button>
+          <input
+            value={row.name}
+            placeholder="name"
+            aria-label="Column name"
+            className={`${field} flex-1`}
+            onFocus={onTextDone}
+            onBlur={onTextDone}
+            onChange={(e) => set(index, { name: e.target.value }, true)}
+          />
+          <input
+            value={row.type ?? ''}
+            placeholder="type"
+            aria-label="Column type"
+            className={`${field} w-16 flex-none`}
+            onFocus={onTextDone}
+            onBlur={onTextDone}
+            onChange={(e) => set(index, { type: e.target.value.trim() ? e.target.value : undefined }, true)}
+          />
+          <button type="button" title="Move up" aria-label="Move up" className={icon} disabled={index === 0} onClick={() => move(index, -1)}>
+            <ChevronUp size={12} />
+          </button>
+          <button type="button" title="Move down" aria-label="Move down" className={icon} disabled={index === rows.length - 1} onClick={() => move(index, 1)}>
+            <ChevronDown size={12} />
+          </button>
+          <button type="button" title="Remove column" aria-label="Remove column" className={icon} onClick={() => onRows(rows.filter((_, i) => i !== index), false)}>
+            <X size={12} />
+          </button>
+        </div>
+      ))}
+      <button
+        type="button"
+        className="flex h-7 items-center justify-center gap-1 rounded border border-dashed border-koma-border text-[12px] text-koma-dim hover:border-koma-fg/40 hover:text-koma-fg disabled:opacity-40"
+        disabled={rows.length >= TABLE_ROW_LIMIT}
+        onClick={() => onRows([...rows, { id: `r${Date.now().toString(36)}${Math.random().toString(36).slice(2, 5)}`, name: '' }], false)}
+      >
+        <Plus size={12} />
+        Add column
+      </button>
     </div>
   )
 }

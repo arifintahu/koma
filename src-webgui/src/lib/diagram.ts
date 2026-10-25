@@ -6,7 +6,28 @@ import { outlineFraction, pointInShape, SHAPE_KINDS, SHAPE_SIZES, type ShapeKind
 export const DIAGRAM_GRID = 16
 export const SHAPE_MIME = 'application/x-koma-shape'
 
-export type DiagramKind = ShapeKind
+/** Drawn shapes, plus database tables (header and rows). */
+export type DiagramKind = ShapeKind | 'table'
+
+/** The outline a kind hits and connects with. Tables are boxes. */
+export function outlineKind(kind: DiagramKind): ShapeKind {
+  return kind === 'table' ? 'rect' : kind
+}
+
+export type DiagramKey = 'pk' | 'fk' | 'pk,fk'
+
+/** One column of a table. Ids are unique within the table and let lines attach to rows. */
+export type DiagramRow = { id: string; name: string; type?: string; key?: DiagramKey }
+
+export const TABLE_HEADER = 30
+export const TABLE_ROW = 26
+export const TABLE_ROW_LIMIT = 200
+const KEYS: readonly DiagramKey[] = ['pk', 'fk', 'pk,fk']
+
+/** Tables are as tall as their rows (draw.io resizeLast): only the width is free. */
+export function tableHeight(rows: readonly DiagramRow[] | undefined): number {
+  return TABLE_HEADER + Math.max(1, rows?.length ?? 0) * TABLE_ROW
+}
 export type DiagramSide = 'n' | 'e' | 's' | 'w'
 export type DiagramHandle = 'nw' | 'n' | 'ne' | 'e' | 'se' | 's' | 'sw' | 'w'
 export type DiagramDash = 'solid' | 'dashed' | 'dotted'
@@ -56,6 +77,8 @@ export type DiagramNode = {
   textColor?: string
   /** Markdown description. Omitted when blank. The readable copy is the notes file. */
   detail?: string
+  /** Columns of a table. Only tables have them. */
+  rows?: DiagramRow[]
 }
 
 export type DiagramEdge = {
@@ -81,6 +104,9 @@ export type DiagramEdge = {
   /** 0..15 around the shape. Omitted keeps the side-center anchor. */
   fromPort?: number
   toPort?: number
+  /** Row of a table end. The line meets that row's left or right edge. */
+  fromRow?: string
+  toRow?: string
   /** Interior waypoints in document coordinates. Endpoints stay on the shapes. */
   bends?: DiagramPoint[]
   /** Short label drawn on the line. Omitted when blank. */
@@ -124,7 +150,7 @@ export type DiagramDoc = {
   edges: DiagramEdge[]
 }
 
-const KINDS: readonly DiagramKind[] = SHAPE_KINDS
+const KINDS: readonly DiagramKind[] = [...SHAPE_KINDS, 'table']
 
 export function emptyDiagram(): DiagramDoc {
   return { snap: true, grid: DIAGRAM_GRID, nodes: [], edges: [] }
@@ -153,7 +179,17 @@ export function diagramFileName(raw: string): string | null {
 }
 
 export function defaultNodeSize(kind: DiagramKind): { w: number; h: number; text: string } {
+  if (kind === 'table') return { w: 200, h: tableHeight(defaultTableRows()), text: 'Table' }
   return { ...SHAPE_SIZES[kind], text: kind === 'text' ? 'text' : 'label' }
+}
+
+/** A new table starts with an id key and two columns, like draw.io's table template. */
+export function defaultTableRows(): DiagramRow[] {
+  return [
+    { id: 'r1', name: 'id', type: 'int', key: 'pk' },
+    { id: 'r2', name: 'name', type: 'text' },
+    { id: 'r3', name: 'created_at', type: 'timestamp' },
+  ]
 }
 
 export function isDiagramKind(value: unknown): value is DiagramKind {
@@ -178,7 +214,27 @@ export function copyNode(node: DiagramNode, id: string, dx: number, dy: number):
   if (node.strokeColor) next.strokeColor = node.strokeColor
   if (node.textColor) next.textColor = node.textColor
   if (node.detail?.trim()) next.detail = node.detail
+  if (node.rows) next.rows = node.rows.map((row) => ({ ...row }))
   return next
+}
+
+function parseRows(value: unknown): DiagramRow[] {
+  if (!Array.isArray(value)) return []
+  const rows: DiagramRow[] = []
+  const seen = new Set<string>()
+  for (const item of value) {
+    if (!item || typeof item !== 'object') continue
+    const row = item as Record<string, unknown>
+    if (typeof row.id !== 'string' || !row.id || seen.has(row.id) || typeof row.name !== 'string') continue
+    seen.add(row.id)
+    const next: DiagramRow = { id: row.id, name: row.name.slice(0, LABEL_LIMIT) }
+    if (typeof row.type === 'string' && row.type.trim()) next.type = row.type.slice(0, LABEL_LIMIT)
+    const key = oneOf(row.key, KEYS)
+    if (key) next.key = key
+    rows.push(next)
+    if (rows.length >= TABLE_ROW_LIMIT) break
+  }
+  return rows
 }
 
 function num(value: unknown): number | null {
@@ -211,6 +267,11 @@ function parseNodes(value: unknown): DiagramNode[] | null {
     if (textColor) node.textColor = textColor
     const detail = parseDetail(row.detail)
     if (detail) node.detail = detail
+    if (node.kind === 'table') {
+      node.rows = parseRows(row.rows)
+      node.h = tableHeight(node.rows)
+      delete node.rotation
+    }
     nodes.push(node)
   }
   return nodes
@@ -281,6 +342,8 @@ function parseEdges(value: unknown): DiagramEdge[] | null {
     const toSide = oneOf(row.toSide, SIDES)
     const fromPort = parsePort(row.fromPort)
     const toPort = parsePort(row.toPort)
+    if (typeof row.fromRow === 'string' && row.fromRow) edge.fromRow = row.fromRow
+    if (typeof row.toRow === 'string' && row.toRow) edge.toRow = row.toRow
     const bends = parseBends(row.bends)
     if (color) edge.color = color
     if (width != null && width > 0 && width !== 1.5) edge.width = width
@@ -320,6 +383,12 @@ export function parseDiagram(text: string): { doc: DiagramDoc; error: string | n
   const nodes = parseNodes(raw.nodes)
   const edges = parseEdges(raw.edges)
   if (!nodes || !edges) return { doc: emptyDiagram(), error: 'This file is not a diagram' }
+  // A line keeps its row only while that row is still in the table.
+  const rowIds = new Map(nodes.map((node) => [node.id, new Set((node.rows ?? []).map((row) => row.id))]))
+  for (const edge of edges) {
+    if (edge.fromRow && !rowIds.get(edge.from)?.has(edge.fromRow)) delete edge.fromRow
+    if (edge.toRow && !rowIds.get(edge.to)?.has(edge.toRow)) delete edge.toRow
+  }
   const grid = num(raw.grid)
   return {
     doc: {
@@ -346,6 +415,7 @@ export function serializeDiagram(doc: DiagramDoc): string {
       if (n.strokeColor) row.strokeColor = n.strokeColor
       if (n.textColor) row.textColor = n.textColor
       if (n.detail?.trim()) row.detail = n.detail
+      if (n.kind === 'table') row.rows = (n.rows ?? []).map((r) => ({ ...r }))
       return row
     }),
     edges: doc.edges.map((e) => {
@@ -363,6 +433,8 @@ export function serializeDiagram(doc: DiagramDoc): string {
       else if (e.fromSide) row.fromSide = e.fromSide
       if (e.toPort != null) row.toPort = e.toPort
       else if (e.toSide) row.toSide = e.toSide
+      if (e.fromRow) row.fromRow = e.fromRow
+      if (e.toRow) row.toRow = e.toRow
       if (e.bends?.length) row.bends = e.bends.map((p) => ({ x: p.x, y: p.y }))
       if (e.text?.trim()) row.text = e.text
       if (e.labelAt != null && e.labelAt !== 0.5) row.labelAt = e.labelAt
@@ -513,7 +585,7 @@ export function portLocal(port: number): { x: number; y: number } {
 
 /** Where a connector plus sits, as a fraction of the node box (before rotation). */
 export function portOffset(node: DiagramNode, port: number): { x: number; y: number } {
-  return outlineFraction(node.kind, node.w, node.h, portLocal(port))
+  return outlineFraction(outlineKind(node.kind), node.w, node.h, portLocal(port))
 }
 
 /** Outline point, then the node's rotation. */
@@ -540,7 +612,7 @@ export function nearestPort(node: DiagramNode, point: DiagramPoint): number {
 /** On the shape's own outline (a triangle's empty corners do not count), rotation included. */
 export function pointInNode(node: DiagramNode, point: DiagramPoint): boolean {
   const local = rotatePoint(point, nodeCenter(node), -(node.rotation ?? 0))
-  return pointInShape(node.kind, node.w, node.h, local.x - node.x, local.y - node.y)
+  return pointInShape(outlineKind(node.kind), node.w, node.h, local.x - node.x, local.y - node.y)
 }
 
 /** Topmost shape under the point, or a shape whose port is within 16px. */
@@ -742,6 +814,44 @@ export function hitDiagram(doc: DiagramDoc, point: DiagramPoint, tolerance: numb
   return best
 }
 
+/** A table-to-table line starts as an entity relation from one row to many (draw.io's ER default). */
+export const ER_LINE: Pick<DiagramEdge, 'route' | 'start' | 'end'> = { route: 'entity', start: 'erMandOne', end: 'erZeroToMany' }
+
+/**
+ * Replace a table's rows. The height follows, and lines that pointed at a removed row
+ * fall back to the table itself instead of disappearing.
+ */
+export function updateTableRows(doc: DiagramDoc, id: string, rows: DiagramRow[]): DiagramDoc {
+  const kept = new Set(rows.map((row) => row.id))
+  return {
+    ...doc,
+    nodes: doc.nodes.map((node) => (node.id === id ? { ...node, rows, h: tableHeight(rows) } : node)),
+    edges: doc.edges.map((edge) => {
+      const dropFrom = edge.from === id && edge.fromRow && !kept.has(edge.fromRow)
+      const dropTo = edge.to === id && edge.toRow && !kept.has(edge.toRow)
+      if (!dropFrom && !dropTo) return edge
+      const next = { ...edge }
+      if (dropFrom) delete next.fromRow
+      if (dropTo) delete next.toRow
+      return next
+    }),
+  }
+}
+
+/** Move one row to a new index; lines stay on their rows because row ids do not change. */
+export function moveTableRow(rows: readonly DiagramRow[], from: number, to: number): DiagramRow[] {
+  const next = [...rows]
+  const [row] = next.splice(from, 1)
+  if (!row) return next
+  next.splice(Math.max(0, Math.min(to, next.length)), 0, row)
+  return next
+}
+
+/** none → PK → FK → PK FK → none, for a double-click on the key cell. */
+export function nextKey(key: DiagramKey | undefined): DiagramKey | undefined {
+  return key == null ? 'pk' : key === 'pk' ? 'fk' : key === 'fk' ? 'pk,fk' : undefined
+}
+
 export type DiagramGuide = { axis: 'x' | 'y'; at: number; from: number; to: number }
 
 /**
@@ -860,6 +970,7 @@ export function connectInDirection(
   const node: DiagramNode = shape
     ? { id: mint('n'), kind: shape.kind, x: center.x - w / 2, y: center.y - h / 2, w, h, text: '' }
     : { ...copyNode(source, mint('n'), 0, 0), x: center.x - w / 2, y: center.y - h / 2, text: '' }
+  if (node.kind === 'table' && !node.rows) node.rows = defaultTableRows()
   delete node.detail
   delete node.rotation
   return {
@@ -1000,13 +1111,39 @@ function dedupe(points: DiagramPoint[]): DiagramPoint[] {
   return kept
 }
 
+/** Vertical middle of a table row, or null when the row is gone. */
+export function rowCenterY(node: DiagramNode, rowId: string): number | null {
+  const index = node.rows?.findIndex((row) => row.id === rowId) ?? -1
+  return index < 0 ? null : node.y + TABLE_HEADER + index * TABLE_ROW + TABLE_ROW / 2
+}
+
+/** Where a line meets a table row: the left or right edge, whichever faces `toward`. */
+export function rowAnchor(node: DiagramNode, rowId: string, toward: DiagramPoint): DiagramPoint | null {
+  const y = rowCenterY(node, rowId)
+  if (y == null) return null
+  return { x: toward.x < node.x + node.w / 2 ? node.x : node.x + node.w, y }
+}
+
+/** Row under a doc point: its index, -1 on the header, null outside the table. */
+export function tableRowAt(node: DiagramNode, point: DiagramPoint): number | null {
+  if (node.kind !== 'table' || point.x < node.x || point.x > node.x + node.w || point.y < node.y || point.y > node.y + node.h) return null
+  const offset = point.y - node.y - TABLE_HEADER
+  if (offset < 0) return -1
+  const index = Math.floor(offset / TABLE_ROW)
+  return index < (node.rows?.length ?? 0) ? index : null
+}
+
 function routeEnd(
   node: DiagramNode,
   other: DiagramNode,
   port: number | undefined,
   side: DiagramSide | undefined,
   toward?: DiagramPoint,
+  row?: string,
 ): { point: DiagramPoint; side: DiagramSide } {
+  // Rows connect on their left or right edge only (draw.io portConstraint=eastwest).
+  const rowPoint = row ? rowAnchor(node, row, toward ?? nodeCenter(other)) : null
+  if (rowPoint) return { point: rowPoint, side: rowPoint.x === node.x ? 'w' : 'e' }
   if (port != null && port >= 0 && port < DIAGRAM_PORTS) {
     return { point: portAnchor(node, port), side: portSide(port) }
   }
@@ -1049,13 +1186,17 @@ export function entityRoute(from: DiagramNode, to: DiagramNode, fromY?: number, 
 
 export function edgeRoute(from: DiagramNode, to: DiagramNode, edge: DiagramEdge): DiagramPoint[] {
   const style = edgeStyle(edge)
-  if (style.route === 'entity') return entityRoute(from, to)
+  if (style.route === 'entity') {
+    const fromY = edge.fromRow ? rowCenterY(from, edge.fromRow) : null
+    const toY = edge.toRow ? rowCenterY(to, edge.toRow) : null
+    return entityRoute(from, to, fromY ?? undefined, toY ?? undefined)
+  }
   // A straight line with bends aims each floating end at its nearest bend, not the far shape.
   const straight = style.route === 'straight'
   const first = straight ? edge.bends?.[0] : undefined
   const last = straight ? edge.bends?.[edge.bends.length - 1] : undefined
-  const startEnd = routeEnd(from, to, edge.fromPort, edge.fromSide, first)
-  const endEnd = routeEnd(to, from, edge.toPort, edge.toSide, last)
+  const startEnd = routeEnd(from, to, edge.fromPort, edge.fromSide, first, edge.fromRow)
+  const endEnd = routeEnd(to, from, edge.toPort, edge.toSide, last, edge.toRow)
   const fromSide = startEnd.side
   const toSide = endEnd.side
   const start = startEnd.point

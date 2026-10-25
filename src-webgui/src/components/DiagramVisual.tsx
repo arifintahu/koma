@@ -8,6 +8,8 @@ import {
   nodeStyle,
   routeMidpoint,
   routePath,
+  TABLE_HEADER,
+  TABLE_ROW,
   type DiagramArrow,
   type DiagramDoc,
   type DiagramNode,
@@ -154,6 +156,23 @@ function DiagramShape({ node }: { node: DiagramNode }) {
   const center = nodeCenter(node)
   const rotate = node.rotation ? ` rotate(${node.rotation} ${node.w / 2} ${node.h / 2})` : ''
   const paint = shapePaint(node)
+  if (node.kind === 'table') {
+    const line = paint.stroke === 'none' ? 'var(--color-koma-border)' : paint.stroke
+    return (
+      <g transform={`translate(${node.x} ${node.y})`}>
+        <rect width={node.w} height={node.h} rx="4" fill={paint.fill} stroke={line} />
+        <path d={`M0 ${TABLE_HEADER} H${node.w}`} stroke={line} />
+        <text x={node.w / 2} y={TABLE_HEADER / 2} textAnchor="middle" dominantBaseline="middle" fontSize="12" fontWeight="600" fill="var(--color-koma-fg)">
+          {node.text}
+        </text>
+        {(node.rows ?? []).map((row, i) => (
+          <text key={row.id} x={8} y={TABLE_HEADER + i * TABLE_ROW + TABLE_ROW / 2} dominantBaseline="middle" fontSize="11" fill="var(--color-koma-fg)">
+            {`${row.key ? `${row.key.toUpperCase()} ` : ''}${row.name}${row.type ? ` ${row.type}` : ''}`}
+          </text>
+        ))}
+      </g>
+    )
+  }
   return (
     <g transform={`translate(${node.x} ${node.y})${rotate}`}>
       <DiagramShapeSvg kind={node.kind} w={node.w} h={node.h} fill={paint.fill} stroke={paint.stroke} strokeWidth={paint.strokeWidth || 1} />

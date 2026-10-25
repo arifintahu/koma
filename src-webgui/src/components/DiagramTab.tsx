@@ -12,7 +12,7 @@ import { EditorChrome } from './EditorChrome'
 import { Toggle } from './panels/form'
 import { DiagramRefMenuItems } from './DiagramVisual'
 import { DiagramEdgeView, themeStroke } from './diagram/DiagramEdgeView'
-import { DiagramNodeView } from './diagram/DiagramNodeView'
+import { DiagramNodeView, TABLE_KEY_WIDTH, type DiagramCell, type DiagramCellMove, type DiagramNodeEdit } from './diagram/DiagramNodeView'
 import { Properties, type DiagramPanelSelection } from './diagram/DiagramSettings'
 import { DiagramShapePicker } from './diagram/DiagramShapePicker'
 import { paletteEntry, type DiagramPaletteEntry } from './diagram/DiagramShapePreview'
@@ -39,9 +39,19 @@ import {
 } from '../lib/diagramChat'
 import { syncDiagramShapeNotes } from '../lib/diagramNoteAttach'
 import { diagramFolder, publishDiagramShapeNotes } from '../lib/diagramNotes'
+import { looksLikeSql, parseSqlTables, sqlToDiagram } from '../lib/diagramSql'
 import {
   DIAGRAM_PORT_SNAP,
+  ER_LINE,
   NO_SELECTION,
+  TABLE_HEADER,
+  TABLE_ROW,
+  moveTableRow,
+  nextKey,
+  rowAnchor,
+  rowCenterY,
+  tableRowAt,
+  updateTableRows,
   SHAPE_MIME,
   connectInDirection,
   connectionEnd,
@@ -54,6 +64,7 @@ import {
   routeFractionAt,
   routePointAt,
   defaultNodeSize,
+  defaultTableRows,
   deleteDiagramSelection,
   edgePoints,
   DIAGRAM_PORTS,
@@ -88,6 +99,7 @@ import {
   type DiagramNode,
   type DiagramPoint,
   type DiagramRect,
+  type DiagramRow,
   type DiagramSelection,
 } from '../lib/diagram'
 
@@ -109,7 +121,9 @@ type Drag =
   | { kind: 'segment'; edgeId: string; index: number; points: DiagramPoint[]; remembered: boolean }
   | { kind: 'anchor'; edgeId: string; end: 'from' | 'to'; remembered: boolean }
   /** `port` null leaves the source end floating, as a drag from a hover arrow does. */
-  | { kind: 'connect'; fromId: string; port: number | null }
+  | { kind: 'connect'; fromId: string; port: number | null; row?: string }
+  /** Dragging a row of a selected table up or down reorders it. */
+  | { kind: 'row'; tableId: string; index: number; base: DiagramRow[]; sy: number; moved: boolean; remembered: boolean }
   | { kind: 'arrow'; sourceId: string; direction: DiagramDirection; sx: number; sy: number }
   | { kind: 'bend'; edgeId: string; index: number; remembered: boolean }
   | { kind: 'label'; edgeId: string; remembered: boolean }
@@ -146,7 +160,7 @@ const GUIDE_TOLERANCE = 4
 
 type Picker =
   | { mode: 'arrow'; x: number; y: number; sourceId: string; direction: DiagramDirection }
-  | { mode: 'drop'; x: number; y: number; sourceId: string; port: number | null; at: DiagramPoint }
+  | { mode: 'drop'; x: number; y: number; sourceId: string; port: number | null; row?: string; at: DiagramPoint }
   | { mode: 'canvas'; x: number; y: number; at: DiagramPoint }
 
 function mintId(prefix: string): string {
@@ -165,6 +179,7 @@ function placeNode(doc: DiagramDoc, kind: DiagramKind, x: number, y: number, pre
     y: snap(y - size.h / 2, doc.grid, doc.snap),
     ...size,
   }
+  if (kind === 'table') node.rows = defaultTableRows()
   return { ...doc, nodes: [...doc.nodes, node] }
 }
 
@@ -237,6 +252,8 @@ export function DiagramTab({ tab }: { tab: Extract<Tab, { kind: 'diagram' }> }) 
   const canvasRef = useRef<HTMLDivElement>(null)
   const dragRef = useRef<Drag | null>(null)
   const labelNoted = useRef(false)
+  /** Cmd+V waits one beat so a `CREATE TABLE` paste can win over the shape clipboard. */
+  const pasteTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const updateRef = useRef(updateDiagram)
   updateRef.current = updateDiagram
   const [view, setView] = useState<DiagramView>(() => savedDiagramView(key))
@@ -252,7 +269,9 @@ export function DiagramTab({ tab }: { tab: Extract<Tab, { kind: 'diagram' }> }) 
   const [marquee, setMarquee] = useState<DiagramRect | null>(null)
   const [chatMenu, setChatMenu] = useState<{ x: number; y: number } | null>(null)
   const [hover, setHover] = useState<{ type: 'node' | 'edge'; id: string } | null>(null)
-  const [connectDrag, setConnectDrag] = useState<{ fromId: string; port: number | null } | null>(null)
+  const [connectDrag, setConnectDrag] = useState<{ fromId: string; port: number | null; row?: string } | null>(null)
+  const [editCell, setEditCell] = useState<DiagramCell | null>(null)
+  const [hoverRow, setHoverRow] = useState<{ id: string; index: number } | null>(null)
   const [guides, setGuides] = useState<DiagramGuide[]>([])
   const [arrowsFor, setArrowsFor] = useState<string | null>(null)
   const arrowsRef = useRef<string | null>(null)
@@ -266,8 +285,9 @@ export function DiagramTab({ tab }: { tab: Extract<Tab, { kind: 'diagram' }> }) 
   const lineStyleRef = useRef<LineStyle>({})
   const markerId = useId().replace(/:/g, '')
 
-  const setEditing = (id: string | null, mode: 'select' | 'end' = 'select') => {
+  const setEditing = (id: string | null, mode: 'select' | 'end' = 'select', cell: DiagramCell | null = null) => {
     setEditMode(mode)
+    setEditCell(cell)
     setEditingId(id)
   }
   const setSelection = (next: DiagramSelection) => {
@@ -347,6 +367,16 @@ export function DiagramTab({ tab }: { tab: Extract<Tab, { kind: 'diagram' }> }) 
     const v = viewRef.current
     return { x: (screen.x - v.x) / v.zoom, y: (screen.y - v.y) / v.zoom }
   }
+  /** Middle of the canvas in document coordinates, where a SQL paste lands. */
+  const viewCenter = () => {
+    const rect = canvasRef.current?.getBoundingClientRect()
+    const v = viewRef.current
+    if (!rect) return { x: -v.x / v.zoom, y: -v.y / v.zoom }
+    return {
+      x: (canvasPoint(rect.width / 2) - v.x) / v.zoom,
+      y: (canvasPoint(rect.height / 2) - v.y) / v.zoom,
+    }
+  }
   const toDocRef = useRef(toDoc)
   toDocRef.current = toDoc
 
@@ -357,7 +387,13 @@ export function DiagramTab({ tab }: { tab: Extract<Tab, { kind: 'diagram' }> }) 
     const shape = entry ? { kind: entry.kind, ...defaultNodeSize(entry.kind), ...entry.size } : undefined
     const result = connectInDirection(doc, sourceId, direction, mintId, shape, lineStyleRef.current)
     if (!result) return
-    commit(result.doc)
+    const kinds = new Set(result.doc.nodes.filter((node) => node.id === sourceId || node.id === result.nodeId).map((node) => node.kind))
+    const tables = kinds.size === 1 && kinds.has('table')
+    commit(
+      tables
+        ? { ...result.doc, edges: result.doc.edges.map((edge) => (edge.id === result.edgeId ? { ...edge, ...ER_LINE } : edge)) }
+        : result.doc,
+    )
     setSelection({ nodes: [result.nodeId], edges: [] })
     setPropsOpen(true)
     setArrowsFor(null)
@@ -381,7 +417,16 @@ export function DiagramTab({ tab }: { tab: Extract<Tab, { kind: 'diagram' }> }) 
     } else {
       // The new shape is centered on the drop point, not snapped away from it.
       const centered = { ...node, x: open.at.x - node.w / 2, y: open.at.y - node.h / 2 }
-      const edge = tidyEdge({ ...lineStyleRef.current, id: mintId('e'), from: open.sourceId, to: node.id, fromPort: open.port ?? undefined })
+      const source = doc.nodes.find((item) => item.id === open.sourceId)
+      const style = source?.kind === 'table' && node.kind === 'table' ? { ...lineStyleRef.current, ...ER_LINE } : lineStyleRef.current
+      const edge = tidyEdge({
+        ...style,
+        id: mintId('e'),
+        from: open.sourceId,
+        to: node.id,
+        fromPort: open.row ? undefined : (open.port ?? undefined),
+        fromRow: open.row,
+      })
       commit({ ...placed, nodes: [...doc.nodes, centered], edges: [...doc.edges, edge] })
       setSelection({ nodes: [node.id], edges: [] })
     }
@@ -501,7 +546,8 @@ export function DiagramTab({ tab }: { tab: Extract<Tab, { kind: 'diagram' }> }) 
       }
       if (drag.kind === 'resize') {
         // Shift keeps the ratio, Alt grows around the center and skips grid and guides.
-        const options = { lock: e.shiftKey, center: e.altKey }
+        // Tables keep the height of their rows, so they never take the aspect lock.
+        const options = { lock: e.shiftKey && drag.node.kind !== 'table', center: e.altKey }
         const base = drag.node
         let resized = resizeNode(base, drag.handle, docDelta(e.clientX - drag.sx), docDelta(e.clientY - drag.sy), doc.grid, doc.snap && !e.altKey, options)
         let lines: DiagramGuide[] = []
@@ -530,6 +576,18 @@ export function DiagramTab({ tab }: { tab: Extract<Tab, { kind: 'diagram' }> }) 
         const existing = doc.nodes.find((node) => node.id === drag.id)
         if (!existing || existing.rotation === rotation) return
         apply(drag, { ...doc, nodes: doc.nodes.map((node) => (node.id === drag.id ? { ...node, rotation } : node)) }, doc)
+        return
+      }
+      if (drag.kind === 'row') {
+        if (!drag.moved && Math.abs(canvasPoint(e.clientY - drag.sy)) < DIAGRAM_DRAG_THRESHOLD) return
+        drag.moved = true
+        setDragCursor('ns-resize')
+        const table = doc.nodes.find((node) => node.id === drag.tableId)
+        if (!table) return
+        const target = Math.max(0, Math.min(drag.base.length - 1, Math.floor((point.y - table.y - TABLE_HEADER) / TABLE_ROW)))
+        const rows = moveTableRow(drag.base, drag.index, target)
+        if (rows.every((row, i) => table.rows?.[i]?.id === row.id)) return
+        apply(drag, updateTableRows(doc, drag.tableId, rows), doc)
         return
       }
       if (drag.kind === 'bend') {
@@ -633,12 +691,26 @@ export function DiagramTab({ tab }: { tab: Extract<Tab, { kind: 'diagram' }> }) 
       const target = nodeAtPoint(current.nodes, point, drag.fromId)
       if (!target) {
         // Dropped on empty canvas: offer a shape to put there, already connected.
-        setPicker({ mode: 'drop', x: e.clientX, y: e.clientY, sourceId: drag.fromId, port: drag.port, at: point })
+        setPicker({ mode: 'drop', x: e.clientX, y: e.clientY, sourceId: drag.fromId, port: drag.port, row: drag.row, at: point })
         return
       }
-      const fromPort = drag.port ?? undefined
-      const { port: toPort } = connectionEnd(target, point, DIAGRAM_PORT_SNAP / viewRef.current.zoom)
-      const existing = current.edges.find((edge) => edge.from === drag.fromId && edge.to === target.id && edge.fromPort === fromPort && edge.toPort === toPort)
+      // A table row takes the line on that row; elsewhere a near port pins it or the end floats.
+      const rowIndex = tableRowAt(target, point)
+      const toRow = rowIndex != null && rowIndex >= 0 ? target.rows?.[rowIndex]?.id : undefined
+      const fromRow = drag.row
+      const fromPort = fromRow ? undefined : (drag.port ?? undefined)
+      const toPort = toRow ? undefined : connectionEnd(target, point, DIAGRAM_PORT_SNAP / viewRef.current.zoom).port
+      const source = current.nodes.find((node) => node.id === drag.fromId)
+      const style = source?.kind === 'table' && target.kind === 'table' ? { ...lineStyleRef.current, ...ER_LINE } : lineStyleRef.current
+      const existing = current.edges.find(
+        (edge) =>
+          edge.from === drag.fromId &&
+          edge.to === target.id &&
+          edge.fromPort === fromPort &&
+          edge.toPort === toPort &&
+          edge.fromRow === fromRow &&
+          edge.toRow === toRow,
+      )
       if (existing) {
         actionsRef.current.setSelection({ nodes: [], edges: [existing.id] })
         setPropsOpen(true)
@@ -648,7 +720,7 @@ export function DiagramTab({ tab }: { tab: Extract<Tab, { kind: 'diagram' }> }) 
       noteRef.current(current)
       updateRef.current(tab.root, tab.path, {
         ...current,
-        edges: [...current.edges, tidyEdge({ ...lineStyleRef.current, id, from: drag.fromId, to: target.id, fromPort, toPort })],
+        edges: [...current.edges, tidyEdge({ ...style, id, from: drag.fromId, to: target.id, fromPort, toPort, fromRow, toRow })],
       })
       actionsRef.current.setSelection({ nodes: [], edges: [id] })
       setPropsOpen(true)
@@ -785,6 +857,26 @@ export function DiagramTab({ tab }: { tab: Extract<Tab, { kind: 'diagram' }> }) 
     setConnectFrom(null)
     return copy
   }
+  /** `CREATE TABLE` text becomes tables at the middle of the view. Returns false when it is not SQL. */
+  const importSql = (text: string) => {
+    if (!looksLikeSql(text)) return false
+    const doc = currentDoc()
+    if (!doc) return false
+    const built = sqlToDiagram(parseSqlTables(text), viewCenter(), mintId)
+    if (!built.nodes.length) return false
+    commit({
+      ...doc,
+      nodes: [...doc.nodes, ...built.nodes.map(tidyNode)],
+      edges: [...doc.edges, ...built.edges.map(tidyEdge)],
+    })
+    setSelection({ nodes: built.nodes.map((node) => node.id), edges: built.edges.map((edge) => edge.id) })
+    setEditing(null)
+    setConnectFrom(null)
+    setPropsOpen(true)
+    return true
+  }
+  const importSqlRef = useRef(importSql)
+  importSqlRef.current = importSql
   const copySelection = () => {
     const doc = currentDoc()
     const picked = selectionRef.current
@@ -808,7 +900,7 @@ export function DiagramTab({ tab }: { tab: Extract<Tab, { kind: 'diagram' }> }) 
     commit({
       ...doc,
       nodes: doc.nodes.map((node) =>
-        ids.has(node.id) ? resizeNode(node, dx ? 'e' : 's', dx, dy, doc.grid, false) : node,
+        ids.has(node.id) && !(node.kind === 'table' && dy) ? resizeNode(node, dx ? 'e' : 's', dx, dy, doc.grid, false) : node,
       ),
     })
   }
@@ -894,12 +986,16 @@ export function DiagramTab({ tab }: { tab: Extract<Tab, { kind: 'diagram' }> }) 
         return
       }
       if (mod && !e.shiftKey && !e.altKey && lower === 'v') {
-        if (!clipboard) return
-        e.preventDefault()
-        const pasted = keys.pasteShapes(clipboard, true)
-        // The next paste lands one more step away, as in draw.io.
-        if (pasted) clipboard = pasted
-        setPropsOpen(true)
+        // Let the paste event see CREATE TABLE text. Shape paste runs unless that import wins.
+        if (pasteTimerRef.current) clearTimeout(pasteTimerRef.current)
+        pasteTimerRef.current = setTimeout(() => {
+          pasteTimerRef.current = null
+          if (!clipboard) return
+          const pasted = keys.pasteShapes(clipboard, true)
+          // The next paste lands one more step away, as in draw.io.
+          if (pasted) clipboard = pasted
+          setPropsOpen(true)
+        }, 50)
         return
       }
       if (mod && !e.shiftKey && !e.altKey && lower === 'd') {
@@ -973,6 +1069,25 @@ export function DiagramTab({ tab }: { tab: Extract<Tab, { kind: 'diagram' }> }) 
   }, [active, key, saveDiagram, tab.path, tab.root])
 
   useEffect(() => {
+    if (!active) return
+    const onPaste = (event: ClipboardEvent) => {
+      const target = event.target as HTMLElement | null
+      if (isTerminalInputTarget(event.target) || target?.closest?.('input, textarea, [contenteditable="true"], [contenteditable="plaintext-only"]')) return
+      const text = event.clipboardData?.getData('text/plain') ?? ''
+      if (!importSqlRef.current(text)) return
+      event.preventDefault()
+      if (pasteTimerRef.current) clearTimeout(pasteTimerRef.current)
+      pasteTimerRef.current = null
+    }
+    window.addEventListener('paste', onPaste)
+    return () => {
+      window.removeEventListener('paste', onPaste)
+      if (pasteTimerRef.current) clearTimeout(pasteTimerRef.current)
+      pasteTimerRef.current = null
+    }
+  }, [active])
+
+  useEffect(() => {
     if (!chatMenu) return
     const close = () => setChatMenu(null)
     const onKey = (e: KeyboardEvent) => {
@@ -1021,6 +1136,10 @@ export function DiagramTab({ tab }: { tab: Extract<Tab, { kind: 'diagram' }> }) 
         }
       }
       setHover((prev) => (prev?.type === hit?.type && prev?.id === hit?.id ? prev : hit))
+      const table = hit?.type === 'node' ? doc.nodes.find((node) => node.id === hit.id && node.kind === 'table') : undefined
+      const index = table ? tableRowAt(table, point) : null
+      const row = table && index != null && index >= 0 ? { id: table.id, index } : null
+      setHoverRow((prev) => (prev?.id === row?.id && prev?.index === row?.index ? prev : row))
     })
   }
 
@@ -1113,6 +1232,13 @@ export function DiagramTab({ tab }: { tab: Extract<Tab, { kind: 'diagram' }> }) 
     }
     const grab = doc.nodes.find((node) => node.id === hit.id)
     if (!grab) return
+    // Rows of an already selected table drag to reorder; the header (or a first click) moves the table.
+    const lone = already && !e.shiftKey && current.nodes.length === 1 && !current.edges.length
+    const rowIndex = lone ? tableRowAt(grab, p) : null
+    if (rowIndex != null && rowIndex >= 0 && grab.rows) {
+      dragRef.current = { kind: 'row', tableId: grab.id, index: rowIndex, base: grab.rows, sy: e.clientY, moved: false, remembered: false }
+      return
+    }
     const ids = e.shiftKey || already ? [...new Set([...selectionRef.current.nodes, hit.id])] : [hit.id]
     dragRef.current = {
       kind: 'move',
@@ -1140,9 +1266,22 @@ export function DiagramTab({ tab }: { tab: Extract<Tab, { kind: 'diagram' }> }) 
     if (hit?.type !== 'node') return
     dragRef.current = null
     labelNoted.current = false
-    setEditing(hit.id)
     setSelection({ nodes: [hit.id], edges: [] })
     setPropsOpen(true)
+    const node = file.doc.nodes.find((item) => item.id === hit.id)
+    const rowIndex = node ? tableRowAt(node, p) : null
+    const row = node && rowIndex != null && rowIndex >= 0 ? node.rows?.[rowIndex] : undefined
+    if (node && row) {
+      // A table cell: the key column cycles PK/FK, the right part edits the type, the rest the name.
+      const x = p.x - node.x
+      if (x < TABLE_KEY_WIDTH) {
+        commit(updateTableRows(file.doc, node.id, (node.rows ?? []).map((item) => (item.id === row.id ? { ...item, key: nextKey(item.key) } : item))))
+        return
+      }
+      setEditing(node.id, 'select', { rowId: row.id, field: x > node.w * 0.6 ? 'type' : 'name' })
+      return
+    }
+    setEditing(hit.id)
   }
 
   const patchEdge = (id: string, patch: Partial<DiagramEdge>) => {
@@ -1181,16 +1320,64 @@ export function DiagramTab({ tab }: { tab: Extract<Tab, { kind: 'diagram' }> }) 
         : { ...doc, edges: doc.edges.map((edge) => (edge.id === id ? { ...edge, detail } : edge)) },
     )
 
+  const editRows = (id: string, change: (rows: DiagramRow[]) => DiagramRow[]) =>
+    editLive((doc) => {
+      const table = doc.nodes.find((node) => node.id === id)
+      return table ? updateTableRows(doc, id, change(table.rows ?? [])) : doc
+    })
+  const editCellText = (id: string, cell: DiagramCell, text: string) =>
+    editRows(id, (rows) =>
+      rows.map((row) => (row.id !== cell.rowId ? row : cell.field === 'name' ? { ...row, name: text } : { ...row, type: text.trim() ? text : undefined })),
+    )
+  // Tab and Enter swap one cell editor for the next; the old one's blur must not end editing.
+  const cellMoving = useRef(false)
+  const moveCell = (id: string, cell: DiagramCell, move: DiagramCellMove) => {
+    const table = currentDoc()?.nodes.find((node) => node.id === id)
+    const rows = table?.rows ?? []
+    const index = rows.findIndex((row) => row.id === cell.rowId)
+    if (!table || index < 0 || move === 'done') {
+      labelNoted.current = false
+      setEditing(null)
+      return
+    }
+    cellMoving.current = true
+    window.setTimeout(() => {
+      cellMoving.current = false
+    })
+    if (move === 'next' && cell.field === 'name') {
+      setEditing(id, 'select', { rowId: cell.rowId, field: 'type' })
+    } else if (move === 'next' && rows[index + 1]) {
+      setEditing(id, 'select', { rowId: rows[index + 1].id, field: 'name' })
+    } else if (move === 'prev' && cell.field === 'type') {
+      setEditing(id, 'select', { rowId: cell.rowId, field: 'name' })
+    } else if (move === 'prev') {
+      if (rows[index - 1]) setEditing(id, 'select', { rowId: rows[index - 1].id, field: 'type' })
+    } else if (move === 'delete') {
+      editRows(id, (list) => list.filter((row) => row.id !== cell.rowId))
+      const previous = rows[index - 1] ?? rows[index + 1]
+      if (previous) setEditing(id, 'end', { rowId: previous.id, field: 'name' })
+      else setEditing(null)
+    } else {
+      // Enter, or Tab past the last cell: a new row below, ready for its name.
+      const row: DiagramRow = { id: mintId('r'), name: '' }
+      editRows(id, (list) => [...list.slice(0, index + 1), row, ...list.slice(index + 1)])
+      setEditing(id, 'select', { rowId: row.id, field: 'name' })
+    }
+  }
+
   // The node views are memoized, so their callbacks must keep one identity.
-  const editRef = useRef(editNodeText)
-  editRef.current = editNodeText
-  const nodeEdit = useMemo(
+  const editRef = useRef({ editNodeText, editCellText, moveCell })
+  editRef.current = { editNodeText, editCellText, moveCell }
+  const nodeEdit = useMemo<DiagramNodeEdit>(
     () => ({
-      text: (id: string, text: string) => editRef.current(id, text),
+      text: (id, text) => editRef.current.editNodeText(id, text),
       done: () => {
+        if (cellMoving.current) return
         labelNoted.current = false
         setEditing(null)
       },
+      cellText: (id, cell, text) => editRef.current.editCellText(id, cell, text),
+      cellMove: (id, cell, move) => editRef.current.moveCell(id, cell, move),
     }),
     [],
   )
@@ -1270,8 +1457,8 @@ export function DiagramTab({ tab }: { tab: Extract<Tab, { kind: 'diagram' }> }) 
     tool !== 'select' || editing
       ? undefined
       : connectDrag
-        ? byId.get(connectDrag.fromId)
-        : !dragging && hoverNode && hoverNode !== singleNode
+        ? connectDrag.row ? undefined : byId.get(connectDrag.fromId)
+        : !dragging && hoverNode && hoverNode !== singleNode && hoverNode.kind !== 'table'
           ? hoverNode
           : undefined
   const singleEdge = single?.type === 'edge' ? doc.edges.find((edge) => edge.id === single.id) : undefined
@@ -1282,6 +1469,8 @@ export function DiagramTab({ tab }: { tab: Extract<Tab, { kind: 'diagram' }> }) 
     const to = byId.get(edge.to)
     return from && to ? edgePoints(from, to, edge) : null
   })
+  const hoverRowNode = hoverRow ? byId.get(hoverRow.id) : undefined
+  const hoverRowId = hoverRowNode && hoverRow ? hoverRowNode.rows?.[hoverRow.index]?.id : undefined
   const arrowsNode =
     arrowsFor && tool === 'select' && !editing && !dragging && !connectDrag && !altHeld && !marquee ? byId.get(arrowsFor) : undefined
 
@@ -1430,8 +1619,8 @@ export function DiagramTab({ tab }: { tab: Extract<Tab, { kind: 'diagram' }> }) 
               node={node}
               highlight={connectFrom === node.id || connectTarget?.id === node.id}
               editing={editing === node.id ? editMode : false}
-              onEditText={nodeEdit.text}
-              onEditDone={nodeEdit.done}
+              cell={editing === node.id ? editCell : null}
+              edit={nodeEdit}
             />
           ))}
         </div>
@@ -1505,15 +1694,23 @@ export function DiagramTab({ tab }: { tab: Extract<Tab, { kind: 'diagram' }> }) 
             const from = byId.get(connectDrag.fromId)
             if (!from) return null
             const targetEnd = connectTarget ? connectionEnd(connectTarget, cursor, DIAGRAM_PORT_SNAP / z) : null
+            const targetRow = connectTarget ? tableRowAt(connectTarget, cursor) : null
+            const toward = connectTarget ? nodeCenter(connectTarget) : cursor
+            const rowStart = connectDrag.row ? rowAnchor(from, connectDrag.row, toward) : null
             const start = screenPoint(
-              connectDrag.port == null ? sideAnchor(from, nearestSide(from, connectTarget ? nodeCenter(connectTarget) : cursor)) : portAnchor(from, connectDrag.port),
+              rowStart ?? (connectDrag.port == null ? sideAnchor(from, nearestSide(from, toward)) : portAnchor(from, connectDrag.port)),
             )
+            const rowEnd =
+              connectTarget && targetRow != null && targetRow >= 0
+                ? rowAnchor(connectTarget, connectTarget.rows?.[targetRow]?.id ?? '', nodeCenter(from))
+                : null
             const end = screenPoint(
-              connectTarget && targetEnd
-                ? targetEnd.port != null
-                  ? portAnchor(connectTarget, targetEnd.port)
-                  : sideAnchor(connectTarget, nearestSide(connectTarget, nodeCenter(from)))
-                : cursor,
+              rowEnd ??
+                (connectTarget && targetEnd
+                  ? targetEnd.port != null
+                    ? portAnchor(connectTarget, targetEnd.port)
+                    : sideAnchor(connectTarget, nearestSide(connectTarget, nodeCenter(from)))
+                  : cursor),
             )
             return <line x1={start.x} y1={start.y} x2={end.x} y2={end.y} stroke="var(--color-koma-accent)" strokeWidth={1.5} strokeDasharray="4 3" />
           })() : null}
@@ -1536,6 +1733,35 @@ export function DiagramTab({ tab }: { tab: Extract<Tab, { kind: 'diagram' }> }) 
             />
           ) : null}
         </svg>
+        {hoverRowNode && hoverRowId && tool === 'select' && !editing && !dragging
+          ? (['w', 'e'] as const).map((side) => {
+              const y = rowCenterY(hoverRowNode, hoverRowId)
+              if (y == null) return null
+              const at = screenPoint({ x: side === 'w' ? hoverRowNode.x : hoverRowNode.x + hoverRowNode.w, y })
+              return (
+                <span
+                  key={`row-${side}`}
+                  data-diagram-ui=""
+                  className="absolute z-10 h-2 w-2 -translate-x-1/2 -translate-y-1/2"
+                  style={{ left: at.x, top: at.y, cursor: 'crosshair' }}
+                  onPointerDown={(e) => {
+                    if (e.button !== 0 || spaceRef.current) return
+                    e.stopPropagation()
+                    e.preventDefault()
+                    dragRef.current = { kind: 'connect', fromId: hoverRowNode.id, port: null, row: hoverRowId }
+                    setConnectDrag({ fromId: hoverRowNode.id, port: null, row: hoverRowId })
+                    setDragCursor('crosshair')
+                    setCursor(toDoc(e))
+                    setConnectFrom(null)
+                  }}
+                >
+                  <svg viewBox="0 0 12 12" className="h-full w-full overflow-visible text-koma-accent" aria-hidden="true">
+                    <path d="M6 1.5 V10.5 M1.5 6 H10.5" fill="none" stroke="currentColor" strokeWidth="1.5" />
+                  </svg>
+                </span>
+              )
+            })
+          : null}
         {portsFor
           ? Array.from({ length: DIAGRAM_PORTS }, (_, port) => {
               const at = screenPoint(portAnchor(portsFor, port))
@@ -1574,7 +1800,7 @@ export function DiagramTab({ tab }: { tab: Extract<Tab, { kind: 'diagram' }> }) 
               transform: singleNode.rotation ? `rotate(${singleNode.rotation}deg)` : undefined,
             }}
           >
-            {HANDLES.map((handle) => (
+            {HANDLES.filter((handle) => singleNode.kind !== 'table' || handle.id === 'e' || handle.id === 'w').map((handle) => (
               <span
                 key={handle.id}
                 data-diagram-ui=""
@@ -1588,7 +1814,7 @@ export function DiagramTab({ tab }: { tab: Extract<Tab, { kind: 'diagram' }> }) 
                 }}
               />
             ))}
-            <button
+            {singleNode.kind === 'table' ? null : <button
               type="button"
               title="Rotate"
               aria-label="Rotate"
@@ -1611,7 +1837,7 @@ export function DiagramTab({ tab }: { tab: Extract<Tab, { kind: 'diagram' }> }) 
               }}
             >
               <RotateCw size={10} />
-            </button>
+            </button>}
           </div>
         ) : null}
         {arrowsNode ? (
@@ -1673,6 +1899,12 @@ export function DiagramTab({ tab }: { tab: Extract<Tab, { kind: 'diagram' }> }) 
             onText={(id, text) => editNodeText(id, text)}
             onEdgeText={(id, text) => editEdgeText(id, text)}
             onDetail={(kind, id, detail) => editDetail(kind, id, detail)}
+            onRows={(id, rows, live) => {
+              const doc = currentDoc()
+              if (!doc) return
+              if (live) editRows(id, () => rows)
+              else commit(updateTableRows(doc, id, rows))
+            }}
             onTextDone={() => {
               labelNoted.current = false
             }}

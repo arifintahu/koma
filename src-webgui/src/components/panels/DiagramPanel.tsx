@@ -11,7 +11,7 @@ import { addDiagramFileToChat, copyDiagramFileMermaid } from '../../lib/diagramC
 import { DiagramRefMenuItems } from '../DiagramVisual'
 import { DIAGRAM_PALETTE, ShapePreview, type DiagramPaletteEntry } from '../diagram/DiagramShapePreview'
 
-const PALETTE_GROUPS = ['Basic', 'Flowchart'] as const
+const PALETTE_GROUPS = ['Basic', 'Flowchart', 'Database'] as const
 
 const EMPTY_ROOTS: string[] = []
 
