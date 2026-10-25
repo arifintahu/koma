@@ -3,8 +3,11 @@
 //! A JavaScript heap flag does not cover the native text buffers, and a
 //! virtual-memory limit trips on JavaScriptCore's empty guard region.
 
-use std::sync::mpsc::{self, Receiver, RecvTimeoutError};
+use std::sync::mpsc;
+#[cfg(unix)]
+use std::sync::mpsc::{Receiver, RecvTimeoutError};
 use std::thread::{self, JoinHandle};
+#[cfg(unix)]
 use std::time::Duration;
 
 /// Default physical-footprint ceiling for one terminal client.
@@ -385,7 +388,7 @@ fn watch_job(
     };
     // winnt.h. A completion port is what turns the commit failure into a message.
     const JOB_OBJECT_MSG_PROCESS_MEMORY_LIMIT: u32 = 9;
-    unsafe {
+    let port = unsafe {
         let port = CreateIoCompletionPort(INVALID_HANDLE_VALUE, std::ptr::null_mut(), 0, 1);
         if port.is_null() {
             eprintln!(
@@ -412,34 +415,35 @@ fn watch_job(
             let _ = CloseHandle(port);
             return (std::ptr::null_mut(), None, None);
         }
-        let (tx, rx) = mpsc::channel();
-        // HANDLE is a raw pointer, so the thread carries the bits.
-        let job_bits = job as usize;
-        let port_bits = port as usize;
-        let join = thread::spawn(move || {
-            let job = job_bits as HANDLE;
-            let port = port_bits as HANDLE;
-            loop {
-                let mut bytes = 0u32;
-                let mut key: usize = 0;
-                let mut overlapped: *mut OVERLAPPED = std::ptr::null_mut();
-                let ok = unsafe {
-                    GetQueuedCompletionStatus(port, &mut bytes, &mut key, &mut overlapped, 1000)
-                };
-                if ok != 0 && bytes == JOB_OBJECT_MSG_PROCESS_MEMORY_LIMIT {
-                    unsafe {
-                        let _ = TerminateJobObject(job, 1);
-                    }
-                    return true;
+        port
+    };
+    let (tx, rx) = mpsc::channel();
+    // HANDLE is a raw pointer, so the thread carries the bits.
+    let job_bits = job as usize;
+    let port_bits = port as usize;
+    let join = thread::spawn(move || {
+        let job = job_bits as HANDLE;
+        let port = port_bits as HANDLE;
+        loop {
+            let mut bytes = 0u32;
+            let mut key: usize = 0;
+            let mut overlapped: *mut OVERLAPPED = std::ptr::null_mut();
+            let ok = unsafe {
+                GetQueuedCompletionStatus(port, &mut bytes, &mut key, &mut overlapped, 1000)
+            };
+            if ok != 0 && bytes == JOB_OBJECT_MSG_PROCESS_MEMORY_LIMIT {
+                unsafe {
+                    let _ = TerminateJobObject(job, 1);
                 }
-                match rx.try_recv() {
-                    Err(TryRecvError::Empty) => {}
-                    _ => return false,
-                }
+                return true;
             }
-        });
-        (port, Some(tx), Some(join))
-    }
+            match rx.try_recv() {
+                Err(TryRecvError::Empty) => {}
+                _ => return false,
+            }
+        }
+    });
+    (port, Some(tx), Some(join))
 }
 
 #[cfg(windows)]

@@ -373,10 +373,11 @@ mod tests {
                 .unwrap_or(0)
         ));
         std::fs::create_dir_all(&tmp).unwrap();
-        let bin = tmp.join("rust-analyzer");
         #[cfg(unix)]
         {
+            use std::io::Write;
             use std::os::unix::fs::OpenOptionsExt;
+            let bin = tmp.join("rust-analyzer");
             let mut f = std::fs::OpenOptions::new()
                 .write(true)
                 .create(true)
@@ -384,16 +385,15 @@ mod tests {
                 .mode(0o755)
                 .open(&bin)
                 .unwrap();
-            use std::io::Write;
             writeln!(
                 f,
                 "#!/bin/sh\necho \"error: Unknown binary 'rust-analyzer' in official toolchain 'stable-aarch64-apple-darwin'.\" >&2\nexit 1"
             )
             .unwrap();
+            assert_eq!(classify_path_binary(&bin), PathBinary::Broken);
         }
         #[cfg(not(unix))]
         {
-            // On Windows, write a .cmd that prints the rustup message.
             let bin = tmp.join("rust-analyzer.cmd");
             std::fs::write(
                 &bin,
@@ -401,10 +401,7 @@ mod tests {
             )
             .unwrap();
             assert_eq!(classify_path_binary(&bin), PathBinary::Broken);
-            let _ = std::fs::remove_dir_all(&tmp);
-            return;
         }
-        assert_eq!(classify_path_binary(&bin), PathBinary::Broken);
         let _ = std::fs::remove_dir_all(&tmp);
     }
 
@@ -418,11 +415,11 @@ mod tests {
                 .unwrap_or(0)
         ));
         std::fs::create_dir_all(&tmp).unwrap();
-        let bin = tmp.join("fake-ls");
         #[cfg(unix)]
         {
             use std::io::Write;
             use std::os::unix::fs::OpenOptionsExt;
+            let bin = tmp.join("fake-ls");
             let mut f = std::fs::OpenOptions::new()
                 .write(true)
                 .create(true)
@@ -431,6 +428,12 @@ mod tests {
                 .open(&bin)
                 .unwrap();
             writeln!(f, "#!/bin/sh\necho 'fake-ls 1.2.3'\nexit 0").unwrap();
+            match classify_path_binary(&bin) {
+                PathBinary::Usable { version } => {
+                    assert_eq!(version.as_deref(), Some("fake-ls 1.2.3"));
+                }
+                PathBinary::Broken => panic!("expected usable"),
+            }
         }
         #[cfg(not(unix))]
         {
@@ -442,14 +445,6 @@ mod tests {
                 }
                 PathBinary::Broken => panic!("expected usable"),
             }
-            let _ = std::fs::remove_dir_all(&tmp);
-            return;
-        }
-        match classify_path_binary(&bin) {
-            PathBinary::Usable { version } => {
-                assert_eq!(version.as_deref(), Some("fake-ls 1.2.3"));
-            }
-            PathBinary::Broken => panic!("expected usable"),
         }
         let _ = std::fs::remove_dir_all(&tmp);
     }

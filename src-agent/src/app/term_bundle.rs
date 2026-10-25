@@ -19,6 +19,9 @@ struct Manifest {
 #[derive(Deserialize)]
 struct PayloadFile {
     sha256: String,
+    /// Applied on Unix. Windows has no executable bit, so this field is only
+    /// deserialized there.
+    #[cfg_attr(not(unix), allow(dead_code))]
     executable: bool,
 }
 

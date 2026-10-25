@@ -681,13 +681,6 @@ impl BrowserDaemon {
             false
         }
     }
-
-    /// Get the daemon TCP port (Windows only, test only).
-    #[cfg(windows)]
-    #[cfg(test)]
-    fn daemon_port(&self) -> u16 {
-        self.daemon_port
-    }
 }
 
 impl Drop for BrowserDaemon {

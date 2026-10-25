@@ -674,6 +674,7 @@ mod tests {
         let _ = std::fs::remove_dir_all(&tmp);
     }
 
+    #[cfg(unix)]
     #[test]
     fn find_npm_binary_prefers_bin_then_node_modules() {
         let tmp = tempfile_dir("koma-lsp-npm-bin");
@@ -686,6 +687,7 @@ mod tests {
         let _ = std::fs::remove_dir_all(&tmp);
     }
 
+    #[cfg(unix)]
     #[test]
     fn find_npm_binary_falls_back_to_js() {
         let tmp = tempfile_dir("koma-lsp-npm-js");
@@ -698,6 +700,7 @@ mod tests {
         let _ = std::fs::remove_dir_all(&tmp);
     }
 
+    #[cfg(unix)]
     #[test]
     fn find_npm_binary_follows_global_layout() {
         // Mirrors `npm install -g --prefix <dir>`:
@@ -724,6 +727,7 @@ mod tests {
         let _ = std::fs::remove_dir_all(&tmp);
     }
 
+    #[cfg(unix)]
     #[test]
     fn find_npm_binary_finds_vscode_json_under_lib() {
         // No bin/ shim — only the package payload (degraded layout).
