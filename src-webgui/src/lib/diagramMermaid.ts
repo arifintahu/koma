@@ -4,15 +4,16 @@ import {
   edgeRoute,
   edgeStyle,
   emptyDiagram,
-  nodeCenter,
-  rotatePoint,
+  nodeBounds,
   type DiagramDoc,
   type DiagramEdge,
   type DiagramKind,
-  type DiagramNode,
   type DiagramPoint,
+  type DiagramRect,
 } from './diagram'
-export type DiagramRect = { x: number; y: number; w: number; h: number }
+
+export { nodeBounds }
+export type { DiagramRect }
 
 const views = new Map<string, DiagramDoc>()
 
@@ -24,21 +25,6 @@ export function diagramViewForMermaid(mermaid: string): { doc: DiagramDoc; captu
   const captured = views.get(mermaid)
   if (captured) return { doc: captured, captured: true }
   return { doc: parseMermaidDiagram(mermaid).doc, captured: false }
-}
-
-export function nodeBounds(node: DiagramNode): DiagramRect {
-  const center = nodeCenter(node)
-  const corners = [
-    { x: node.x, y: node.y },
-    { x: node.x + node.w, y: node.y },
-    { x: node.x + node.w, y: node.y + node.h },
-    { x: node.x, y: node.y + node.h },
-  ].map((point) => rotatePoint(point, center, node.rotation ?? 0))
-  const xs = corners.map((point) => point.x)
-  const ys = corners.map((point) => point.y)
-  const x = Math.min(...xs)
-  const y = Math.min(...ys)
-  return { x, y, w: Math.max(...xs) - x, h: Math.max(...ys) - y }
 }
 
 function rectsIntersect(a: DiagramRect, b: DiagramRect): boolean {

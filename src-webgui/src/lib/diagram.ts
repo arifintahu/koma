@@ -517,6 +517,182 @@ export function nodeAtPoint(nodes: readonly DiagramNode[], point: DiagramPoint, 
   return best
 }
 
+export type DiagramRect = { x: number; y: number; w: number; h: number }
+
+/** Axis-aligned box around the node after rotation. */
+export function nodeBounds(node: DiagramNode): DiagramRect {
+  const center = nodeCenter(node)
+  const corners = [
+    { x: node.x, y: node.y },
+    { x: node.x + node.w, y: node.y },
+    { x: node.x + node.w, y: node.y + node.h },
+    { x: node.x, y: node.y + node.h },
+  ].map((point) => rotatePoint(point, center, node.rotation ?? 0))
+  const xs = corners.map((point) => point.x)
+  const ys = corners.map((point) => point.y)
+  const x = Math.min(...xs)
+  const y = Math.min(...ys)
+  return { x, y, w: Math.max(...xs) - x, h: Math.max(...ys) - y }
+}
+
+export type DiagramSelection = { nodes: string[]; edges: string[] }
+
+export const NO_SELECTION: DiagramSelection = { nodes: [], edges: [] }
+
+export function selectionSize(selection: DiagramSelection): number {
+  return selection.nodes.length + selection.edges.length
+}
+
+/** Shapes fully inside the rectangle, plus the lines whose both ends are among them. */
+export function selectInRect(doc: DiagramDoc, rect: DiagramRect): DiagramSelection {
+  const inside = (box: DiagramRect) =>
+    box.x >= rect.x && box.y >= rect.y && box.x + box.w <= rect.x + rect.w && box.y + box.h <= rect.y + rect.h
+  const nodes = doc.nodes.filter((node) => inside(nodeBounds(node))).map((node) => node.id)
+  const picked = new Set(nodes)
+  const edges = doc.edges.filter((edge) => picked.has(edge.from) && picked.has(edge.to)).map((edge) => edge.id)
+  return { nodes, edges }
+}
+
+/** Union of two selections, or the first with the second's items toggled. */
+export function mergeSelection(base: DiagramSelection, extra: DiagramSelection, toggle: boolean): DiagramSelection {
+  const merge = (a: string[], b: string[]) => {
+    const next = new Set(a)
+    for (const id of b) {
+      if (toggle && next.has(id)) next.delete(id)
+      else next.add(id)
+    }
+    return [...next]
+  }
+  return { nodes: merge(base.nodes, extra.nodes), edges: merge(base.edges, extra.edges) }
+}
+
+/** The selected shapes plus every line that is selected or runs between two selected shapes. */
+export function selectionDoc(doc: DiagramDoc, selection: DiagramSelection): DiagramDoc {
+  const edgeIds = new Set(selection.edges)
+  const nodeIds = new Set(selection.nodes)
+  for (const edge of doc.edges) {
+    if (edgeIds.has(edge.id)) {
+      nodeIds.add(edge.from)
+      nodeIds.add(edge.to)
+    }
+  }
+  return {
+    ...doc,
+    nodes: doc.nodes.filter((node) => nodeIds.has(node.id)),
+    edges: doc.edges.filter((edge) => edgeIds.has(edge.id) || (selection.nodes.includes(edge.from) && selection.nodes.includes(edge.to))),
+  }
+}
+
+export function selectionBounds(doc: DiagramDoc, selection: DiagramSelection): DiagramRect | null {
+  const picked = new Set(selection.nodes)
+  let box: DiagramRect | null = null
+  for (const node of doc.nodes) {
+    if (!picked.has(node.id)) continue
+    const b = nodeBounds(node)
+    if (!box) {
+      box = b
+      continue
+    }
+    const x = Math.min(box.x, b.x)
+    const y = Math.min(box.y, b.y)
+    box = { x, y, w: Math.max(box.x + box.w, b.x + b.w) - x, h: Math.max(box.y + box.h, b.y + b.h) - y }
+  }
+  return box
+}
+
+/**
+ * Copies of the selected shapes and of the lines between them, shifted and with fresh ids.
+ * Lines that leave the selection stay behind, as in draw.io.
+ */
+export function copyDiagramShapes(
+  doc: DiagramDoc,
+  selection: DiagramSelection,
+  mint: (prefix: string) => string,
+  dx: number,
+  dy: number,
+): { nodes: DiagramNode[]; edges: DiagramEdge[] } {
+  const ids = new Map<string, string>()
+  const picked = new Set(selection.nodes)
+  const nodes: DiagramNode[] = []
+  for (const node of doc.nodes) {
+    if (!picked.has(node.id)) continue
+    const id = mint('n')
+    ids.set(node.id, id)
+    nodes.push(copyNode(node, id, dx, dy))
+  }
+  const edges: DiagramEdge[] = []
+  for (const edge of doc.edges) {
+    const from = ids.get(edge.from)
+    const to = ids.get(edge.to)
+    if (!from || !to) continue
+    const copy: DiagramEdge = { ...edge, id: mint('e'), from, to }
+    if (edge.bends) copy.bends = edge.bends.map((point) => ({ x: point.x + dx, y: point.y + dy }))
+    edges.push(copy)
+  }
+  return { nodes, edges }
+}
+
+/** Shift shapes, and the bends of lines whose both ends move, so routes keep their shape. */
+export function moveDiagramNodes(doc: DiagramDoc, ids: readonly string[], dx: number, dy: number): DiagramDoc {
+  if (!dx && !dy) return doc
+  const moving = new Set(ids)
+  return {
+    ...doc,
+    nodes: doc.nodes.map((node) => (moving.has(node.id) ? { ...node, x: node.x + dx, y: node.y + dy } : node)),
+    edges: doc.edges.map((edge) =>
+      edge.bends?.length && moving.has(edge.from) && moving.has(edge.to)
+        ? { ...edge, bends: edge.bends.map((point) => ({ x: point.x + dx, y: point.y + dy })) }
+        : edge,
+    ),
+  }
+}
+
+/** Removes the selection and every line left without both ends. */
+export function deleteDiagramSelection(doc: DiagramDoc, selection: DiagramSelection): DiagramDoc {
+  const nodes = new Set(selection.nodes)
+  const edges = new Set(selection.edges)
+  return {
+    ...doc,
+    nodes: doc.nodes.filter((node) => !nodes.has(node.id)),
+    edges: doc.edges.filter((edge) => !edges.has(edge.id) && !nodes.has(edge.from) && !nodes.has(edge.to)),
+  }
+}
+
+export function distanceToSegment(point: DiagramPoint, a: DiagramPoint, b: DiagramPoint): number {
+  const dx = b.x - a.x
+  const dy = b.y - a.y
+  const length = dx * dx + dy * dy
+  const t = length ? Math.max(0, Math.min(1, ((point.x - a.x) * dx + (point.y - a.y) * dy) / length)) : 0
+  return Math.hypot(point.x - (a.x + dx * t), point.y - (a.y + dy * t))
+}
+
+export type DiagramHit = { type: 'node' | 'edge'; id: string }
+
+/** Topmost shape under the point, else the nearest line within the tolerance. */
+export function hitDiagram(doc: DiagramDoc, point: DiagramPoint, tolerance: number): DiagramHit | null {
+  for (let i = doc.nodes.length - 1; i >= 0; i--) {
+    const node = doc.nodes[i]
+    if (node && pointInNode(node, point)) return { type: 'node', id: node.id }
+  }
+  const byId = new Map(doc.nodes.map((node) => [node.id, node]))
+  let best: DiagramHit | null = null
+  let dist = tolerance
+  for (const edge of doc.edges) {
+    const from = byId.get(edge.from)
+    const to = byId.get(edge.to)
+    if (!from || !to) continue
+    const points = edgePoints(from, to, edge)
+    for (let i = 1; i < points.length; i++) {
+      const d = distanceToSegment(point, points[i - 1], points[i])
+      if (d <= dist) {
+        dist = d
+        best = { type: 'edge', id: edge.id }
+      }
+    }
+  }
+  return best
+}
+
 export function nearestSide(node: DiagramNode, point: DiagramPoint): DiagramSide {
   let best: DiagramSide = 'e'
   let dist = Infinity
@@ -650,6 +826,20 @@ export function edgeRoute(from: DiagramNode, to: DiagramNode, edge: DiagramEdge)
     mid = [leave, { x: leave.x, y: enter.y }, enter]
   }
   return dedupe([start, ...mid, end])
+}
+
+const routeCache = new WeakMap<DiagramEdge, { from: DiagramNode; to: DiagramNode; points: DiagramPoint[] }>()
+
+/**
+ * `edgeRoute`, remembered per line. Docs share unchanged nodes and lines between edits,
+ * so a drag only reroutes the lines touching what moved.
+ */
+export function edgePoints(from: DiagramNode, to: DiagramNode, edge: DiagramEdge): DiagramPoint[] {
+  const hit = routeCache.get(edge)
+  if (hit && hit.from === from && hit.to === to) return hit.points
+  const points = edgeRoute(from, to, edge)
+  routeCache.set(edge, { from, to, points })
+  return points
 }
 
 /** Move one segment of an orthogonal route and keep both anchors fixed. */

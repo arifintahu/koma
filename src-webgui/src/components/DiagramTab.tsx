@@ -1,5 +1,5 @@
 import { canvasPoint, pagePoint } from '../lib/uiScale'
-import { useEffect, useId, useRef, useState, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react'
+import { useEffect, useId, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent } from 'react'
 import { Circle, Diamond, HandGrab, MousePointer2, PanelRightClose, PanelRightOpen, RotateCw, Shapes, Spline, Square, Type } from 'lucide-react'
 import { useKoma, type Tab } from '../store/koma'
 import { recordCodingHistory } from '../lib/coding-recovery'
@@ -10,64 +10,93 @@ import { BrailleSpinner } from './BrailleSpinner'
 import { showCodingHistory } from './CodingHistory'
 import { EditorChrome } from './EditorChrome'
 import { Toggle } from './panels/form'
-import { DiagramMarker, DiagramRefMenuItems } from './DiagramVisual'
-import { InlineMarkdownInput, MarkdownNote } from './MarkdownNote'
-import { inlineToHtml } from '../lib/markdownNote'
+import { DiagramRefMenuItems } from './DiagramVisual'
+import { DiagramEdgeView, themeStroke } from './diagram/DiagramEdgeView'
+import { DiagramNodeView } from './diagram/DiagramNodeView'
+import { Properties, type DiagramPanelSelection } from './diagram/DiagramSettings'
 import {
-  addDiagramAreaToChat,
+  DIAGRAM_DRAG_THRESHOLD,
+  DIAGRAM_HIT_TOLERANCE,
+  DIAGRAM_UNDO_CAP,
+  DIAGRAM_ZOOM_PER_PIXEL,
+  DIAGRAM_ZOOM_STEP,
+  clampZoom,
+  clearDiagramHistory,
+  diagramHistory,
+  savedDiagramView,
+  saveDiagramView,
+  zoomViewAt,
+  type DiagramView,
+} from './diagram/diagramShared'
+import {
   addDiagramDocToChat,
-  copyDiagramArea,
+  addDiagramSelectionToChat,
   copyDiagramMermaid,
+  copyDiagramSelection,
   diagramChatTitle,
 } from '../lib/diagramChat'
-import { pointInDiagramRect, type DiagramRect } from '../lib/diagramMermaid'
 import { syncDiagramShapeNotes } from '../lib/diagramNoteAttach'
-import { diagramFolder, diagramShapeFolder, publishDiagramShapeNotes, shapeHeadingFor } from '../lib/diagramNotes'
+import { diagramFolder, publishDiagramShapeNotes } from '../lib/diagramNotes'
 import {
+  NO_SELECTION,
   SHAPE_MIME,
-  copyNode,
+  copyDiagramShapes,
   defaultNodeSize,
-  edgeRoute,
-  edgeStyle,
+  deleteDiagramSelection,
+  edgePoints,
   DIAGRAM_PORTS,
+  hitDiagram,
+  mergeSelection,
+  moveDiagramNodes,
   nearestPort,
   nearestSide,
   nextRotation,
   nodeAtPoint,
-  nodeStyle,
+  nodeBounds,
   parseDiagram,
   pointerAngle,
   portAnchor,
-  portOffset,
   resizeNode,
+  rotatePoint,
+  nodeCenter,
   routeMidpoint,
-  routePath,
+  selectInRect,
+  selectionBounds,
+  selectionSize,
   serializeDiagram,
   sideAnchor,
   slideSegment,
   snap,
-  type DiagramArrow,
-  type DiagramDash,
   type DiagramDoc,
   type DiagramEdge,
   type DiagramHandle,
   type DiagramKind,
   type DiagramNode,
   type DiagramPoint,
-  type DiagramRoute,
+  type DiagramRect,
+  type DiagramSelection,
 } from '../lib/diagram'
 
 type Tool = 'select' | 'pan' | 'connect' | DiagramKind
-type Selection = { type: 'node' | 'edge'; id: string }
 type Drag =
-  | { kind: 'move'; id: string; sx: number; sy: number; ox: number; oy: number; moved: boolean; remembered: boolean }
+  | {
+      kind: 'move'
+      ids: string[]
+      grab: DiagramNode
+      base: DiagramDoc
+      sx: number
+      sy: number
+      pointerId: number
+      moved: boolean
+      remembered: boolean
+    }
   | { kind: 'resize'; id: string; handle: DiagramHandle; sx: number; sy: number; node: DiagramNode; remembered: boolean }
   | { kind: 'rotate'; id: string; rotation: number; angle: number; node: DiagramNode; remembered: boolean }
   | { kind: 'segment'; edgeId: string; index: number; points: DiagramPoint[]; remembered: boolean }
   | { kind: 'anchor'; edgeId: string; end: 'from' | 'to'; remembered: boolean }
   | { kind: 'connect'; fromId: string; port: number }
-  | { kind: 'pan'; sx: number; sy: number; px: number; py: number }
-  | { kind: 'marquee'; x: number; y: number }
+  | { kind: 'pan'; sx: number; sy: number; view: DiagramView }
+  | { kind: 'marquee'; x: number; y: number; sx: number; sy: number; base: DiagramSelection; additive: boolean; moved: boolean }
 
 const TOOLS: { id: Tool; label: string; icon: typeof Square }[] = [
   { id: 'select', label: 'Select', icon: MousePointer2 },
@@ -94,8 +123,8 @@ function mintId(prefix: string): string {
   return `${prefix}${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`
 }
 
-/** Last copied card. Lines are never stored here. Shared across diagram tabs. */
-let copiedShape: DiagramNode | null = null
+/** Last copied shapes and the lines between them. Shared across diagram tabs. */
+let clipboard: { nodes: DiagramNode[]; edges: DiagramEdge[] } | null = null
 
 function placeNode(doc: DiagramDoc, kind: DiagramKind, x: number, y: number): DiagramDoc {
   const size = defaultNodeSize(kind)
@@ -111,18 +140,6 @@ function placeNode(doc: DiagramDoc, kind: DiagramKind, x: number, y: number): Di
 
 function isKind(value: string): value is DiagramKind {
   return value === 'rect' || value === 'ellipse' || value === 'diamond' || value === 'text'
-}
-
-function dashArray(dash: DiagramDash, width: number): string | undefined {
-  if (dash === 'dashed') return `${Math.max(4, width * 4)} ${Math.max(3, width * 2.5)}`
-  if (dash === 'dotted') return `${Math.max(1, width)} ${Math.max(2, width * 1.8)}`
-  return undefined
-}
-
-function themeStroke(selected: boolean): string {
-  return selected
-    ? 'var(--color-koma-accent)'
-    : 'color-mix(in srgb, var(--koma-fg, #c8d3f5) 45%, transparent)'
 }
 
 function tidyNode(node: DiagramNode): DiagramNode {
@@ -157,6 +174,17 @@ function tidyEdge(edge: DiagramEdge): DiagramEdge {
   return next
 }
 
+/** Drops ids that no longer exist, so undo never restores a selection of ghosts. */
+function liveSelection(doc: DiagramDoc, selection: DiagramSelection): DiagramSelection {
+  const nodes = new Set(doc.nodes.map((node) => node.id))
+  const edges = new Set(doc.edges.map((edge) => edge.id))
+  return { nodes: selection.nodes.filter((id) => nodes.has(id)), edges: selection.edges.filter((id) => edges.has(id)) }
+}
+
+function sameNodeBox(a: DiagramNode, b: DiagramNode): boolean {
+  return a.x === b.x && a.y === b.y && a.w === b.w && a.h === b.h && a.rotation === b.rotation
+}
+
 export function DiagramTab({ tab }: { tab: Extract<Tab, { kind: 'diagram' }> }) {
   const key = fileKey(tab.root, tab.path)
   const file = useKoma((s) => s.diagram.docs[key])
@@ -165,23 +193,21 @@ export function DiagramTab({ tab }: { tab: Extract<Tab, { kind: 'diagram' }> }) 
   const active = useKoma((s) => s.ui.activeTabId === tab.id && isTabVisible(s.ui, tab.id))
   const canvasRef = useRef<HTMLDivElement>(null)
   const dragRef = useRef<Drag | null>(null)
-  const pastRef = useRef<DiagramDoc[]>([])
-  const futureRef = useRef<DiagramDoc[]>([])
   const labelNoted = useRef(false)
   const updateRef = useRef(updateDiagram)
   updateRef.current = updateDiagram
-  const [pan, setPan] = useState({ x: 0, y: 0 })
-  const panRef = useRef(pan)
-  panRef.current = pan
+  const [view, setView] = useState<DiagramView>(() => savedDiagramView(key))
+  const viewRef = useRef(view)
   const [tool, setTool] = useState<Tool>('select')
-  const [selection, setSelection] = useState<Selection | null>(null)
+  const [selection, setSelectionState] = useState<DiagramSelection>(NO_SELECTION)
+  const selectionRef = useRef(selection)
   const [connectFrom, setConnectFrom] = useState<string | null>(null)
   const [editing, setEditing] = useState<string | null>(null)
-  const [cursor, setCursor] = useState<{ x: number; y: number } | null>(null)
+  const [cursor, setCursor] = useState<DiagramPoint | null>(null)
   const [rev, setRev] = useState(0)
-  const [area, setArea] = useState<DiagramRect | null>(null)
-  const [chatMenu, setChatMenu] = useState<{ x: number; y: number; area: DiagramRect | null } | null>(null)
-  const [hoverId, setHoverId] = useState<string | null>(null)
+  const [marquee, setMarquee] = useState<DiagramRect | null>(null)
+  const [chatMenu, setChatMenu] = useState<{ x: number; y: number } | null>(null)
+  const [hover, setHover] = useState<{ type: 'node' | 'edge'; id: string } | null>(null)
   const [connectDrag, setConnectDrag] = useState<{ fromId: string; port: number } | null>(null)
   const [propsOpen, setPropsOpen] = useState(false)
   const [spaceDown, setSpaceDown] = useState(false)
@@ -189,51 +215,63 @@ export function DiagramTab({ tab }: { tab: Extract<Tab, { kind: 'diagram' }> }) 
   const spaceRef = useRef(false)
   const markerId = useId().replace(/:/g, '')
 
+  const setSelection = (next: DiagramSelection) => {
+    selectionRef.current = next
+    setSelectionState(next)
+  }
+  const applyView = (next: DiagramView) => {
+    viewRef.current = next
+    saveDiagramView(key, next)
+    setView(next)
+  }
+
   useEffect(() => {
-    pastRef.current = []
-    futureRef.current = []
-    setArea(null)
+    const saved = savedDiagramView(key)
+    viewRef.current = saved
+    setView(saved)
+    selectionRef.current = NO_SELECTION
+    setSelectionState(NO_SELECTION)
+    setMarquee(null)
     setChatMenu(null)
-    setHoverId(null)
+    setHover(null)
     setConnectDrag(null)
     setDragCursor(null)
     setRev((value) => value + 1)
   }, [key])
 
+  const history = diagramHistory(key)
+
   const note = (doc: DiagramDoc) => {
-    pastRef.current.push(doc)
-    if (pastRef.current.length > 50) pastRef.current.shift()
-    futureRef.current = []
+    history.past.push({ doc, selection: selectionRef.current })
+    if (history.past.length > DIAGRAM_UNDO_CAP) history.past.shift()
+    history.future = []
     setRev((value) => value + 1)
   }
   const noteRef = useRef(note)
   noteRef.current = note
 
+  const currentDoc = () => useKoma.getState().diagram.docs[key]?.doc
+
   const commit = (next: DiagramDoc) => {
-    const current = useKoma.getState().diagram.docs[key]?.doc
-    if (!current || serializeDiagram(current) === serializeDiagram(next)) return
+    const current = currentDoc()
+    if (!current || current === next || serializeDiagram(current) === serializeDiagram(next)) return
     note(current)
     updateDiagram(tab.root, tab.path, next)
   }
 
-  const undo = () => {
-    const prev = pastRef.current.pop()
-    if (!prev) return
-    const current = useKoma.getState().diagram.docs[key]?.doc
-    if (current) futureRef.current.push(current)
+  const travel = (from: 'past' | 'future') => {
+    const entry = history[from].pop()
+    if (!entry) return
+    const current = currentDoc()
+    if (current) history[from === 'past' ? 'future' : 'past'].push({ doc: current, selection: selectionRef.current })
     setRev((value) => value + 1)
     setEditing(null)
-    updateDiagram(tab.root, tab.path, prev)
+    setSelection(liveSelection(entry.doc, entry.selection))
+    updateDiagram(tab.root, tab.path, entry.doc)
   }
-  const redo = () => {
-    const next = futureRef.current.pop()
-    if (!next) return
-    const current = useKoma.getState().diagram.docs[key]?.doc
-    if (current) pastRef.current.push(current)
-    setRev((value) => value + 1)
-    setEditing(null)
-    updateDiagram(tab.root, tab.path, next)
-  }
+  const undo = () => travel('past')
+  const redo = () => travel('future')
+
   useEffect(() => {
     if (!dragCursor) return
     const previous = document.body.style.cursor
@@ -243,19 +281,28 @@ export function DiagramTab({ tab }: { tab: Extract<Tab, { kind: 'diagram' }> }) 
     }
   }, [dragCursor])
 
-  const undoRef = useRef(undo)
-  const redoRef = useRef(redo)
-  undoRef.current = undo
-  redoRef.current = redo
+  const toScreen = (clientX: number, clientY: number) => {
+    const rect = canvasRef.current?.getBoundingClientRect()
+    if (!rect) return null
+    return { x: canvasPoint(clientX - rect.left), y: canvasPoint(clientY - rect.top) }
+  }
+  const toDoc = (e: { clientX: number; clientY: number }) => {
+    const screen = toScreen(e.clientX, e.clientY)
+    if (!screen) return null
+    const v = viewRef.current
+    return { x: (screen.x - v.x) / v.zoom, y: (screen.y - v.y) / v.zoom }
+  }
+  const toDocRef = useRef(toDoc)
+  toDocRef.current = toDoc
+
+  const actionsRef = useRef({ undo, redo, commit, applyView, setSelection })
+  actionsRef.current = { undo, redo, commit, applyView, setSelection }
 
   useEffect(() => {
-    const docPoint = (clientX: number, clientY: number) => {
-      const rect = canvasRef.current?.getBoundingClientRect()
-      if (!rect) return null
-      return { x: canvasPoint(clientX - rect.left) - panRef.current.x, y: canvasPoint(clientY - rect.top) - panRef.current.y }
-    }
+    const docPoint = (clientX: number, clientY: number) => toDocRef.current({ clientX, clientY })
+    const docDelta = (client: number) => canvasPoint(client) / viewRef.current.zoom
     const apply = (drag: Drag, next: DiagramDoc, current: DiagramDoc) => {
-      if (serializeDiagram(current) === serializeDiagram(next)) return
+      if (next === current) return
       if ('remembered' in drag && !drag.remembered) {
         noteRef.current(current)
         drag.remembered = true
@@ -266,18 +313,28 @@ export function DiagramTab({ tab }: { tab: Extract<Tab, { kind: 'diagram' }> }) 
       const drag = dragRef.current
       if (!drag) return
       if (drag.kind === 'pan') {
-        setPan({ x: drag.px + canvasPoint(e.clientX - drag.sx), y: drag.py + canvasPoint(e.clientY - drag.sy) })
+        actionsRef.current.applyView({
+          ...drag.view,
+          x: drag.view.x + canvasPoint(e.clientX - drag.sx),
+          y: drag.view.y + canvasPoint(e.clientY - drag.sy),
+        })
         return
       }
       if (drag.kind === 'marquee') {
+        if (!drag.moved && Math.hypot(canvasPoint(e.clientX - drag.sx), canvasPoint(e.clientY - drag.sy)) < DIAGRAM_DRAG_THRESHOLD) return
+        drag.moved = true
         const point = docPoint(e.clientX, e.clientY)
-        if (!point) return
-        setArea({
+        const doc = useKoma.getState().diagram.docs[key]?.doc
+        if (!point || !doc) return
+        const rect = {
           x: Math.min(drag.x, point.x),
           y: Math.min(drag.y, point.y),
           w: Math.abs(point.x - drag.x),
           h: Math.abs(point.y - drag.y),
-        })
+        }
+        setMarquee(rect)
+        const inside = selectInRect(doc, rect)
+        actionsRef.current.setSelection(drag.additive ? mergeSelection(drag.base, inside, false) : inside)
         return
       }
       if (drag.kind === 'connect') {
@@ -289,26 +346,28 @@ export function DiagramTab({ tab }: { tab: Extract<Tab, { kind: 'diagram' }> }) 
       if (!current) return
       const doc = current.doc
       if (drag.kind === 'move') {
-        const dx = canvasPoint(e.clientX - drag.sx)
-        const dy = canvasPoint(e.clientY - drag.sy)
         if (!drag.moved) {
-          if (Math.abs(dx) < 3 && Math.abs(dy) < 3) return
+          if (Math.hypot(canvasPoint(e.clientX - drag.sx), canvasPoint(e.clientY - drag.sy)) < DIAGRAM_DRAG_THRESHOLD) return
           drag.moved = true
+          setDragCursor('move')
+          try {
+            canvasRef.current?.setPointerCapture(drag.pointerId)
+          } catch {
+            /* the pointer may already be gone */
+          }
         }
-        apply(drag, {
-          ...doc,
-          nodes: doc.nodes.map((node) =>
-            node.id === drag.id
-              ? { ...node, x: snap(drag.ox + dx, doc.grid, doc.snap), y: snap(drag.oy + dy, doc.grid, doc.snap) }
-              : node,
-          ),
-        }, doc)
+        // The grabbed shape snaps; the rest of the selection follows by the same amount.
+        const x = snap(drag.grab.x + docDelta(e.clientX - drag.sx), doc.grid, doc.snap)
+        const y = snap(drag.grab.y + docDelta(e.clientY - drag.sy), doc.grid, doc.snap)
+        const grabbed = doc.nodes.find((node) => node.id === drag.grab.id)
+        if (grabbed && grabbed.x === x && grabbed.y === y) return
+        apply(drag, moveDiagramNodes(drag.base, drag.ids, x - drag.grab.x, y - drag.grab.y), doc)
         return
       }
       if (drag.kind === 'resize') {
-        const dx = canvasPoint(e.clientX - drag.sx)
-        const dy = canvasPoint(e.clientY - drag.sy)
-        const resized = resizeNode(drag.node, drag.handle, dx, dy, doc.grid, doc.snap)
+        const resized = resizeNode(drag.node, drag.handle, docDelta(e.clientX - drag.sx), docDelta(e.clientY - drag.sy), doc.grid, doc.snap)
+        const existing = doc.nodes.find((node) => node.id === drag.id)
+        if (!existing || sameNodeBox(existing, resized)) return
         apply(drag, { ...doc, nodes: doc.nodes.map((node) => (node.id === drag.id ? resized : node)) }, doc)
         return
       }
@@ -316,10 +375,9 @@ export function DiagramTab({ tab }: { tab: Extract<Tab, { kind: 'diagram' }> }) 
       if (!point) return
       if (drag.kind === 'rotate') {
         const rotation = nextRotation(drag.rotation, drag.angle, pointerAngle(drag.node, point), doc.snap) || undefined
-        apply(drag, {
-          ...doc,
-          nodes: doc.nodes.map((node) => (node.id === drag.id ? { ...node, rotation } : node)),
-        }, doc)
+        const existing = doc.nodes.find((node) => node.id === drag.id)
+        if (!existing || existing.rotation === rotation) return
+        apply(drag, { ...doc, nodes: doc.nodes.map((node) => (node.id === drag.id ? { ...node, rotation } : node)) }, doc)
         return
       }
       if (drag.kind === 'segment') {
@@ -328,10 +386,10 @@ export function DiagramTab({ tab }: { tab: Extract<Tab, { kind: 'diagram' }> }) 
         if (!start || !end) return
         const horizontal = Math.abs(end.x - start.x) >= Math.abs(end.y - start.y)
         const slid = slideSegment(drag.points, drag.index, snap(horizontal ? point.y : point.x, doc.grid, doc.snap))
-        apply(drag, {
-          ...doc,
-          edges: doc.edges.map((edge) => (edge.id === drag.edgeId ? tidyEdge({ ...edge, bends: slid.slice(1, -1) }) : edge)),
-        }, doc)
+        const bends = slid.slice(1, -1)
+        const existing = doc.edges.find((edge) => edge.id === drag.edgeId)
+        if (!existing || JSON.stringify(existing.bends ?? []) === JSON.stringify(bends)) return
+        apply(drag, { ...doc, edges: doc.edges.map((edge) => (edge.id === drag.edgeId ? tidyEdge({ ...edge, bends }) : edge)) }, doc)
         return
       }
       const edge = doc.edges.find((item) => item.id === drag.edgeId)
@@ -341,6 +399,8 @@ export function DiagramTab({ tab }: { tab: Extract<Tab, { kind: 'diagram' }> }) 
       const node = nodeAtPoint(doc.nodes, point, otherId) ?? doc.nodes.find((item) => item.id === currentId)
       if (!node || node.id === otherId) return
       const port = nearestPort(node, point)
+      const same = drag.end === 'from' ? edge.from === node.id && edge.fromPort === port : edge.to === node.id && edge.toPort === port
+      if (same) return
       apply(drag, {
         ...doc,
         edges: doc.edges.map((item) =>
@@ -356,17 +416,22 @@ export function DiagramTab({ tab }: { tab: Extract<Tab, { kind: 'diagram' }> }) 
         ),
       }, doc)
     }
-    const up = (e: PointerEvent) => {
+    const finish = () => {
       setDragCursor(null)
-      const drag = dragRef.current
-      dragRef.current = null
-      if (drag?.kind === 'marquee') {
-        setArea((prev) => (prev && (prev.w >= 4 || prev.h >= 4) ? prev : null))
-        return
-      }
-      if (drag?.kind !== 'connect') return
+      setMarquee(null)
       setConnectDrag(null)
       setCursor(null)
+      dragRef.current = null
+    }
+    const up = (e: PointerEvent) => {
+      const drag = dragRef.current
+      finish()
+      if (drag?.kind === 'marquee' && !drag.moved && !drag.additive) actionsRef.current.setSelection(NO_SELECTION)
+      if (drag?.kind === 'move' && !drag.moved && drag.ids.length > 1 && !e.shiftKey) {
+        // A click inside a group selection narrows it to the clicked shape.
+        actionsRef.current.setSelection({ nodes: [drag.grab.id], edges: [] })
+      }
+      if (drag?.kind !== 'connect') return
       const point = docPoint(e.clientX, e.clientY)
       const current = useKoma.getState().diagram.docs[key]?.doc
       if (!point || !current) return
@@ -375,7 +440,7 @@ export function DiagramTab({ tab }: { tab: Extract<Tab, { kind: 'diagram' }> }) 
       const toPort = nearestPort(target, point)
       const existing = current.edges.find((edge) => edge.from === drag.fromId && edge.to === target.id && edge.fromPort === drag.port && edge.toPort === toPort)
       if (existing) {
-        setSelection({ type: 'edge', id: existing.id })
+        actionsRef.current.setSelection({ nodes: [], edges: [existing.id] })
         setPropsOpen(true)
         return
       }
@@ -385,8 +450,15 @@ export function DiagramTab({ tab }: { tab: Extract<Tab, { kind: 'diagram' }> }) 
         ...current,
         edges: [...current.edges, tidyEdge({ id, from: drag.fromId, to: target.id, fromPort: drag.port, toPort })],
       })
-      setSelection({ type: 'edge', id })
+      actionsRef.current.setSelection({ nodes: [], edges: [id] })
       setPropsOpen(true)
+    }
+    // Losing the window mid-drag (alt-tab, a dialog) must not leave a drag or Space stuck on.
+    const abandon = () => {
+      if (document.visibilityState === 'visible' && document.hasFocus()) return
+      finish()
+      spaceRef.current = false
+      setSpaceDown(false)
     }
     const onRestore = (event: Event) => {
       const detail = (event as CustomEvent<{ root?: string; path?: string }>).detail
@@ -407,103 +479,258 @@ export function DiagramTab({ tab }: { tab: Extract<Tab, { kind: 'diagram' }> }) 
         }
       })
       setEditing(null)
-      setSelection(null)
+      actionsRef.current.setSelection(NO_SELECTION)
       setConnectFrom(null)
-    }
-    const cancel = () => {
-      setDragCursor(null)
-      if (dragRef.current?.kind === 'connect') {
-        setConnectDrag(null)
-        setCursor(null)
-      }
-      dragRef.current = null
     }
     window.addEventListener('pointermove', move)
     window.addEventListener('pointerup', up)
-    window.addEventListener('pointercancel', cancel)
+    window.addEventListener('pointercancel', finish)
+    window.addEventListener('blur', abandon)
+    document.addEventListener('visibilitychange', abandon)
     window.addEventListener('koma-diagram-restore', onRestore)
     return () => {
       window.removeEventListener('pointermove', move)
       window.removeEventListener('pointerup', up)
-      window.removeEventListener('pointercancel', cancel)
+      window.removeEventListener('pointercancel', finish)
+      window.removeEventListener('blur', abandon)
+      document.removeEventListener('visibilitychange', abandon)
       window.removeEventListener('koma-diagram-restore', onRestore)
     }
   }, [key, tab.path, tab.root])
+
+  const zoomAround = (factor: number, screen?: DiagramPoint) => {
+    const canvas = canvasRef.current
+    if (!canvas) return
+    const at = screen ?? { x: canvas.clientWidth / 2, y: canvas.clientHeight / 2 }
+    const current = viewRef.current
+    applyView(zoomViewAt(current, at.x, at.y, current.zoom * factor))
+  }
+  const fitView = () => {
+    const doc = currentDoc()
+    const canvas = canvasRef.current
+    if (!doc || !canvas) return
+    const box = selectionBounds(doc, { nodes: doc.nodes.map((node) => node.id), edges: [] })
+    if (!box) {
+      applyView({ x: 0, y: 0, zoom: 1 })
+      return
+    }
+    const pad = 40
+    const zoom = clampZoom(Math.min(1, (canvas.clientWidth - pad * 2) / Math.max(box.w, 1), (canvas.clientHeight - pad * 2) / Math.max(box.h, 1)))
+    applyView({
+      zoom,
+      x: canvas.clientWidth / 2 - (box.x + box.w / 2) * zoom,
+      y: canvas.clientHeight / 2 - (box.y + box.h / 2) * zoom,
+    })
+  }
+  const zoomRef = useRef({ zoomAround, fitView })
+  zoomRef.current = { zoomAround, fitView }
+
+  useEffect(() => {
+    const canvas = canvasRef.current
+    if (!canvas) return
+    // Wheel events arrive faster than frames. Deltas pile up and apply once per frame.
+    const pending = { panX: 0, panY: 0, zoom: 1, x: 0, y: 0, frame: 0 }
+    const flush = () => {
+      pending.frame = 0
+      let next = viewRef.current
+      if (pending.zoom !== 1) next = zoomViewAt(next, pending.x, pending.y, next.zoom * pending.zoom)
+      if (pending.panX || pending.panY) next = { ...next, x: next.x - pending.panX, y: next.y - pending.panY }
+      pending.panX = 0
+      pending.panY = 0
+      pending.zoom = 1
+      actionsRef.current.applyView(next)
+    }
+    const onWheel = (event: WheelEvent) => {
+      event.preventDefault()
+      const unit = event.deltaMode === WheelEvent.DOM_DELTA_LINE ? 16 : event.deltaMode === WheelEvent.DOM_DELTA_PAGE ? canvas.clientHeight : 1
+      let dx = canvasPoint(event.deltaX * unit)
+      let dy = canvasPoint(event.deltaY * unit)
+      if (event.ctrlKey || event.metaKey) {
+        const rect = canvas.getBoundingClientRect()
+        pending.zoom *= Math.exp(-dy * DIAGRAM_ZOOM_PER_PIXEL)
+        pending.x = canvasPoint(event.clientX - rect.left)
+        pending.y = canvasPoint(event.clientY - rect.top)
+      } else {
+        if (event.shiftKey && !dx) {
+          dx = dy
+          dy = 0
+        }
+        pending.panX += dx
+        pending.panY += dy
+      }
+      if (!pending.frame) pending.frame = requestAnimationFrame(flush)
+    }
+    canvas.addEventListener('wheel', onWheel, { passive: false })
+    return () => {
+      canvas.removeEventListener('wheel', onWheel)
+      if (pending.frame) cancelAnimationFrame(pending.frame)
+    }
+  }, [file?.loading])
+
+  const pasteShapes = (source: { nodes: DiagramNode[]; edges: DiagramEdge[] }, shift: boolean) => {
+    const doc = currentDoc()
+    if (!doc) return null
+    const step = shift ? (doc.snap && doc.grid > 0 ? doc.grid : 16) : 0
+    const copy = copyDiagramShapes(
+      { ...doc, nodes: source.nodes, edges: source.edges },
+      { nodes: source.nodes.map((node) => node.id), edges: [] },
+      mintId,
+      step,
+      step,
+    )
+    if (!copy.nodes.length) return null
+    commit({ ...doc, nodes: [...doc.nodes, ...copy.nodes.map(tidyNode)], edges: [...doc.edges, ...copy.edges.map(tidyEdge)] })
+    setSelection({ nodes: copy.nodes.map((node) => node.id), edges: copy.edges.map((edge) => edge.id) })
+    setEditing(null)
+    setConnectFrom(null)
+    return copy
+  }
+  const copySelection = () => {
+    const doc = currentDoc()
+    const picked = selectionRef.current
+    if (!doc || !picked.nodes.length) return false
+    const ids = new Set(picked.nodes)
+    clipboard = {
+      nodes: doc.nodes.filter((node) => ids.has(node.id)).map((node) => tidyNode({ ...node })),
+      edges: doc.edges.filter((edge) => ids.has(edge.from) && ids.has(edge.to)).map((edge) => tidyEdge({ ...edge })),
+    }
+    return true
+  }
+  const nudge = (dx: number, dy: number, resize: boolean) => {
+    const doc = currentDoc()
+    const picked = selectionRef.current.nodes
+    if (!doc || !picked.length) return
+    if (!resize) {
+      commit(moveDiagramNodes(doc, picked, dx, dy))
+      return
+    }
+    const ids = new Set(picked)
+    commit({
+      ...doc,
+      nodes: doc.nodes.map((node) =>
+        ids.has(node.id) ? resizeNode(node, dx ? 'e' : 's', dx, dy, doc.grid, false) : node,
+      ),
+    })
+  }
+  const keyActionsRef = useRef({ copySelection, pasteShapes, nudge })
+  keyActionsRef.current = { copySelection, pasteShapes, nudge }
 
   useEffect(() => {
     if (!active) return
     const onKey = (e: KeyboardEvent) => {
       if (isTerminalInputTarget(e.target)) return
       const target = e.target as HTMLElement | null
-      const typing = !!target?.closest('input, textarea, [contenteditable="true"]')
+      const typing = !!target?.closest('input, textarea, [contenteditable="true"], [contenteditable="plaintext-only"]')
+      const mod = e.metaKey || e.ctrlKey
+      const lower = e.key.toLowerCase()
       if (e.code === 'Space' && !typing) {
         spaceRef.current = true
         setSpaceDown(true)
         e.preventDefault()
       }
-      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 's' && !e.altKey) {
+      if (mod && lower === 's' && !e.altKey) {
         e.preventDefault()
         saveDiagram(tab.root, tab.path)
         return
       }
       if (typing) return
-      if ((e.metaKey || e.ctrlKey) && !e.altKey && e.key.toLowerCase() === 'z') {
+      const doc = currentDoc()
+      const picked = selectionRef.current
+      const actions = actionsRef.current
+      const keys = keyActionsRef.current
+      if (mod && !e.altKey && lower === 'z') {
         e.preventDefault()
-        if (e.shiftKey) redoRef.current()
-        else undoRef.current()
+        if (e.shiftKey) actions.redo()
+        else actions.undo()
         return
       }
-      if ((e.metaKey || e.ctrlKey) && !e.altKey && e.key.toLowerCase() === 'y') {
+      if (mod && !e.altKey && lower === 'y') {
         e.preventDefault()
-        redoRef.current()
+        actions.redo()
         return
       }
-      if ((e.metaKey || e.ctrlKey) && !e.shiftKey && !e.altKey && e.key.toLowerCase() === 'c') {
-        if (selection?.type !== 'node') return
-        const node = useKoma.getState().diagram.docs[key]?.doc.nodes.find((item) => item.id === selection.id)
-        if (!node) return
+      if (mod && !e.altKey && (e.key === '=' || e.key === '+')) {
         e.preventDefault()
-        copiedShape = tidyNode({ ...node })
+        zoomRef.current.zoomAround(DIAGRAM_ZOOM_STEP)
         return
       }
-      if ((e.metaKey || e.ctrlKey) && !e.shiftKey && !e.altKey && e.key.toLowerCase() === 'v') {
-        const entry = useKoma.getState().diagram.docs[key]
-        if (!copiedShape || !entry || entry.loading) return
+      if (mod && !e.altKey && e.key === '-') {
         e.preventDefault()
-        const step = entry.doc.snap && entry.doc.grid > 0 ? entry.doc.grid : 16
-        const pasted = tidyNode(copyNode(copiedShape, mintId('n'), step, step))
-        copiedShape = pasted
-        commit({ ...entry.doc, nodes: [...entry.doc.nodes, pasted] })
-        setSelection({ type: 'node', id: pasted.id })
-        setEditing(null)
-        setConnectFrom(null)
+        zoomRef.current.zoomAround(1 / DIAGRAM_ZOOM_STEP)
+        return
+      }
+      if (mod && !e.altKey && e.key === '0') {
+        e.preventDefault()
+        zoomRef.current.zoomAround(1 / viewRef.current.zoom)
+        return
+      }
+      if (mod && e.shiftKey && lower === 'h') {
+        e.preventDefault()
+        zoomRef.current.fitView()
+        return
+      }
+      if (!doc) return
+      if (mod && !e.shiftKey && !e.altKey && lower === 'a') {
+        e.preventDefault()
+        actions.setSelection({ nodes: doc.nodes.map((node) => node.id), edges: doc.edges.map((edge) => edge.id) })
+        return
+      }
+      if (mod && !e.shiftKey && !e.altKey && lower === 'c') {
+        if (keys.copySelection()) e.preventDefault()
+        return
+      }
+      if (mod && !e.shiftKey && !e.altKey && lower === 'x') {
+        if (!keys.copySelection()) return
+        e.preventDefault()
+        actions.commit(deleteDiagramSelection(doc, picked))
+        actions.setSelection(NO_SELECTION)
+        return
+      }
+      if (mod && !e.shiftKey && !e.altKey && lower === 'v') {
+        if (!clipboard) return
+        e.preventDefault()
+        const pasted = keys.pasteShapes(clipboard, true)
+        // The next paste lands one more step away, as in draw.io.
+        if (pasted) clipboard = pasted
         setPropsOpen(true)
+        return
+      }
+      if (mod && !e.shiftKey && !e.altKey && lower === 'd') {
+        if (!picked.nodes.length) return
+        e.preventDefault()
+        const ids = new Set(picked.nodes)
+        keys.pasteShapes(
+          {
+            nodes: doc.nodes.filter((node) => ids.has(node.id)),
+            edges: doc.edges.filter((edge) => ids.has(edge.from) && ids.has(edge.to)),
+          },
+          true,
+        )
+        return
+      }
+      if (e.key.startsWith('Arrow') && picked.nodes.length && !e.altKey) {
+        e.preventDefault()
+        const step = e.shiftKey ? (doc.grid > 0 ? doc.grid : 16) : 1
+        const dx = e.key === 'ArrowLeft' ? -step : e.key === 'ArrowRight' ? step : 0
+        const dy = e.key === 'ArrowUp' ? -step : e.key === 'ArrowDown' ? step : 0
+        keys.nudge(dx, dy, mod)
         return
       }
       if (e.key === 'Escape') {
         setConnectFrom(null)
         setConnectDrag(null)
         dragRef.current = null
-        setSelection(null)
+        actions.setSelection(NO_SELECTION)
         setEditing(null)
-        setArea(null)
+        setMarquee(null)
         setChatMenu(null)
         setCursor(null)
         return
       }
-      if ((e.key === 'Delete' || e.key === 'Backspace') && selection && file) {
+      if ((e.key === 'Delete' || e.key === 'Backspace') && selectionSize(picked)) {
         e.preventDefault()
-        const doc = file.doc
-        if (selection.type === 'node') {
-          commit({
-            ...doc,
-            nodes: doc.nodes.filter((node) => node.id !== selection.id),
-            edges: doc.edges.filter((edge) => edge.from !== selection.id && edge.to !== selection.id),
-          })
-        } else {
-          commit({ ...doc, edges: doc.edges.filter((edge) => edge.id !== selection.id) })
-        }
-        setSelection(null)
+        actions.commit(deleteDiagramSelection(doc, picked))
+        actions.setSelection(NO_SELECTION)
         setConnectFrom(null)
       }
     }
@@ -512,20 +739,14 @@ export function DiagramTab({ tab }: { tab: Extract<Tab, { kind: 'diagram' }> }) 
       spaceRef.current = false
       setSpaceDown(false)
     }
-    const onBlur = () => {
-      spaceRef.current = false
-      setSpaceDown(false)
-    }
     window.addEventListener('keydown', onKey)
     window.addEventListener('keyup', onKeyUp)
-    window.addEventListener('blur', onBlur)
     return () => {
       window.removeEventListener('keydown', onKey)
       window.removeEventListener('keyup', onKeyUp)
-      window.removeEventListener('blur', onBlur)
       spaceRef.current = false
     }
-  }, [active, file, key, saveDiagram, selection, tab.path, tab.root, updateDiagram])
+  }, [active, key, saveDiagram, tab.path, tab.root])
 
   useEffect(() => {
     if (!chatMenu) return
@@ -541,158 +762,185 @@ export function DiagramTab({ tab }: { tab: Extract<Tab, { kind: 'diagram' }> }) 
     }
   }, [chatMenu])
 
-  const toDoc = (e: { clientX: number; clientY: number }) => {
-    const rect = canvasRef.current?.getBoundingClientRect()
-    if (!rect) return null
-    return { x: canvasPoint(e.clientX - rect.left) - panRef.current.x, y: canvasPoint(e.clientY - rect.top) - panRef.current.y }
+  // Hover is a geometric hit, sampled once per frame.
+  const hoverFrame = useRef(0)
+  const hoverPoint = useRef<DiagramPoint | null>(null)
+  useEffect(() => () => cancelAnimationFrame(hoverFrame.current), [])
+  const trackHover = (e: ReactPointerEvent) => {
+    hoverPoint.current = toDoc(e)
+    if (hoverFrame.current) return
+    hoverFrame.current = requestAnimationFrame(() => {
+      hoverFrame.current = 0
+      const point = hoverPoint.current
+      const doc = currentDoc()
+      if (!point || !doc || dragRef.current) return
+      const zoom = viewRef.current.zoom
+      let hit = hitDiagram(doc, point, DIAGRAM_HIT_TOLERANCE / zoom)
+      if (!hit) {
+        // Ports sit on the outline, so the hover holds a few pixels past it.
+        const margin = 10 / zoom
+        const near = [...doc.nodes].reverse().find((node) => {
+          const box = nodeBounds(node)
+          return point.x >= box.x - margin && point.x <= box.x + box.w + margin && point.y >= box.y - margin && point.y <= box.y + box.h + margin
+        })
+        if (near) hit = { type: 'node', id: near.id }
+      }
+      setHover((prev) => (prev?.type === hit?.type && prev?.id === hit?.id ? prev : hit))
+    })
   }
 
   const addAt = (kind: DiagramKind, x: number, y: number) => {
-    if (!file) return
-    const next = placeNode(file.doc, kind, x, y)
+    const doc = currentDoc()
+    if (!doc) return
+    const next = placeNode(doc, kind, x, y)
     commit(next)
     const id = next.nodes[next.nodes.length - 1]?.id
     if (id) {
-      setSelection({ type: 'node', id })
+      setSelection({ nodes: [id], edges: [] })
       setPropsOpen(true)
     }
     setTool('select')
     setConnectFrom(null)
   }
 
-  const onCanvasPointerDownCapture = (e: ReactPointerEvent) => {
-    if (tool !== 'pan' || e.button !== 0) return
-    if ((e.target as HTMLElement).closest('input, textarea')) return
+  const startPan = (e: ReactPointerEvent) => {
     e.preventDefault()
-    e.stopPropagation()
-    dragRef.current = { kind: 'pan', sx: e.clientX, sy: e.clientY, px: panRef.current.x, py: panRef.current.y }
+    dragRef.current = { kind: 'pan', sx: e.clientX, sy: e.clientY, view: viewRef.current }
     setDragCursor('grabbing')
   }
 
   const onCanvasPointerDown = (e: ReactPointerEvent) => {
-    if (e.button === 1 || (e.button === 0 && spaceRef.current)) {
-      if ((e.target as HTMLElement).closest('input, textarea')) return
-      e.preventDefault()
-      dragRef.current = { kind: 'pan', sx: e.clientX, sy: e.clientY, px: panRef.current.x, py: panRef.current.y }
-      setDragCursor('grabbing')
+    if ((e.target as HTMLElement).closest('input, textarea, [data-diagram-ui]')) return
+    if (e.button === 1 || (e.button === 0 && (spaceRef.current || tool === 'pan'))) {
+      startPan(e)
       return
     }
-    if (e.button !== 0) return
-    if ((e.target as HTMLElement).closest('[data-diagram-node], [data-diagram-edge], [data-diagram-ui]')) return
-    setSelection(null)
-    setEditing(null)
+    if (e.button !== 0 || !file || file.loading) return
+    setChatMenu(null)
     const p = toDoc(e)
-    if (!p || !file || file.loading) return
+    if (!p) return
     if (tool !== 'select' && tool !== 'connect' && tool !== 'pan') {
       addAt(tool, p.x, p.y)
       return
     }
+    const doc = file.doc
+    const hit = hitDiagram(doc, p, DIAGRAM_HIT_TOLERANCE / viewRef.current.zoom)
+    if (editing && hit?.id !== editing) setEditing(null)
     if (tool === 'connect') {
-      setConnectFrom(null)
-      return
-    }
-    setArea(null)
-    setChatMenu(null)
-    dragRef.current = { kind: 'marquee', x: p.x, y: p.y }
-  }
-
-  const onNodePointerDown = (e: ReactPointerEvent, node: DiagramNode) => {
-    if (e.button !== 0 || !file) return
-    e.stopPropagation()
-    setArea(null)
-    if (editing === node.id) return
-    if (tool === 'connect') {
+      const node = hit?.type === 'node' ? doc.nodes.find((item) => item.id === hit.id) : undefined
+      if (!node) {
+        setConnectFrom(null)
+        return
+      }
       if (!connectFrom) {
         setConnectFrom(node.id)
-        setSelection({ type: 'node', id: node.id })
+        setSelection({ nodes: [node.id], edges: [] })
         setPropsOpen(true)
         return
       }
-      if (connectFrom !== node.id) {
-        const exists = file.doc.edges.some((edge) => edge.from === connectFrom && edge.to === node.id)
-        if (!exists) {
-          commit({ ...file.doc, edges: [...file.doc.edges, { id: mintId('e'), from: connectFrom, to: node.id }] })
-        }
+      if (connectFrom !== node.id && !doc.edges.some((edge) => edge.from === connectFrom && edge.to === node.id)) {
+        commit({ ...doc, edges: [...doc.edges, { id: mintId('e'), from: connectFrom, to: node.id }] })
       }
       setConnectFrom(null)
-      setSelection({ type: 'node', id: node.id })
+      setSelection({ nodes: [node.id], edges: [] })
       setPropsOpen(true)
       return
     }
-    setSelection({ type: 'node', id: node.id })
+    const current = selectionRef.current
+    if (!hit) {
+      dragRef.current = { kind: 'marquee', x: p.x, y: p.y, sx: e.clientX, sy: e.clientY, base: current, additive: e.shiftKey, moved: false }
+      return
+    }
     setPropsOpen(true)
     setConnectFrom(null)
-    dragRef.current = { kind: 'move', id: node.id, sx: e.clientX, sy: e.clientY, ox: node.x, oy: node.y, moved: false, remembered: false }
-    setDragCursor('grabbing')
+    if (hit.type === 'edge') {
+      setSelection(e.shiftKey ? mergeSelection(current, { nodes: [], edges: [hit.id] }, true) : { nodes: [], edges: [hit.id] })
+      return
+    }
+    if (editing === hit.id) return
+    const already = current.nodes.includes(hit.id)
+    if (e.shiftKey) {
+      setSelection(mergeSelection(current, { nodes: [hit.id], edges: [] }, true))
+      if (already) return
+    } else if (!already) {
+      setSelection({ nodes: [hit.id], edges: [] })
+    }
+    const grab = doc.nodes.find((node) => node.id === hit.id)
+    if (!grab) return
+    const ids = e.shiftKey || already ? [...new Set([...selectionRef.current.nodes, hit.id])] : [hit.id]
+    dragRef.current = {
+      kind: 'move',
+      ids,
+      grab,
+      base: doc,
+      sx: e.clientX,
+      sy: e.clientY,
+      pointerId: e.pointerId,
+      moved: false,
+      remembered: false,
+    }
   }
 
-  const onEdgePointerDown = (e: ReactPointerEvent, edge: DiagramEdge) => {
-    if (e.button !== 0) return
-    e.stopPropagation()
-    setArea(null)
+  const onCanvasDoubleClick = (e: ReactMouseEvent) => {
+    if (tool === 'pan' || !file) return
+    if ((e.target as HTMLElement).closest('input, textarea, [data-diagram-ui]')) return
+    const p = toDoc(e)
+    if (!p) return
+    const hit = hitDiagram(file.doc, p, DIAGRAM_HIT_TOLERANCE / viewRef.current.zoom)
+    if (hit?.type !== 'node') return
+    dragRef.current = null
+    labelNoted.current = false
+    setEditing(hit.id)
+    setSelection({ nodes: [hit.id], edges: [] })
     setPropsOpen(true)
-    setTool('select')
-    setConnectFrom(null)
-    setSelection({ type: 'edge', id: edge.id })
   }
 
   const patchEdge = (id: string, patch: Partial<DiagramEdge>) => {
-    if (!file) return
-    commit({
-      ...file.doc,
-      edges: file.doc.edges.map((edge) => (edge.id === id ? tidyEdge({ ...edge, ...patch }) : edge)),
-    })
+    const doc = currentDoc()
+    if (!doc) return
+    commit({ ...doc, edges: doc.edges.map((edge) => (edge.id === id ? tidyEdge({ ...edge, ...patch }) : edge)) })
   }
 
   const patchNode = (id: string, patch: Partial<DiagramNode>) => {
-    if (!file) return
-    commit({
-      ...file.doc,
-      nodes: file.doc.nodes.map((node) => (node.id === id ? tidyNode({ ...node, ...patch }) : node)),
-    })
+    const doc = currentDoc()
+    if (!doc) return
+    commit({ ...doc, nodes: doc.nodes.map((node) => (node.id === id ? tidyNode({ ...node, ...patch }) : node)) })
   }
 
-  const editNodeText = (id: string, text: string) => {
-    const current = useKoma.getState().diagram.docs[key]?.doc
+  /** Typing groups into one undo step until the field is left. */
+  const editLive = (change: (doc: DiagramDoc) => DiagramDoc) => {
+    const current = currentDoc()
     if (!current) return
     if (!labelNoted.current) {
       note(current)
       labelNoted.current = true
     }
-    updateDiagram(tab.root, tab.path, {
-      ...current,
-      nodes: current.nodes.map((node) => (node.id === id ? { ...node, text } : node)),
-    })
+    updateDiagram(tab.root, tab.path, change(current))
   }
-
-  const editEdgeText = (id: string, text: string) => {
-    const current = useKoma.getState().diagram.docs[key]?.doc
-    if (!current) return
-    if (!labelNoted.current) {
-      note(current)
-      labelNoted.current = true
-    }
-    updateDiagram(tab.root, tab.path, {
-      ...current,
-      edges: current.edges.map((edge) => (edge.id === id ? { ...edge, text } : edge)),
-    })
-  }
-
-  const editDetail = (kind: 'node' | 'edge', id: string, detail: string) => {
-    const current = useKoma.getState().diagram.docs[key]?.doc
-    if (!current) return
-    if (!labelNoted.current) {
-      note(current)
-      labelNoted.current = true
-    }
-    updateDiagram(
-      tab.root,
-      tab.path,
+  const editNodeText = (id: string, text: string) =>
+    editLive((doc) => ({ ...doc, nodes: doc.nodes.map((node) => (node.id === id ? { ...node, text } : node)) }))
+  const editEdgeText = (id: string, text: string) =>
+    editLive((doc) => ({ ...doc, edges: doc.edges.map((edge) => (edge.id === id ? { ...edge, text } : edge)) }))
+  const editDetail = (kind: 'node' | 'edge', id: string, detail: string) =>
+    editLive((doc) =>
       kind === 'node'
-        ? { ...current, nodes: current.nodes.map((node) => (node.id === id ? { ...node, detail } : node)) }
-        : { ...current, edges: current.edges.map((edge) => (edge.id === id ? { ...edge, detail } : edge)) },
+        ? { ...doc, nodes: doc.nodes.map((node) => (node.id === id ? { ...node, detail } : node)) }
+        : { ...doc, edges: doc.edges.map((edge) => (edge.id === id ? { ...edge, detail } : edge)) },
     )
-  }
+
+  // The node views are memoized, so their callbacks must keep one identity.
+  const editRef = useRef(editNodeText)
+  editRef.current = editNodeText
+  const nodeEdit = useMemo(
+    () => ({
+      text: (id: string, text: string) => editRef.current(id, text),
+      done: () => {
+        labelNoted.current = false
+        setEditing(null)
+      },
+    }),
+    [],
+  )
 
   const revert = () => {
     if (!file?.savedText || file.saving || file.loading) return
@@ -707,8 +955,7 @@ export function DiagramTab({ tab }: { tab: Extract<Tab, { kind: 'diagram' }> }) 
         'Before revert',
       )
     }
-    pastRef.current = []
-    futureRef.current = []
+    clearDiagramHistory(key)
     setRev((value) => value + 1)
     setEditing(null)
     const st = useKoma.getState()
@@ -734,6 +981,14 @@ export function DiagramTab({ tab }: { tab: Extract<Tab, { kind: 'diagram' }> }) 
   const grid = doc.grid > 0 ? doc.grid : 16
   const byId = new Map(doc.nodes.map((node) => [node.id, node]))
   const connectNode = connectFrom ? byId.get(connectFrom) : undefined
+  const selectedNodes = new Set(selection.nodes)
+  const selectedEdges = new Set(selection.edges)
+  const single: DiagramPanelSelection | null =
+    selectionSize(selection) === 1
+      ? selection.nodes.length
+        ? { type: 'node', id: selection.nodes[0] }
+        : { type: 'edge', id: selection.edges[0] }
+      : null
   const status = file.saving
     ? 'Saving…'
     : file.loading && file.savedText == null
@@ -746,6 +1001,29 @@ export function DiagramTab({ tab }: { tab: Extract<Tab, { kind: 'diagram' }> }) 
   const canSave = file.dirty && !file.saving && !file.loading
   const canRevert = file.dirty && !!file.savedText && !file.saving && !file.loading
   void rev
+  const z = view.zoom
+  const sx = (x: number) => x * z + view.x
+  const sy = (y: number) => y * z + view.y
+  const screenPoint = (point: DiagramPoint) => ({ x: sx(point.x), y: sy(point.y) })
+  const gridPx = grid * z
+  const dragging = !!dragCursor
+  const hoverNode = hover?.type === 'node' ? byId.get(hover.id) : undefined
+  const canvasCursor =
+    dragCursor ??
+    (tool === 'pan' || spaceDown ? 'grab' : tool !== 'select' ? 'crosshair' : hover?.type === 'edge' ? 'pointer' : hoverNode ? 'move' : 'default')
+  const singleNode = single?.type === 'node' ? byId.get(single.id) : undefined
+  // Ports and resize handles share the outline, so the selected shape shows only its handles.
+  const portsFor =
+    tool !== 'select' || editing
+      ? undefined
+      : connectDrag
+        ? byId.get(connectDrag.fromId)
+        : !dragging && hoverNode && hoverNode !== singleNode
+          ? hoverNode
+          : undefined
+  const singleEdge = single?.type === 'edge' ? doc.edges.find((edge) => edge.id === single.id) : undefined
+  const connectTarget =
+    connectDrag && cursor ? nodeAtPoint(doc.nodes, cursor, connectDrag.fromId) : null
 
   return (
     <div className="flex h-full min-h-0 min-w-0 flex-col bg-koma-bg text-koma-fg">
@@ -756,8 +1034,8 @@ export function DiagramTab({ tab }: { tab: Extract<Tab, { kind: 'diagram' }> }) 
         canSave={canSave}
         canRevert={canRevert}
         saving={file.saving}
-        canUndo={pastRef.current.length > 0}
-        canRedo={futureRef.current.length > 0}
+        canUndo={history.past.length > 0}
+        canRedo={history.future.length > 0}
         onHistory={() => showCodingHistory(tab.root, tab.path)}
         onUndo={undo}
         onRedo={redo}
@@ -782,29 +1060,35 @@ export function DiagramTab({ tab }: { tab: Extract<Tab, { kind: 'diagram' }> }) 
       <div className="flex min-h-0 min-w-0 flex-1">
       <div
         ref={canvasRef}
-        className={`koma-authored-canvas relative min-h-0 min-w-0 flex-1 overflow-hidden ${dragCursor ? '' : tool === 'pan' || spaceDown ? 'cursor-grab' : 'cursor-crosshair'}`}
+        className="koma-authored-canvas relative min-h-0 min-w-0 flex-1 overflow-hidden"
         style={{
-          ...(doc.snap
+          ...(doc.snap && gridPx >= 6
             ? {
                 backgroundImage:
                   'radial-gradient(circle, color-mix(in srgb, var(--koma-fg, #c8d3f5) 28%, transparent) 1px, transparent 1px)',
-                backgroundSize: `${grid}px ${grid}px`,
-                backgroundPosition: `${pan.x}px ${pan.y}px`,
+                backgroundSize: `${gridPx}px ${gridPx}px`,
+                backgroundPosition: `${view.x}px ${view.y}px`,
               }
             : {}),
-          ...(dragCursor ? { cursor: dragCursor } : {}),
+          cursor: canvasCursor,
         }}
-        onPointerDownCapture={onCanvasPointerDownCapture}
         onPointerDown={onCanvasPointerDown}
+        onPointerMove={(e) => {
+          trackHover(e)
+          if (connectFrom) setCursor(toDoc(e))
+        }}
+        onPointerLeave={() => setHover(null)}
+        onDoubleClick={onCanvasDoubleClick}
         onContextMenu={(e) => {
           if ((e.target as HTMLElement).closest('input, textarea')) return
           e.preventDefault()
           const p = toDoc(e)
-          setChatMenu({ x: e.clientX, y: e.clientY, area: area && p && pointInDiagramRect(p, area) ? area : null })
-        }}
-        onPointerMove={(e) => {
-          if (!connectFrom) return
-          setCursor(toDoc(e))
+          const hit = p ? hitDiagram(doc, p, DIAGRAM_HIT_TOLERANCE / viewRef.current.zoom) : null
+          const current = selectionRef.current
+          if (hit && !(hit.type === 'node' ? current.nodes : current.edges).includes(hit.id)) {
+            setSelection(hit.type === 'node' ? { nodes: [hit.id], edges: [] } : { nodes: [], edges: [hit.id] })
+          }
+          setChatMenu({ x: e.clientX, y: e.clientY })
         }}
         onDragOver={(e) => {
           if ([...e.dataTransfer.types].some((type) => type === SHAPE_MIME || type === 'text/plain')) {
@@ -825,321 +1109,209 @@ export function DiagramTab({ tab }: { tab: Extract<Tab, { kind: 'diagram' }> }) 
             <BrailleSpinner size={18} className="opacity-70" />
           </div>
         ) : null}
-        <svg className="pointer-events-none absolute inset-0 h-full w-full overflow-visible">
-          <defs>
+        <div
+          className="pointer-events-none absolute left-0 top-0"
+          style={{ transform: `translate(${view.x}px, ${view.y}px) scale(${z})`, transformOrigin: '0 0' }}
+        >
+          <svg className="absolute left-0 top-0 h-px w-px overflow-visible">
             {doc.edges.map((edge) => {
-              const style = edgeStyle(edge)
-              const selected = selection?.type === 'edge' && selection.id === edge.id
-              const color = style.color || themeStroke(selected)
-              const id = `${markerId}-${edge.id.replace(/[^a-zA-Z0-9_-]/g, '')}`
+              const from = byId.get(edge.from)
+              const to = byId.get(edge.to)
+              if (!from || !to) return null
               return (
-                <g key={edge.id}>
-                  {style.end === 'none' ? null : <DiagramMarker key="end" id={`${id}-end`} at="end" kind={style.end} color={color} />}
-                  {style.start === 'none' ? null : <DiagramMarker key="start" id={`${id}-start`} at="start" kind={style.start} color={color} />}
-                </g>
+                <DiagramEdgeView
+                  key={edge.id}
+                  edge={edge}
+                  points={edgePoints(from, to, edge)}
+                  selected={selectedEdges.has(edge.id)}
+                  markerBase={markerId}
+                />
               )
             })}
-          </defs>
+          </svg>
           {doc.edges.map((edge) => {
+            const text = edge.text?.trim()
+            if (!text) return null
             const from = byId.get(edge.from)
             const to = byId.get(edge.to)
             if (!from || !to) return null
-            const selected = selection?.type === 'edge' && selection.id === edge.id
-            const style = edgeStyle(edge)
-            const points = edgeRoute(from, to, edge).map((point) => ({ x: point.x + pan.x, y: point.y + pan.y }))
-            const path = routePath(points, style.corner === 'rounded')
-            const color = style.color || themeStroke(selected)
-            const id = `${markerId}-${edge.id.replace(/[^a-zA-Z0-9_-]/g, '')}`
+            const at = routeMidpoint(edgePoints(from, to, edge))
             return (
-              <g key={edge.id} data-diagram-edge="" className="pointer-events-auto" onPointerDown={(e) => onEdgePointerDown(e, edge)}>
-                <path d={path} stroke="transparent" strokeWidth={12} fill="none" />
-                {style.stroke ? (
-                  <path
-                    d={path}
-                    stroke={color}
-                    strokeWidth={style.width}
-                    strokeDasharray={dashArray(style.dash, style.width)}
-                    strokeLinejoin={style.corner === 'rounded' ? 'round' : 'miter'}
-                    fill="none"
-                    markerEnd={style.end === 'none' ? undefined : `url(#${id}-${style.end === 'open' ? 'end' : 'end'})`}
-                    markerStart={style.start === 'none' ? undefined : `url(#${id}-start)`}
-                  />
-                ) : null}
-                {selected && tool === 'select'
-                  ? points.slice(0, -1).map((point, index) => {
-                      const next = points[index + 1]
-                      if (!next) return null
-                      const mid = { x: (point.x + next.x) / 2, y: (point.y + next.y) / 2 }
-                      const docPoints = edgeRoute(from, to, edge)
-                      const horizontal = Math.abs(next.x - point.x) >= Math.abs(next.y - point.y)
-                      return (
-                        <circle
-                          key={`seg-${index}`}
-                          cx={mid.x}
-                          cy={mid.y}
-                          r={4}
-                          fill="var(--color-koma-accent)"
-                          stroke="var(--color-koma-bg)"
-                          strokeWidth={1}
-                          style={{ cursor: horizontal ? 'ns-resize' : 'ew-resize' }}
-                          onPointerDown={(e) => {
-                            e.stopPropagation()
-                            e.preventDefault()
-                            dragRef.current = { kind: 'segment', edgeId: edge.id, index, points: docPoints, remembered: false }
-                          }}
-                        />
-                      )
-                    })
-                  : null}
-                {selected && tool === 'select' ? (
-                  <>
-                    <circle
-                      cx={points[0]?.x}
-                      cy={points[0]?.y}
-                      r={5}
-                      fill="var(--color-koma-bg)"
-                      stroke="var(--color-koma-accent)"
-                      strokeWidth={1.5}
-                      style={{ cursor: 'crosshair' }}
-                      onPointerDown={(e) => {
-                        e.stopPropagation()
-                        e.preventDefault()
-                        dragRef.current = { kind: 'anchor', edgeId: edge.id, end: 'from', remembered: false }
-                      }}
-                    />
-                    <circle
-                      cx={points[points.length - 1]?.x}
-                      cy={points[points.length - 1]?.y}
-                      r={5}
-                      fill="var(--color-koma-bg)"
-                      stroke="var(--color-koma-accent)"
-                      strokeWidth={1.5}
-                      style={{ cursor: 'crosshair' }}
-                      onPointerDown={(e) => {
-                        e.stopPropagation()
-                        e.preventDefault()
-                        dragRef.current = { kind: 'anchor', edgeId: edge.id, end: 'to', remembered: false }
-                      }}
-                    />
-                  </>
-                ) : null}
-              </g>
+              <div
+                key={`label-${edge.id}`}
+                className="absolute z-10 max-w-[140px] -translate-x-1/2 -translate-y-full truncate rounded border border-koma-border bg-koma-panel px-1.5 text-[11px] leading-5 text-koma-fg"
+                style={{ left: at.x, top: at.y - 4 }}
+              >
+                {text}
+              </div>
             )
           })}
+          {doc.nodes.map((node) => (
+            <DiagramNodeView
+              key={node.id}
+              node={node}
+              highlight={connectFrom === node.id || connectTarget?.id === node.id}
+              editing={editing === node.id}
+              onEditText={nodeEdit.text}
+              onEditDone={nodeEdit.done}
+            />
+          ))}
+        </div>
+        <svg className="pointer-events-none absolute inset-0 h-full w-full overflow-visible">
+          {doc.nodes.map((node) => {
+            if (!selectedNodes.has(node.id) || (singleNode && tool === 'select' && !connectDrag)) return null
+            const corners = [
+              { x: node.x, y: node.y },
+              { x: node.x + node.w, y: node.y },
+              { x: node.x + node.w, y: node.y + node.h },
+              { x: node.x, y: node.y + node.h },
+            ].map((point) => screenPoint(rotatePoint(point, nodeCenter(node), node.rotation ?? 0)))
+            return (
+              <polygon
+                key={node.id}
+                points={corners.map((point) => `${point.x},${point.y}`).join(' ')}
+                fill="none"
+                stroke="var(--color-koma-accent)"
+                strokeWidth={1}
+              />
+            )
+          })}
+          {singleEdge && tool === 'select' ? (
+            <EdgeHandles
+              edge={singleEdge}
+              byId={byId}
+              screenPoint={screenPoint}
+              dragging={dragging}
+              onSegment={(index, points) => {
+                dragRef.current = { kind: 'segment', edgeId: singleEdge.id, index, points, remembered: false }
+              }}
+              onAnchor={(end) => {
+                dragRef.current = { kind: 'anchor', edgeId: singleEdge.id, end, remembered: false }
+                setDragCursor('crosshair')
+              }}
+            />
+          ) : null}
           {connectNode && cursor ? (
             <line
-              x1={pan.x + sideAnchor(connectNode, nearestSide(connectNode, cursor)).x}
-              y1={pan.y + sideAnchor(connectNode, nearestSide(connectNode, cursor)).y}
-              x2={pan.x + cursor.x}
-              y2={pan.y + cursor.y}
+              x1={sx(sideAnchor(connectNode, nearestSide(connectNode, cursor)).x)}
+              y1={sy(sideAnchor(connectNode, nearestSide(connectNode, cursor)).y)}
+              x2={sx(cursor.x)}
+              y2={sy(cursor.y)}
               stroke="var(--color-koma-accent)"
               strokeWidth={1.5}
               strokeDasharray="4 3"
             />
           ) : null}
-          {connectDrag && cursor ? (
-            <ConnectPreview nodes={doc.nodes} pan={pan} fromId={connectDrag.fromId} port={connectDrag.port} cursor={cursor} />
+          {connectDrag && cursor ? (() => {
+            const from = byId.get(connectDrag.fromId)
+            if (!from) return null
+            const start = screenPoint(portAnchor(from, connectDrag.port))
+            const end = screenPoint(connectTarget ? portAnchor(connectTarget, nearestPort(connectTarget, cursor)) : cursor)
+            return <line x1={start.x} y1={start.y} x2={end.x} y2={end.y} stroke="var(--color-koma-accent)" strokeWidth={1.5} strokeDasharray="4 3" />
+          })() : null}
+          {marquee ? (
+            <rect
+              x={sx(marquee.x)}
+              y={sy(marquee.y)}
+              width={Math.max(marquee.w * z, 1)}
+              height={Math.max(marquee.h * z, 1)}
+              fill="color-mix(in srgb, var(--color-koma-accent) 10%, transparent)"
+              stroke="var(--color-koma-accent)"
+              strokeWidth={1}
+            />
           ) : null}
         </svg>
-        {doc.edges.map((edge) => {
-          const text = edge.text?.trim()
-          if (!text) return null
-          const from = byId.get(edge.from)
-          const to = byId.get(edge.to)
-          if (!from || !to) return null
-          const at = routeMidpoint(edgeRoute(from, to, edge))
-          return (
-            <div
-              key={`label-${edge.id}`}
-              className="pointer-events-none absolute z-10 max-w-[140px] -translate-x-1/2 -translate-y-full truncate rounded border border-koma-border bg-koma-panel px-1.5 text-[11px] leading-5 text-koma-fg"
-              style={{ left: pan.x + at.x, top: pan.y + at.y - 4 }}
-            >
-              {text}
-            </div>
-          )
-        })}
-        {doc.nodes.map((node) => {
-          const selected = selection?.type === 'node' && selection.id === node.id
-          const paint = nodeStyle(node)
-          const connect = connectFrom === node.id
-          const boxed = node.kind === 'rect' || node.kind === 'text'
-          const nodeCursor = dragCursor || editing === node.id || tool === 'connect' ? '' : 'cursor-grab'
-          return (
-            <div
-              key={node.id}
-              data-diagram-node=""
-              className={`absolute flex items-center justify-center ${nodeCursor}`}
-              style={{
-                left: pan.x + node.x,
-                top: pan.y + node.y,
-                width: node.w,
-                height: node.h,
-                transform: node.rotation ? `rotate(${node.rotation}deg)` : undefined,
-                ...(boxed
-                  ? {
-                      background: paint.fill ? paint.fillColor || 'var(--color-koma-panel)' : 'transparent',
-                      borderRadius: node.kind === 'rect' ? 4 : 0,
-                      outline: connect || paint.stroke
-                        ? `1px solid ${connect ? 'var(--color-koma-accent)' : paint.strokeColor || 'var(--color-koma-border)'}`
-                        : 'none',
-                      outlineOffset: '-0.5px',
-                    }
-                  : {}),
-              }}
-              onPointerEnter={() => setHoverId(node.id)}
-              onPointerLeave={() => setHoverId((current) => (current === node.id ? null : current))}
-              onPointerDown={(e) => onNodePointerDown(e, node)}
-              onDoubleClick={(e) => {
-                if (tool === 'pan') return
-                e.stopPropagation()
-                dragRef.current = null
-                labelNoted.current = false
-                setEditing(node.id)
-                setSelection({ type: 'node', id: node.id })
-                setPropsOpen(true)
-              }}
-            >
-              {node.kind === 'diamond' || node.kind === 'ellipse' ? (
-                <svg className="pointer-events-none absolute inset-0 h-full w-full overflow-visible">
-                  {node.kind === 'diamond' ? (
-                    <polygon
-                      points={`${node.w / 2},0 ${node.w},${node.h / 2} ${node.w / 2},${node.h} 0,${node.h / 2}`}
-                      fill={paint.fill ? paint.fillColor || 'var(--color-koma-panel)' : 'none'}
-                      stroke={connect ? 'var(--color-koma-accent)' : paint.stroke ? paint.strokeColor || 'var(--color-koma-border)' : 'none'}
-                      strokeWidth={connect || paint.stroke ? 1 : 0}
-                    />
-                  ) : (
-                    <ellipse
-                      cx={node.w / 2}
-                      cy={node.h / 2}
-                      rx={node.w / 2}
-                      ry={node.h / 2}
-                      fill={paint.fill ? paint.fillColor || 'var(--color-koma-panel)' : 'none'}
-                      stroke={connect ? 'var(--color-koma-accent)' : paint.stroke ? paint.strokeColor || 'var(--color-koma-border)' : 'none'}
-                      strokeWidth={connect || paint.stroke ? 1 : 0}
-                    />
-                  )}
-                </svg>
-              ) : null}
-              {editing === node.id ? (
-                <input
-                  autoFocus
-                  defaultValue={node.text}
-                  className="z-10 w-full border-0 bg-transparent px-2 text-center text-[12px] shadow-none outline-none"
-                  style={{ color: paint.textColor || 'var(--color-koma-fg)' }}
-                  onPointerDown={(e) => e.stopPropagation()}
-                  onChange={(e) => {
-                    const text = e.target.value
-                    const current = useKoma.getState().diagram.docs[key]?.doc
-                    if (!current) return
-                    if (!labelNoted.current) {
-                      note(current)
-                      labelNoted.current = true
-                    }
-                    updateDiagram(tab.root, tab.path, {
-                      ...current,
-                      nodes: current.nodes.map((item) => (item.id === node.id ? { ...item, text } : item)),
-                    })
-                  }}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter' || e.key === 'Escape') {
-                      e.preventDefault()
-                      setEditing(null)
-                    }
-                  }}
-                  onBlur={() => setEditing(null)}
-                />
-              ) : (
+        {portsFor
+          ? Array.from({ length: DIAGRAM_PORTS }, (_, port) => {
+              const at = screenPoint(portAnchor(portsFor, port))
+              return (
                 <span
-                  className="pointer-events-none z-10 truncate px-2 text-center text-[12px]"
-                  style={{ color: paint.textColor || 'var(--color-koma-fg)' }}
-                  dangerouslySetInnerHTML={{ __html: inlineToHtml(node.text || ' ') }}
-                />
-              )}
-              {tool === 'select' && editing !== node.id && (connectDrag?.fromId === node.id || (hoverId === node.id && (!selected || connectDrag))) ? (
-                Array.from({ length: DIAGRAM_PORTS }, (_, port) => {
-                  const at = portOffset(node, port)
-                  return (
-                    <span
-                      key={port}
-                      data-diagram-port=""
-                      className="absolute z-10 h-2 w-2 -translate-x-1/2 -translate-y-1/2"
-                      style={{ left: `${at.x * 100}%`, top: `${at.y * 100}%`, cursor: 'crosshair' }}
-                      onPointerDown={(e) => {
-                        if (e.button !== 0 || spaceRef.current) return
-                        e.stopPropagation()
-                        e.preventDefault()
-                        dragRef.current = { kind: 'connect', fromId: node.id, port }
-                        setConnectDrag({ fromId: node.id, port })
-                        setDragCursor('crosshair')
-                        setCursor(toDoc(e))
-                        setConnectFrom(null)
-                      }}
-                      onDoubleClick={(e) => e.stopPropagation()}
-                    >
-                      <svg viewBox="0 0 12 12" className="h-full w-full overflow-visible text-koma-accent" aria-hidden="true">
-                        <path d="M6 1.5 V10.5 M1.5 6 H10.5" fill="none" stroke="currentColor" strokeWidth="1.5" />
-                      </svg>
-                    </span>
-                  )
-                })
-              ) : null}
-              {selected && tool === 'select' && editing !== node.id && !connectDrag ? (
-                <>
-                  {HANDLES.map((handle) => (
-                    <span
-                      key={handle.id}
-                      className={`absolute z-10 h-2.5 w-2.5 rounded-full border border-koma-accent bg-koma-panel ${dragCursor ? 'pointer-events-none' : ''}`}
-                      style={{ left: handle.x, top: handle.y, transform: 'translate(-50%, -50%)', cursor: handle.cursor }}
-                      onPointerDown={(e) => {
-                        e.stopPropagation()
-                        e.preventDefault()
-                        dragRef.current = { kind: 'resize', id: node.id, handle: handle.id, sx: e.clientX, sy: e.clientY, node, remembered: false }
-                        setDragCursor(handle.cursor)
-                      }}
-                      onDoubleClick={(e) => e.stopPropagation()}
-                    />
-                  ))}
-                  <button
-                    type="button"
-                    title="Rotate"
-                    aria-label="Rotate"
-                    className={`absolute -right-3 -top-3 z-10 flex h-4 w-4 items-center justify-center rounded-full border border-koma-border bg-koma-panel text-koma-accent ${dragCursor ? 'pointer-events-none' : ''}`}
-                    onPointerDown={(e) => {
-                      e.stopPropagation()
-                      e.preventDefault()
-                      const point = toDoc(e)
-                      if (!point) return
-                      setDragCursor('crosshair')
-                      dragRef.current = {
-                        kind: 'rotate',
-                        id: node.id,
-                        rotation: node.rotation ?? 0,
-                        angle: pointerAngle(node, point),
-                        node,
-                        remembered: false,
-                      }
-                    }}
-                  >
-                    <RotateCw size={10} />
-                  </button>
-                </>
-              ) : null}
-            </div>
-          )
-        })}
-        {area ? (
+                  key={`${portsFor.id}-${port}`}
+                  data-diagram-ui=""
+                  className="absolute z-10 h-2 w-2 -translate-x-1/2 -translate-y-1/2"
+                  style={{ left: at.x, top: at.y, cursor: 'crosshair' }}
+                  onPointerDown={(e) => {
+                    if (e.button !== 0 || spaceRef.current) return
+                    e.stopPropagation()
+                    e.preventDefault()
+                    dragRef.current = { kind: 'connect', fromId: portsFor.id, port }
+                    setConnectDrag({ fromId: portsFor.id, port })
+                    setDragCursor('crosshair')
+                    setCursor(toDoc(e))
+                    setConnectFrom(null)
+                  }}
+                >
+                  <svg viewBox="0 0 12 12" className="h-full w-full overflow-visible text-koma-accent" aria-hidden="true">
+                    <path d="M6 1.5 V10.5 M1.5 6 H10.5" fill="none" stroke="currentColor" strokeWidth="1.5" />
+                  </svg>
+                </span>
+              )
+            })
+          : null}
+        {singleNode && tool === 'select' && editing !== singleNode.id && !connectDrag ? (
           <div
-            data-diagram-ui=""
-            className="pointer-events-none absolute z-20 border border-koma-accent bg-koma-accent/10"
-            style={{ left: pan.x + area.x, top: pan.y + area.y, width: Math.max(area.w, 1), height: Math.max(area.h, 1) }}
-          />
+            className="pointer-events-none absolute z-10 outline outline-1 outline-koma-accent"
+            style={{
+              left: sx(singleNode.x),
+              top: sy(singleNode.y),
+              width: singleNode.w * z,
+              height: singleNode.h * z,
+              transform: singleNode.rotation ? `rotate(${singleNode.rotation}deg)` : undefined,
+            }}
+          >
+            {HANDLES.map((handle) => (
+              <span
+                key={handle.id}
+                data-diagram-ui=""
+                className={`absolute h-2.5 w-2.5 rounded-full border border-koma-accent bg-koma-panel ${dragging ? '' : 'pointer-events-auto'}`}
+                style={{ left: handle.x, top: handle.y, transform: 'translate(-50%, -50%)', cursor: handle.cursor }}
+                onPointerDown={(e) => {
+                  e.stopPropagation()
+                  e.preventDefault()
+                  dragRef.current = { kind: 'resize', id: singleNode.id, handle: handle.id, sx: e.clientX, sy: e.clientY, node: singleNode, remembered: false }
+                  setDragCursor(handle.cursor)
+                }}
+              />
+            ))}
+            <button
+              type="button"
+              title="Rotate"
+              aria-label="Rotate"
+              data-diagram-ui=""
+              className={`absolute -right-3 -top-3 flex h-4 w-4 items-center justify-center rounded-full border border-koma-border bg-koma-panel text-koma-accent ${dragging ? '' : 'pointer-events-auto'}`}
+              onPointerDown={(e) => {
+                e.stopPropagation()
+                e.preventDefault()
+                const point = toDoc(e)
+                if (!point) return
+                setDragCursor('crosshair')
+                dragRef.current = {
+                  kind: 'rotate',
+                  id: singleNode.id,
+                  rotation: singleNode.rotation ?? 0,
+                  angle: pointerAngle(singleNode, point),
+                  node: singleNode,
+                  remembered: false,
+                }
+              }}
+            >
+              <RotateCw size={10} />
+            </button>
+          </div>
         ) : null}
         {!file.loading && doc.nodes.length === 0 ? (
           <div className="pointer-events-none absolute inset-0 flex items-center justify-center text-[12px] text-koma-fg opacity-35">
             Drag a shape onto the canvas
           </div>
         ) : null}
+        <div
+          data-diagram-ui=""
+          className="absolute bottom-2 right-2 rounded border border-koma-border bg-koma-panel px-1.5 text-[11px] leading-5 text-koma-dim"
+          title="Zoom (⌘ + scroll, ⌘0 for 100%, ⇧⌘H to fit)"
+          onDoubleClick={() => zoomAround(1 / viewRef.current.zoom)}
+        >
+          {Math.round(z * 100)}%
+        </div>
       </div>
       {propsOpen ? (
         <aside
@@ -1156,7 +1328,8 @@ export function DiagramTab({ tab }: { tab: Extract<Tab, { kind: 'diagram' }> }) 
             root={tab.root}
             diagPath={tab.path}
             legacyAssetDir={diagramFolder(tab.path) ?? ''}
-            selection={selection}
+            selection={single}
+            count={selectionSize(selection)}
             onEdge={(id, patch) => patchEdge(id, patch)}
             onNode={(id, patch) => patchNode(id, patch)}
             onText={(id, text) => editNodeText(id, text)}
@@ -1180,17 +1353,17 @@ export function DiagramTab({ tab }: { tab: Extract<Tab, { kind: 'diagram' }> }) 
         >
           <DiagramRefMenuItems
             onAdd={() => {
-              const target = chatMenu.area
+              const picked = selectionRef.current
               setChatMenu(null)
               const source = { root: tab.root, path: tab.path }
-              if (target) addDiagramAreaToChat(doc, target, diagramChatTitle(tab.path), source)
+              if (selectionSize(picked)) addDiagramSelectionToChat(doc, picked, diagramChatTitle(tab.path), source)
               else addDiagramDocToChat(doc, diagramChatTitle(tab.path), 'This diagram is empty.', source)
             }}
             onCopy={() => {
-              const target = chatMenu.area
+              const picked = selectionRef.current
               setChatMenu(null)
               const source = { root: tab.root, path: tab.path }
-              if (target) void copyDiagramArea(doc, target, diagramChatTitle(tab.path), source)
+              if (selectionSize(picked)) void copyDiagramSelection(doc, picked, diagramChatTitle(tab.path), source)
               else void copyDiagramMermaid(doc, diagramChatTitle(tab.path), 'This diagram is empty.', source)
             }}
           />
@@ -1232,437 +1405,73 @@ export function DiagramTab({ tab }: { tab: Extract<Tab, { kind: 'diagram' }> }) 
   )
 }
 
-function ConnectPreview({
-  nodes,
-  pan,
-  fromId,
-  port,
-  cursor,
-}: {
-  nodes: DiagramNode[]
-  pan: { x: number; y: number }
-  fromId: string
-  port: number
-  cursor: DiagramPoint
-}) {
-  const from = nodes.find((node) => node.id === fromId)
-  if (!from) return null
-  const start = portAnchor(from, port)
-  const target = nodeAtPoint(nodes, cursor, fromId)
-  const end = target ? portAnchor(target, nearestPort(target, cursor)) : cursor
-  return (
-    <line
-      x1={pan.x + start.x}
-      y1={pan.y + start.y}
-      x2={pan.x + end.x}
-      y2={pan.y + end.y}
-      stroke="var(--color-koma-accent)"
-      strokeWidth={1.5}
-      strokeDasharray="4 3"
-    />
-  )
-}
-
-function LineGlyph({ children }: { children: ReactNode }) {
-  return (
-    <svg viewBox="0 0 28 14" className="h-3.5 w-7 flex-none" aria-hidden="true">
-      {children}
-    </svg>
-  )
-}
-
-const LINE_HEADS: { value: DiagramArrow; name: string }[] = [
-  { value: 'none', name: 'No' },
-  { value: 'arrow', name: 'Arrow' },
-  { value: 'open', name: 'Open arrow' },
-  { value: 'diamond', name: 'Diamond' },
-  { value: 'diamondOpen', name: 'Open diamond' },
-  { value: 'dot', name: 'Dot' },
-  { value: 'circle', name: 'Circle' },
-  { value: 'bar', name: 'Bar' },
-]
-
-function ArrowGlyph({ side, kind }: { side: 'start' | 'end'; kind: DiagramArrow }) {
-  const p = (x: number) => (side === 'end' ? x : 28 - x)
-  const reach = kind === 'none' ? 24 : kind === 'arrow' || kind === 'open' ? 16 : kind === 'diamond' || kind === 'diamondOpen' ? 14 : kind === 'bar' ? 23 : 18
-  const shaft = `M${p(4)} 7 H${p(reach)}`
-  const triangle = `M${p(15.5)} 3 L${p(24)} 7 L${p(15.5)} 11`
-  const diamond = `M${p(24)} 7 L${p(19)} 3 L${p(14)} 7 L${p(19)} 11 Z`
-  return (
-    <LineGlyph>
-      <path d={shaft} fill="none" stroke="currentColor" strokeWidth="1.5" />
-      {kind === 'arrow' ? <path d={`${triangle} Z`} fill="currentColor" /> : null}
-      {kind === 'open' ? <path d={triangle} fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinejoin="miter" /> : null}
-      {kind === 'diamond' ? <path d={diamond} fill="currentColor" /> : null}
-      {kind === 'diamondOpen' ? <path d={diamond} fill="none" stroke="currentColor" strokeWidth="1.5" /> : null}
-      {kind === 'dot' ? <circle cx={p(21)} cy="7" r="3" fill="currentColor" /> : null}
-      {kind === 'circle' ? <circle cx={p(21)} cy="7" r="3" fill="none" stroke="currentColor" strokeWidth="1.5" /> : null}
-      {kind === 'bar' ? <path d={`M${p(23)} 3 V11`} fill="none" stroke="currentColor" strokeWidth="1.5" /> : null}
-    </LineGlyph>
-  )
-}
-
-function Choices<T extends string>({
-  label,
-  value,
-  options,
-  onChange,
-}: {
-  label: string
-  value: T
-  options: { value: T; label: string; icon?: ReactNode }[]
-  onChange: (value: T) => void
-}) {
-  const grid = options.length > 4
-  return (
-    <div className="flex flex-col gap-1">
-      <span className="text-[10px] font-semibold uppercase tracking-wider text-koma-dim">{label}</span>
-      <div className={grid ? 'grid grid-cols-4 gap-0.5 rounded border border-koma-border p-0.5' : 'flex rounded border border-koma-border p-0.5'}>
-        {options.map((option) => {
-          const on = value === option.value
-          return (
-            <button
-              key={option.value}
-              type="button"
-              title={option.label}
-              aria-label={option.label}
-              aria-pressed={on}
-              onClick={() => onChange(option.value)}
-              className={`flex h-7 items-center justify-center rounded ${grid ? '' : 'min-w-0 flex-1 px-1'} ${
-                on ? 'bg-koma-accent/20 text-koma-accent' : 'text-koma-dim hover:bg-koma-hover hover:text-koma-fg'
-              }`}
-            >
-              {option.icon ?? <span className="truncate text-[11px]">{option.label}</span>}
-            </button>
-          )
-        })}
-      </div>
-    </div>
-  )
-}
-
-function ColorWell({
-  label,
-  value,
-  fallback,
-  picker,
-  onChange,
-}: {
-  label: string
-  value: string
-  fallback: string
-  picker: string
-  onChange: (hex: string) => void
-}) {
-  return (
-    <label className="relative h-7 w-7 flex-none cursor-pointer overflow-hidden rounded border border-koma-border" title={label}>
-      <span className="absolute inset-0" style={{ background: value || fallback }} />
-      <input
-        type="color"
-        aria-label={label}
-        value={/^#[0-9a-fA-F]{6}$/.test(value) ? value : picker}
-        className="absolute inset-0 cursor-pointer opacity-0"
-        onChange={(e) => onChange(e.target.value)}
-      />
-    </label>
-  )
-}
-
-function PaintRow({
-  label,
-  on,
-  color,
-  fallback,
-  picker,
-  onToggle,
-  onColor,
-}: {
-  label: string
-  on: boolean
-  color: string
-  fallback: string
-  picker: string
-  onToggle: (on: boolean) => void
-  onColor: (hex: string) => void
-}) {
-  return (
-    <div className="flex h-8 items-center gap-2">
-      <span className="min-w-0 flex-1 text-[12px] text-koma-fg">{label}</span>
-      <Toggle on={on} onChange={onToggle} />
-      <ColorWell label={`${label} color`} value={color} fallback={fallback} picker={picker} onChange={onColor} />
-    </div>
-  )
-}
-
-function Properties({
-  doc,
-  root,
-  diagPath,
-  legacyAssetDir,
-  selection,
-  onEdge,
-  onNode,
-  onText,
-  onEdgeText,
-  onDetail,
-  onTextDone,
-}: {
-  doc: DiagramDoc
-  root: string
-  diagPath: string
-  legacyAssetDir: string
-  selection: Selection | null
-  onEdge: (id: string, patch: Partial<DiagramEdge>) => void
-  onNode: (id: string, patch: Partial<DiagramNode>) => void
-  onText: (id: string, text: string) => void
-  onEdgeText: (id: string, text: string) => void
-  onDetail: (kind: 'node' | 'edge', id: string, detail: string) => void
-  onTextDone: () => void
-}) {
-  const [tab, setTab] = useState<'style' | 'detail'>('style')
-  const node = selection?.type === 'node' ? doc.nodes.find((item) => item.id === selection.id) : undefined
-  const edge = selection?.type === 'edge' ? doc.edges.find((item) => item.id === selection.id) : undefined
-  const target = node ?? edge
-  const selected = node ? 'node' : edge ? 'edge' : null
-  const shapeKind = node ? 'node' : edge ? 'edge' : null
-  const assetDir =
-    shapeKind && target ? diagramShapeFolder(diagPath, shapeKind, target.id) ?? '' : ''
-  const detailTitle =
-    target && shapeKind
-      ? node
-        ? `Detail · ${shapeHeadingFor(node.text, node.id)} (\`${node.id}\`)`
-        : `Detail · line (\`${edge!.id}\`)`
-      : 'Detail'
-  return (
-    <div className="flex min-h-0 flex-1 flex-col">
-      <div className="flex h-8 flex-none items-center gap-1 border-b border-koma-border px-2">
-        {selected ? (
-          <>
-            <PanelTab label={node ? 'Card' : 'Line'} on={tab === 'style'} onClick={() => setTab('style')} />
-            <PanelTab label="Detail" on={tab === 'detail'} onClick={() => setTab('detail')} />
-          </>
-        ) : (
-          <span className="px-1 text-[12px] text-koma-fg">Properties</span>
-        )}
-      </div>
-      {selected && tab === 'detail' && target && shapeKind ? (
-        <>
-          <p className="flex-none border-b border-koma-border px-3 py-1.5 text-[10px] text-koma-dim">{detailTitle}</p>
-          <MarkdownNote
-            key={target.id}
-            value={target.detail ?? ''}
-            root={root}
-            assetDir={assetDir}
-            legacyAssetDir={legacyAssetDir}
-            onChange={(detail) => onDetail(shapeKind, target.id, detail)}
-            onDone={onTextDone}
-          />
-        </>
-      ) : node ? (
-        <div className="min-h-0 flex-1 overflow-y-auto">
-          <CardSettings node={node} onChange={(patch) => onNode(node.id, patch)} onText={(text) => onText(node.id, text)} onTextDone={onTextDone} />
-        </div>
-      ) : edge ? (
-        <div className="min-h-0 flex-1 overflow-y-auto">
-          <LineSettings edge={edge} onChange={(patch) => onEdge(edge.id, patch)} onText={(text) => onEdgeText(edge.id, text)} onTextDone={onTextDone} />
-        </div>
-      ) : (
-        <p className="px-3 py-2 text-[12px] text-koma-dim">Select a card or a line</p>
-      )}
-    </div>
-  )
-}
-
-function PanelTab({ label, on, onClick }: { label: string; on: boolean; onClick: () => void }) {
-  return (
-    <button
-      type="button"
-      aria-pressed={on}
-      onClick={onClick}
-      className={`h-6 rounded px-2 text-[12px] ${on ? 'bg-koma-bg text-koma-fg' : 'text-koma-dim hover:bg-koma-hover hover:text-koma-fg'}`}
-    >
-      {label}
-    </button>
-  )
-}
-
-function CardSettings({
-  node,
-  onChange,
-  onText,
-  onTextDone,
-}: {
-  node: DiagramNode
-  onChange: (patch: Partial<DiagramNode>) => void
-  onText: (text: string) => void
-  onTextDone: () => void
-}) {
-  const style = nodeStyle(node)
-  return (
-    <div className="flex flex-col gap-3 p-3">
-      <div className="flex flex-col gap-1">
-        <span className="text-[10px] font-semibold uppercase tracking-wider text-koma-dim">Label</span>
-        <div className="flex items-start gap-2">
-          <InlineMarkdownInput
-            key={node.id}
-            text={node.text}
-            aria-label="Label"
-            className="min-h-7 min-w-0 flex-1 rounded border border-koma-border bg-koma-bg px-2 py-1 text-[12px] text-koma-fg outline-none focus:border-koma-fg/40 [&_strong]:font-semibold [&_em]:italic [&_code]:rounded [&_code]:bg-koma-panel2 [&_code]:px-0.5"
-            style={{ color: style.textColor || undefined }}
-            onFocus={onTextDone}
-            onBlur={onTextDone}
-            onChange={onText}
-          />
-          <ColorWell
-            label="Label color"
-            value={style.textColor}
-            fallback="var(--color-koma-fg)"
-            picker="#c8d3f5"
-            onChange={(textColor) => onChange({ textColor })}
-          />
-        </div>
-      </div>
-      <PaintRow
-        label="Fill"
-        on={style.fill}
-        color={style.fillColor}
-        fallback="var(--color-koma-panel)"
-        picker="#1a1d27"
-        onToggle={(fill) => onChange({ fill })}
-        onColor={(fillColor) => onChange({ fillColor, fill: true })}
-      />
-      <PaintRow
-        label="Border"
-        on={style.stroke}
-        color={style.strokeColor}
-        fallback="var(--color-koma-border)"
-        picker="#8b93b8"
-        onToggle={(stroke) => onChange({ stroke })}
-        onColor={(strokeColor) => onChange({ strokeColor, stroke: true })}
-      />
-    </div>
-  )
-}
-
-function LineSettings({
+/** Segment and end handles of the selected line, in screen space so they keep their size at any zoom. */
+function EdgeHandles({
   edge,
-  onChange,
-  onText,
-  onTextDone,
+  byId,
+  screenPoint,
+  dragging,
+  onSegment,
+  onAnchor,
 }: {
   edge: DiagramEdge
-  onChange: (patch: Partial<DiagramEdge>) => void
-  onText: (text: string) => void
-  onTextDone: () => void
+  byId: Map<string, DiagramNode>
+  screenPoint: (point: DiagramPoint) => DiagramPoint
+  dragging: boolean
+  onSegment: (index: number, points: DiagramPoint[]) => void
+  onAnchor: (end: 'from' | 'to') => void
 }) {
-  const style = edgeStyle(edge)
+  const from = byId.get(edge.from)
+  const to = byId.get(edge.to)
+  if (!from || !to) return null
+  const route = edgePoints(from, to, edge)
+  const points = route.map(screenPoint)
+  const active = dragging ? '' : 'pointer-events-auto'
+  const grab = (e: ReactPointerEvent, run: () => void) => {
+    if (e.button !== 0) return
+    e.stopPropagation()
+    e.preventDefault()
+    run()
+  }
   return (
-    <div className="flex flex-col gap-3 p-3">
-      <label className="flex flex-col gap-1">
-        <span className="text-[10px] font-semibold uppercase tracking-wider text-koma-dim">Label</span>
-        <input
-          key={edge.id}
-          value={edge.text ?? ''}
-          placeholder="Label"
-          aria-label="Label"
-          onFocus={onTextDone}
-          onChange={(e) => onText(e.target.value)}
-          onBlur={onTextDone}
-          className="h-7 w-full rounded border border-koma-border bg-koma-bg px-2 text-[12px] text-koma-fg outline-none focus:border-koma-fg/40"
-        />
-      </label>
-      <PaintRow
-        label="Stroke"
-        on={style.stroke}
-        color={style.color}
-        fallback="var(--color-koma-fg)"
-        picker="#c8d3f5"
-        onToggle={(stroke) => onChange({ stroke: stroke ? undefined : false })}
-        onColor={(color) => onChange({ color, stroke: undefined })}
-      />
-      <Choices
-        label="Start"
-        value={style.start}
-        options={LINE_HEADS.map((head) => ({
-          value: head.value,
-          label: `${head.name} start`,
-          icon: <ArrowGlyph side="start" kind={head.value} />,
-        }))}
-        onChange={(start) => onChange({ start })}
-      />
-      <Choices
-        label="End"
-        value={style.end}
-        options={LINE_HEADS.map((head) => ({
-          value: head.value,
-          label: `${head.name} end`,
-          icon: <ArrowGlyph side="end" kind={head.value} />,
-        }))}
-        onChange={(end) => onChange({ end })}
-      />
-      <Choices
-        label="Pattern"
-        value={style.dash}
-        options={[
-          {
-            value: 'solid',
-            label: 'Solid',
-            icon: (
-              <LineGlyph>
-                <path d="M3 7 H25" fill="none" stroke="currentColor" strokeWidth="1.6" />
-              </LineGlyph>
-            ),
-          },
-          {
-            value: 'dashed',
-            label: 'Dashed',
-            icon: (
-              <LineGlyph>
-                <path d="M3 7 H25" fill="none" stroke="currentColor" strokeWidth="1.6" strokeDasharray="5 3" />
-              </LineGlyph>
-            ),
-          },
-          {
-            value: 'dotted',
-            label: 'Dotted',
-            icon: (
-              <LineGlyph>
-                <path d="M4 7 H24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeDasharray="0.1 4" />
-              </LineGlyph>
-            ),
-          },
-        ]}
-        onChange={(dash) => onChange({ dash })}
-      />
-      <Choices
-        label="Width"
-        value={String(style.width)}
-        options={[
-          { value: '1', label: '1' },
-          { value: '1.5', label: '1.5' },
-          { value: '2', label: '2' },
-          { value: '3', label: '3' },
-        ]}
-        onChange={(width) => onChange({ width: Number(width) })}
-      />
-      <Choices
-        label="Corner"
-        value={style.corner}
-        options={[
-          { value: 'sharp', label: 'Sharp' },
-          { value: 'rounded', label: 'Round' },
-        ]}
-        onChange={(corner) => onChange({ corner })}
-      />
-      <Choices
-        label="Route"
-        value={style.route}
-        options={[
-          { value: 'orthogonal' satisfies DiagramRoute, label: 'Elbow' },
-          { value: 'straight', label: 'Straight' },
-        ]}
-        onChange={(route) => onChange({ route, bends: [] })}
-      />
-    </div>
+    <g data-diagram-ui="">
+      {points.slice(0, -1).map((point, index) => {
+        const next = points[index + 1]
+        if (!next) return null
+        const horizontal = Math.abs(next.x - point.x) >= Math.abs(next.y - point.y)
+        return (
+          <circle
+            key={`seg-${index}`}
+            className={active}
+            cx={(point.x + next.x) / 2}
+            cy={(point.y + next.y) / 2}
+            r={4}
+            fill="var(--color-koma-accent)"
+            stroke="var(--color-koma-bg)"
+            strokeWidth={1}
+            style={{ cursor: horizontal ? 'ns-resize' : 'ew-resize' }}
+            onPointerDown={(e) => grab(e, () => onSegment(index, route))}
+          />
+        )
+      })}
+      {(['from', 'to'] as const).map((end) => {
+        const point = end === 'from' ? points[0] : points[points.length - 1]
+        if (!point) return null
+        return (
+          <circle
+            key={end}
+            className={active}
+            cx={point.x}
+            cy={point.y}
+            r={5}
+            fill="var(--color-koma-bg)"
+            stroke={themeStroke(true)}
+            strokeWidth={1.5}
+            style={{ cursor: 'crosshair' }}
+            onPointerDown={(e) => grab(e, () => onAnchor(end))}
+          />
+        )
+      })}
+    </g>
   )
 }
