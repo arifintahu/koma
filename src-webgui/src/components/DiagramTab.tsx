@@ -14,6 +14,7 @@ import { DiagramRefMenuItems } from './DiagramVisual'
 import { DiagramEdgeView, themeStroke } from './diagram/DiagramEdgeView'
 import { DiagramNodeView } from './diagram/DiagramNodeView'
 import { Properties, type DiagramPanelSelection } from './diagram/DiagramSettings'
+import { DiagramShapePicker } from './diagram/DiagramShapePicker'
 import {
   DIAGRAM_DRAG_THRESHOLD,
   DIAGRAM_HIT_TOLERANCE,
@@ -38,9 +39,18 @@ import {
 import { syncDiagramShapeNotes } from '../lib/diagramNoteAttach'
 import { diagramFolder, publishDiagramShapeNotes } from '../lib/diagramNotes'
 import {
+  DIAGRAM_PORT_SNAP,
   NO_SELECTION,
   SHAPE_MIME,
+  connectInDirection,
+  connectionEnd,
   copyDiagramShapes,
+  diagramGuides,
+  dropStraightBends,
+  edgeStyle,
+  insertBend,
+  routeFractionAt,
+  routePointAt,
   defaultNodeSize,
   deleteDiagramSelection,
   edgePoints,
@@ -59,7 +69,6 @@ import {
   resizeNode,
   rotatePoint,
   nodeCenter,
-  routeMidpoint,
   selectInRect,
   selectionBounds,
   selectionSize,
@@ -67,8 +76,10 @@ import {
   sideAnchor,
   slideSegment,
   snap,
+  type DiagramDirection,
   type DiagramDoc,
   type DiagramEdge,
+  type DiagramGuide,
   type DiagramHandle,
   type DiagramKind,
   type DiagramNode,
@@ -94,7 +105,11 @@ type Drag =
   | { kind: 'rotate'; id: string; rotation: number; angle: number; node: DiagramNode; remembered: boolean }
   | { kind: 'segment'; edgeId: string; index: number; points: DiagramPoint[]; remembered: boolean }
   | { kind: 'anchor'; edgeId: string; end: 'from' | 'to'; remembered: boolean }
-  | { kind: 'connect'; fromId: string; port: number }
+  /** `port` null leaves the source end floating, as a drag from a hover arrow does. */
+  | { kind: 'connect'; fromId: string; port: number | null }
+  | { kind: 'arrow'; sourceId: string; direction: DiagramDirection; sx: number; sy: number }
+  | { kind: 'bend'; edgeId: string; index: number; remembered: boolean }
+  | { kind: 'label'; edgeId: string; remembered: boolean }
   | { kind: 'pan'; sx: number; sy: number; view: DiagramView }
   | { kind: 'marquee'; x: number; y: number; sx: number; sy: number; base: DiagramSelection; additive: boolean; moved: boolean }
 
@@ -118,6 +133,18 @@ const HANDLES: { id: DiagramHandle; x: string; y: string; cursor: string }[] = [
   { id: 'sw', x: '0%', y: '100%', cursor: 'nesw-resize' },
   { id: 'w', x: '0%', y: '50%', cursor: 'ew-resize' },
 ]
+
+const ARROW_DWELL_MS = 140
+const PICKER_DWELL_MS = 500
+/** Screen gap between a shape's box and its hover arrows. */
+const ARROW_GAP = 14
+/** Screen pixels within which a moving edge snaps to another shape's line. */
+const GUIDE_TOLERANCE = 4
+
+type Picker =
+  | { mode: 'arrow'; x: number; y: number; sourceId: string; direction: DiagramDirection }
+  | { mode: 'drop'; x: number; y: number; sourceId: string; port: number | null; at: DiagramPoint }
+  | { mode: 'canvas'; x: number; y: number; at: DiagramPoint }
 
 function mintId(prefix: string): string {
   return `${prefix}${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`
@@ -202,19 +229,30 @@ export function DiagramTab({ tab }: { tab: Extract<Tab, { kind: 'diagram' }> }) 
   const [selection, setSelectionState] = useState<DiagramSelection>(NO_SELECTION)
   const selectionRef = useRef(selection)
   const [connectFrom, setConnectFrom] = useState<string | null>(null)
-  const [editing, setEditing] = useState<string | null>(null)
+  const [editing, setEditingId] = useState<string | null>(null)
+  const [editMode, setEditMode] = useState<'select' | 'end'>('select')
   const [cursor, setCursor] = useState<DiagramPoint | null>(null)
   const [rev, setRev] = useState(0)
   const [marquee, setMarquee] = useState<DiagramRect | null>(null)
   const [chatMenu, setChatMenu] = useState<{ x: number; y: number } | null>(null)
   const [hover, setHover] = useState<{ type: 'node' | 'edge'; id: string } | null>(null)
-  const [connectDrag, setConnectDrag] = useState<{ fromId: string; port: number } | null>(null)
+  const [connectDrag, setConnectDrag] = useState<{ fromId: string; port: number | null } | null>(null)
+  const [guides, setGuides] = useState<DiagramGuide[]>([])
+  const [arrowsFor, setArrowsFor] = useState<string | null>(null)
+  const arrowsRef = useRef<string | null>(null)
+  arrowsRef.current = arrowsFor
+  const [picker, setPicker] = useState<Picker | null>(null)
+  const pickerTimer = useRef(0)
   const [propsOpen, setPropsOpen] = useState(false)
   const [spaceDown, setSpaceDown] = useState(false)
   const [dragCursor, setDragCursor] = useState<string | null>(null)
   const spaceRef = useRef(false)
   const markerId = useId().replace(/:/g, '')
 
+  const setEditing = (id: string | null, mode: 'select' | 'end' = 'select') => {
+    setEditMode(mode)
+    setEditingId(id)
+  }
   const setSelection = (next: DiagramSelection) => {
     selectionRef.current = next
     setSelectionState(next)
@@ -295,12 +333,64 @@ export function DiagramTab({ tab }: { tab: Extract<Tab, { kind: 'diagram' }> }) 
   const toDocRef = useRef(toDoc)
   toDocRef.current = toDoc
 
-  const actionsRef = useRef({ undo, redo, commit, applyView, setSelection })
-  actionsRef.current = { undo, redo, commit, applyView, setSelection }
+  /** A hover arrow (or Alt+Shift+Arrow): connect to the shape there, or add one and connect it. */
+  const arrowConnect = (sourceId: string, direction: DiagramDirection, kind?: DiagramKind) => {
+    const doc = currentDoc()
+    if (!doc) return
+    const size = kind ? defaultNodeSize(kind) : undefined
+    const result = connectInDirection(doc, sourceId, direction, mintId, kind && size ? { kind, w: size.w, h: size.h } : undefined)
+    if (!result) return
+    commit(result.doc)
+    setSelection({ nodes: [result.nodeId], edges: [] })
+    setPropsOpen(true)
+    setArrowsFor(null)
+    setPicker(null)
+  }
+
+  const pickShape = (open: Picker, kind: DiagramKind) => {
+    setPicker(null)
+    if (open.mode === 'arrow') {
+      arrowConnect(open.sourceId, open.direction, kind)
+      return
+    }
+    const doc = currentDoc()
+    if (!doc) return
+    const placed = placeNode(doc, kind, open.at.x, open.at.y)
+    const node = placed.nodes[placed.nodes.length - 1]
+    if (!node) return
+    if (open.mode === 'canvas') {
+      commit(placed)
+      setSelection({ nodes: [node.id], edges: [] })
+    } else {
+      // The new shape is centered on the drop point, not snapped away from it.
+      const size = defaultNodeSize(kind)
+      const centered = { ...node, x: open.at.x - size.w / 2, y: open.at.y - size.h / 2 }
+      const edge = tidyEdge({ id: mintId('e'), from: open.sourceId, to: node.id, fromPort: open.port ?? undefined })
+      commit({ ...placed, nodes: [...doc.nodes, centered], edges: [...doc.edges, edge] })
+      setSelection({ nodes: [node.id], edges: [] })
+    }
+    setPropsOpen(true)
+  }
+
+  const closePicker = useMemo(() => () => setPicker(null), [])
+
+  const actionsRef = useRef({ undo, redo, commit, applyView, setSelection, arrowConnect })
+  actionsRef.current = { undo, redo, commit, applyView, setSelection, arrowConnect }
 
   useEffect(() => {
     const docPoint = (clientX: number, clientY: number) => toDocRef.current({ clientX, clientY })
     const docDelta = (client: number) => canvasPoint(client) / viewRef.current.zoom
+    /** Boxes a moving shape may align with: everything else in the viewport. */
+    const guideTargets = (doc: DiagramDoc, skip: ReadonlySet<string>) => {
+      const canvas = canvasRef.current
+      const v = viewRef.current
+      if (!canvas) return []
+      const view = { x: -v.x / v.zoom, y: -v.y / v.zoom, w: canvas.clientWidth / v.zoom, h: canvas.clientHeight / v.zoom }
+      return doc.nodes
+        .filter((node) => !skip.has(node.id))
+        .map(nodeBounds)
+        .filter((box) => box.x < view.x + view.w && box.x + box.w > view.x && box.y < view.y + view.h && box.y + box.h > view.y)
+    }
     const apply = (drag: Drag, next: DiagramDoc, current: DiagramDoc) => {
       if (next === current) return
       if ('remembered' in drag && !drag.remembered) {
@@ -342,6 +432,18 @@ export function DiagramTab({ tab }: { tab: Extract<Tab, { kind: 'diagram' }> }) 
         if (point) setCursor(point)
         return
       }
+      if (drag.kind === 'arrow') {
+        // Dragging a hover arrow turns into a connection with a floating source end.
+        if (Math.hypot(canvasPoint(e.clientX - drag.sx), canvasPoint(e.clientY - drag.sy)) < DIAGRAM_DRAG_THRESHOLD) return
+        window.clearTimeout(pickerTimer.current)
+        setPicker(null)
+        setArrowsFor(null)
+        dragRef.current = { kind: 'connect', fromId: drag.sourceId, port: null }
+        setConnectDrag({ fromId: drag.sourceId, port: null })
+        setDragCursor('crosshair')
+        setCursor(docPoint(e.clientX, e.clientY))
+        return
+      }
       const current = useKoma.getState().diagram.docs[key]
       if (!current) return
       const doc = current.doc
@@ -357,15 +459,49 @@ export function DiagramTab({ tab }: { tab: Extract<Tab, { kind: 'diagram' }> }) 
           }
         }
         // The grabbed shape snaps; the rest of the selection follows by the same amount.
-        const x = snap(drag.grab.x + docDelta(e.clientX - drag.sx), doc.grid, doc.snap)
-        const y = snap(drag.grab.y + docDelta(e.clientY - drag.sy), doc.grid, doc.snap)
+        // Alignment guides beat the grid on their axis, and Alt turns both off (draw.io).
+        const rawX = docDelta(e.clientX - drag.sx)
+        const rawY = docDelta(e.clientY - drag.sy)
+        const free = e.altKey
+        let dx = free ? rawX : snap(drag.grab.x + rawX, doc.grid, doc.snap) - drag.grab.x
+        let dy = free ? rawY : snap(drag.grab.y + rawY, doc.grid, doc.snap) - drag.grab.y
+        let lines: DiagramGuide[] = []
+        const box = selectionBounds(drag.base, { nodes: drag.ids, edges: [] })
+        if (!free && box) {
+          const aligned = diagramGuides(
+            guideTargets(drag.base, new Set(drag.ids)),
+            { ...box, x: box.x + rawX, y: box.y + rawY },
+            GUIDE_TOLERANCE / viewRef.current.zoom,
+          )
+          lines = aligned.guides
+          if (lines.some((line) => line.axis === 'x')) dx = rawX + aligned.dx
+          if (lines.some((line) => line.axis === 'y')) dy = rawY + aligned.dy
+        }
+        setGuides((prev) => (!prev.length && !lines.length ? prev : lines))
         const grabbed = doc.nodes.find((node) => node.id === drag.grab.id)
-        if (grabbed && grabbed.x === x && grabbed.y === y) return
-        apply(drag, moveDiagramNodes(drag.base, drag.ids, x - drag.grab.x, y - drag.grab.y), doc)
+        if (grabbed && grabbed.x === drag.grab.x + dx && grabbed.y === drag.grab.y + dy) return
+        apply(drag, moveDiagramNodes(drag.base, drag.ids, dx, dy), doc)
         return
       }
       if (drag.kind === 'resize') {
-        const resized = resizeNode(drag.node, drag.handle, docDelta(e.clientX - drag.sx), docDelta(e.clientY - drag.sy), doc.grid, doc.snap)
+        // Shift keeps the ratio, Alt grows around the center and skips grid and guides.
+        const options = { lock: e.shiftKey, center: e.altKey }
+        const base = drag.node
+        let resized = resizeNode(base, drag.handle, docDelta(e.clientX - drag.sx), docDelta(e.clientY - drag.sy), doc.grid, doc.snap && !e.altKey, options)
+        let lines: DiagramGuide[] = []
+        if (!e.altKey && !base.rotation) {
+          // Only the dragged edges align, then the resize is redone to land exactly on them.
+          const xs = drag.handle.includes('w') ? [0] : drag.handle.includes('e') ? [1] : []
+          const ys = drag.handle.includes('n') ? [0] : drag.handle.includes('s') ? [1] : []
+          const aligned = diagramGuides(guideTargets(doc, new Set([drag.id])), resized, GUIDE_TOLERANCE / viewRef.current.zoom, xs, ys)
+          lines = aligned.guides
+          if (aligned.dx || aligned.dy) {
+            const edgeX = drag.handle.includes('w') ? resized.x - base.x : resized.x + resized.w - (base.x + base.w)
+            const edgeY = drag.handle.includes('n') ? resized.y - base.y : resized.y + resized.h - (base.y + base.h)
+            resized = resizeNode(base, drag.handle, edgeX + aligned.dx, edgeY + aligned.dy, doc.grid, false, options)
+          }
+        }
+        setGuides((prev) => (!prev.length && !lines.length ? prev : lines))
         const existing = doc.nodes.find((node) => node.id === drag.id)
         if (!existing || sameNodeBox(existing, resized)) return
         apply(drag, { ...doc, nodes: doc.nodes.map((node) => (node.id === drag.id ? resized : node)) }, doc)
@@ -378,6 +514,31 @@ export function DiagramTab({ tab }: { tab: Extract<Tab, { kind: 'diagram' }> }) 
         const existing = doc.nodes.find((node) => node.id === drag.id)
         if (!existing || existing.rotation === rotation) return
         apply(drag, { ...doc, nodes: doc.nodes.map((node) => (node.id === drag.id ? { ...node, rotation } : node)) }, doc)
+        return
+      }
+      if (drag.kind === 'bend') {
+        const existing = doc.edges.find((edge) => edge.id === drag.edgeId)
+        if (!existing?.bends?.[drag.index]) return
+        const at = e.altKey ? point : { x: snap(point.x, doc.grid, doc.snap), y: snap(point.y, doc.grid, doc.snap) }
+        const bend = existing.bends[drag.index]
+        if (bend.x === at.x && bend.y === at.y) return
+        const bends = existing.bends.map((item, index) => (index === drag.index ? at : item))
+        apply(drag, { ...doc, edges: doc.edges.map((edge) => (edge.id === drag.edgeId ? { ...edge, bends } : edge)) }, doc)
+        return
+      }
+      if (drag.kind === 'label') {
+        const existing = doc.edges.find((edge) => edge.id === drag.edgeId)
+        const from = existing && doc.nodes.find((node) => node.id === existing.from)
+        const to = existing && doc.nodes.find((node) => node.id === existing.to)
+        if (!existing || !from || !to) return
+        let at = Math.round(routeFractionAt(edgePoints(from, to, existing), point) * 100) / 100
+        // The middle is sticky, so a label dragged back lands exactly where it started.
+        if (Math.abs(at - 0.5) < 0.03) at = 0.5
+        if ((existing.labelAt ?? 0.5) === at) return
+        apply(drag, {
+          ...doc,
+          edges: doc.edges.map((edge) => (edge.id === drag.edgeId ? { ...edge, labelAt: at === 0.5 ? undefined : at } : edge)),
+        }, doc)
         return
       }
       if (drag.kind === 'segment') {
@@ -398,7 +559,7 @@ export function DiagramTab({ tab }: { tab: Extract<Tab, { kind: 'diagram' }> }) 
       const currentId = drag.end === 'from' ? edge.from : edge.to
       const node = nodeAtPoint(doc.nodes, point, otherId) ?? doc.nodes.find((item) => item.id === currentId)
       if (!node || node.id === otherId) return
-      const port = nearestPort(node, point)
+      const { port } = connectionEnd(node, point, DIAGRAM_PORT_SNAP / viewRef.current.zoom)
       const same = drag.end === 'from' ? edge.from === node.id && edge.fromPort === port : edge.to === node.id && edge.toPort === port
       if (same) return
       apply(drag, {
@@ -418,6 +579,7 @@ export function DiagramTab({ tab }: { tab: Extract<Tab, { kind: 'diagram' }> }) 
     }
     const finish = () => {
       setDragCursor(null)
+      setGuides([])
       setMarquee(null)
       setConnectDrag(null)
       setCursor(null)
@@ -431,14 +593,36 @@ export function DiagramTab({ tab }: { tab: Extract<Tab, { kind: 'diagram' }> }) 
         // A click inside a group selection narrows it to the clicked shape.
         actionsRef.current.setSelection({ nodes: [drag.grab.id], edges: [] })
       }
+      if (drag?.kind === 'arrow') {
+        actionsRef.current.arrowConnect(drag.sourceId, drag.direction)
+        return
+      }
+      if (drag?.kind === 'bend' && drag.remembered) {
+        const doc = useKoma.getState().diagram.docs[key]?.doc
+        const edge = doc?.edges.find((item) => item.id === drag.edgeId)
+        const from = edge && doc?.nodes.find((node) => node.id === edge.from)
+        const to = edge && doc?.nodes.find((node) => node.id === edge.to)
+        if (!doc || !edge?.bends || !from || !to) return
+        const route = edgePoints(from, to, edge)
+        const bends = dropStraightBends(route[0], edge.bends, route[route.length - 1])
+        if (bends.length !== edge.bends.length) {
+          updateRef.current(tab.root, tab.path, { ...doc, edges: doc.edges.map((item) => (item.id === edge.id ? tidyEdge({ ...item, bends }) : item)) })
+        }
+        return
+      }
       if (drag?.kind !== 'connect') return
       const point = docPoint(e.clientX, e.clientY)
       const current = useKoma.getState().diagram.docs[key]?.doc
       if (!point || !current) return
       const target = nodeAtPoint(current.nodes, point, drag.fromId)
-      if (!target) return
-      const toPort = nearestPort(target, point)
-      const existing = current.edges.find((edge) => edge.from === drag.fromId && edge.to === target.id && edge.fromPort === drag.port && edge.toPort === toPort)
+      if (!target) {
+        // Dropped on empty canvas: offer a shape to put there, already connected.
+        setPicker({ mode: 'drop', x: e.clientX, y: e.clientY, sourceId: drag.fromId, port: drag.port, at: point })
+        return
+      }
+      const fromPort = drag.port ?? undefined
+      const { port: toPort } = connectionEnd(target, point, DIAGRAM_PORT_SNAP / viewRef.current.zoom)
+      const existing = current.edges.find((edge) => edge.from === drag.fromId && edge.to === target.id && edge.fromPort === fromPort && edge.toPort === toPort)
       if (existing) {
         actionsRef.current.setSelection({ nodes: [], edges: [existing.id] })
         setPropsOpen(true)
@@ -448,7 +632,7 @@ export function DiagramTab({ tab }: { tab: Extract<Tab, { kind: 'diagram' }> }) 
       noteRef.current(current)
       updateRef.current(tab.root, tab.path, {
         ...current,
-        edges: [...current.edges, tidyEdge({ id, from: drag.fromId, to: target.id, fromPort: drag.port, toPort })],
+        edges: [...current.edges, tidyEdge({ id, from: drag.fromId, to: target.id, fromPort, toPort })],
       })
       actionsRef.current.setSelection({ nodes: [], edges: [id] })
       setPropsOpen(true)
@@ -612,8 +796,15 @@ export function DiagramTab({ tab }: { tab: Extract<Tab, { kind: 'diagram' }> }) 
       ),
     })
   }
-  const keyActionsRef = useRef({ copySelection, pasteShapes, nudge })
-  keyActionsRef.current = { copySelection, pasteShapes, nudge }
+  /** Enter or F2 selects the label; typing replaces it, as in draw.io. */
+  const startEditing = (id: string, seed?: string) => {
+    labelNoted.current = false
+    if (seed != null) editNodeText(id, seed)
+    setEditing(id, seed != null ? 'end' : 'select')
+    setPropsOpen(true)
+  }
+  const keyActionsRef = useRef({ copySelection, pasteShapes, nudge, startEditing })
+  keyActionsRef.current = { copySelection, pasteShapes, nudge, startEditing }
 
   useEffect(() => {
     if (!active) return
@@ -708,6 +899,23 @@ export function DiagramTab({ tab }: { tab: Extract<Tab, { kind: 'diagram' }> }) 
         )
         return
       }
+      const lone = picked.nodes.length === 1 && !picked.edges.length ? picked.nodes[0] : null
+      if (lone && e.altKey && e.shiftKey && !mod && e.key.startsWith('Arrow')) {
+        e.preventDefault()
+        const direction = ({ ArrowUp: 'n', ArrowRight: 'e', ArrowDown: 's', ArrowLeft: 'w' } as const)[e.key as 'ArrowUp']
+        if (direction) actions.arrowConnect(lone, direction)
+        return
+      }
+      if (lone && !mod && !e.altKey && (e.key === 'Enter' || e.key === 'F2')) {
+        e.preventDefault()
+        keys.startEditing(lone)
+        return
+      }
+      if (lone && !mod && !e.altKey && e.key.length === 1 && e.key !== ' ') {
+        e.preventDefault()
+        keys.startEditing(lone, e.key)
+        return
+      }
       if (e.key.startsWith('Arrow') && picked.nodes.length && !e.altKey) {
         e.preventDefault()
         const step = e.shiftKey ? (doc.grid > 0 ? doc.grid : 16) : 1
@@ -766,8 +974,10 @@ export function DiagramTab({ tab }: { tab: Extract<Tab, { kind: 'diagram' }> }) 
   const hoverFrame = useRef(0)
   const hoverPoint = useRef<DiagramPoint | null>(null)
   useEffect(() => () => cancelAnimationFrame(hoverFrame.current), [])
+  const [altHeld, setAltHeld] = useState(false)
   const trackHover = (e: ReactPointerEvent) => {
     hoverPoint.current = toDoc(e)
+    if (e.altKey !== altHeld) setAltHeld(e.altKey)
     if (hoverFrame.current) return
     hoverFrame.current = requestAnimationFrame(() => {
       hoverFrame.current = 0
@@ -785,9 +995,29 @@ export function DiagramTab({ tab }: { tab: Extract<Tab, { kind: 'diagram' }> }) 
         })
         if (near) hit = { type: 'node', id: near.id }
       }
+      const arrows = arrowsRef.current ? doc.nodes.find((node) => node.id === arrowsRef.current) : undefined
+      if (arrows && hit?.type !== 'node') {
+        // The arrows sit outside the shape; reaching for one must not hide them.
+        const box = nodeBounds(arrows)
+        const reach = (ARROW_GAP + 32) / zoom
+        if (point.x >= box.x - reach && point.x <= box.x + box.w + reach && point.y >= box.y - reach && point.y <= box.y + box.h + reach) {
+          hit = { type: 'node', id: arrows.id }
+        }
+      }
       setHover((prev) => (prev?.type === hit?.type && prev?.id === hit?.id ? prev : hit))
     })
   }
+
+  // Hover arrows appear after a short dwell, so sweeping across shapes does not flash them.
+  useEffect(() => {
+    const id = hover?.type === 'node' ? hover.id : null
+    if (id === arrowsRef.current) return
+    setArrowsFor(null)
+    if (!id) return
+    const timer = window.setTimeout(() => setArrowsFor(id), ARROW_DWELL_MS)
+    return () => window.clearTimeout(timer)
+  }, [hover])
+  useEffect(() => () => window.clearTimeout(pickerTimer.current), [])
 
   const addAt = (kind: DiagramKind, x: number, y: number) => {
     const doc = currentDoc()
@@ -887,6 +1117,10 @@ export function DiagramTab({ tab }: { tab: Extract<Tab, { kind: 'diagram' }> }) 
     const p = toDoc(e)
     if (!p) return
     const hit = hitDiagram(file.doc, p, DIAGRAM_HIT_TOLERANCE / viewRef.current.zoom)
+    if (!hit && tool === 'select') {
+      setPicker({ mode: 'canvas', x: e.clientX, y: e.clientY, at: p })
+      return
+    }
     if (hit?.type !== 'node') return
     dragRef.current = null
     labelNoted.current = false
@@ -1024,6 +1258,8 @@ export function DiagramTab({ tab }: { tab: Extract<Tab, { kind: 'diagram' }> }) 
   const singleEdge = single?.type === 'edge' ? doc.edges.find((edge) => edge.id === single.id) : undefined
   const connectTarget =
     connectDrag && cursor ? nodeAtPoint(doc.nodes, cursor, connectDrag.fromId) : null
+  const arrowsNode =
+    arrowsFor && tool === 'select' && !editing && !dragging && !connectDrag && !altHeld && !marquee ? byId.get(arrowsFor) : undefined
 
   return (
     <div className="flex h-full min-h-0 min-w-0 flex-col bg-koma-bg text-koma-fg">
@@ -1135,12 +1371,25 @@ export function DiagramTab({ tab }: { tab: Extract<Tab, { kind: 'diagram' }> }) 
             const from = byId.get(edge.from)
             const to = byId.get(edge.to)
             if (!from || !to) return null
-            const at = routeMidpoint(edgePoints(from, to, edge))
+            const at = routePointAt(edgePoints(from, to, edge), edge.labelAt ?? 0.5)
             return (
               <div
                 key={`label-${edge.id}`}
-                className="absolute z-10 max-w-[140px] -translate-x-1/2 -translate-y-full truncate rounded border border-koma-border bg-koma-panel px-1.5 text-[11px] leading-5 text-koma-fg"
-                style={{ left: at.x, top: at.y - 4 }}
+                data-diagram-ui=""
+                className={`absolute z-10 max-w-[140px] -translate-x-1/2 -translate-y-full truncate rounded border bg-koma-panel px-1.5 text-[11px] leading-5 text-koma-fg ${
+                  selectedEdges.has(edge.id) ? 'border-koma-accent' : 'border-koma-border'
+                } ${tool === 'select' && !dragging ? 'pointer-events-auto' : ''}`}
+                style={{ left: at.x, top: at.y - 4, cursor: 'move' }}
+                onPointerDown={(e) => {
+                  // The label slides along its line (draw.io label handle).
+                  if (e.button !== 0 || spaceRef.current) return
+                  e.stopPropagation()
+                  e.preventDefault()
+                  setSelection({ nodes: [], edges: [edge.id] })
+                  setPropsOpen(true)
+                  dragRef.current = { kind: 'label', edgeId: edge.id, remembered: false }
+                  setDragCursor('move')
+                }}
               >
                 {text}
               </div>
@@ -1151,7 +1400,7 @@ export function DiagramTab({ tab }: { tab: Extract<Tab, { kind: 'diagram' }> }) 
               key={node.id}
               node={node}
               highlight={connectFrom === node.id || connectTarget?.id === node.id}
-              editing={editing === node.id}
+              editing={editing === node.id ? editMode : false}
               onEditText={nodeEdit.text}
               onEditDone={nodeEdit.done}
             />
@@ -1185,6 +1434,27 @@ export function DiagramTab({ tab }: { tab: Extract<Tab, { kind: 'diagram' }> }) 
               onSegment={(index, points) => {
                 dragRef.current = { kind: 'segment', edgeId: singleEdge.id, index, points, remembered: false }
               }}
+              onBend={(index, insertAt) => {
+                const current = currentDoc()
+                if (!current) return
+                if (insertAt) {
+                  // A virtual bend becomes real the moment it is grabbed.
+                  note(current)
+                  const edges = current.edges.map((edge) =>
+                    edge.id === singleEdge.id ? { ...edge, bends: insertBend(edge.bends, index, insertAt) } : edge,
+                  )
+                  updateDiagram(tab.root, tab.path, { ...current, edges })
+                }
+                dragRef.current = { kind: 'bend', edgeId: singleEdge.id, index, remembered: !!insertAt }
+                setDragCursor('move')
+              }}
+              onRemoveBend={(index) => {
+                const current = currentDoc()
+                const edge = current?.edges.find((item) => item.id === singleEdge.id)
+                if (!current || !edge?.bends) return
+                const bends = edge.bends.filter((_, i) => i !== index)
+                commit({ ...current, edges: current.edges.map((item) => (item.id === edge.id ? tidyEdge({ ...item, bends }) : item)) })
+              }}
               onAnchor={(end) => {
                 dragRef.current = { kind: 'anchor', edgeId: singleEdge.id, end, remembered: false }
                 setDragCursor('crosshair')
@@ -1205,10 +1475,26 @@ export function DiagramTab({ tab }: { tab: Extract<Tab, { kind: 'diagram' }> }) 
           {connectDrag && cursor ? (() => {
             const from = byId.get(connectDrag.fromId)
             if (!from) return null
-            const start = screenPoint(portAnchor(from, connectDrag.port))
-            const end = screenPoint(connectTarget ? portAnchor(connectTarget, nearestPort(connectTarget, cursor)) : cursor)
+            const targetEnd = connectTarget ? connectionEnd(connectTarget, cursor, DIAGRAM_PORT_SNAP / z) : null
+            const start = screenPoint(
+              connectDrag.port == null ? sideAnchor(from, nearestSide(from, connectTarget ? nodeCenter(connectTarget) : cursor)) : portAnchor(from, connectDrag.port),
+            )
+            const end = screenPoint(
+              connectTarget && targetEnd
+                ? targetEnd.port != null
+                  ? portAnchor(connectTarget, targetEnd.port)
+                  : sideAnchor(connectTarget, nearestSide(connectTarget, nodeCenter(from)))
+                : cursor,
+            )
             return <line x1={start.x} y1={start.y} x2={end.x} y2={end.y} stroke="var(--color-koma-accent)" strokeWidth={1.5} strokeDasharray="4 3" />
           })() : null}
+          {guides.map((guide, index) =>
+            guide.axis === 'x' ? (
+              <line key={index} x1={sx(guide.at)} x2={sx(guide.at)} y1={sy(guide.from)} y2={sy(guide.to)} stroke="var(--color-koma-accent)" strokeWidth={1} strokeDasharray="3 3" />
+            ) : (
+              <line key={index} x1={sx(guide.from)} x2={sx(guide.to)} y1={sy(guide.at)} y2={sy(guide.at)} stroke="var(--color-koma-accent)" strokeWidth={1} strokeDasharray="3 3" />
+            ),
+          )}
           {marquee ? (
             <rect
               x={sx(marquee.x)}
@@ -1299,6 +1585,29 @@ export function DiagramTab({ tab }: { tab: Extract<Tab, { kind: 'diagram' }> }) 
             </button>
           </div>
         ) : null}
+        {arrowsNode ? (
+          <HoverArrows
+            node={arrowsNode}
+            nodes={doc.nodes}
+            zoom={z}
+            gap={ARROW_GAP + (singleNode === arrowsNode ? 6 : 0)}
+            screenPoint={screenPoint}
+            onDown={(direction, e) => {
+              window.clearTimeout(pickerTimer.current)
+              setPicker(null)
+              dragRef.current = { kind: 'arrow', sourceId: arrowsNode.id, direction, sx: e.clientX, sy: e.clientY }
+            }}
+            onEnter={(direction, rect) => {
+              window.clearTimeout(pickerTimer.current)
+              const sourceId = arrowsNode.id
+              pickerTimer.current = window.setTimeout(() => {
+                const spot = pickerSpot(direction, rect)
+                setPicker({ mode: 'arrow', x: spot.x, y: spot.y, sourceId, direction })
+              }, PICKER_DWELL_MS)
+            }}
+            onLeave={() => window.clearTimeout(pickerTimer.current)}
+          />
+        ) : null}
         {!file.loading && doc.nodes.length === 0 ? (
           <div className="pointer-events-none absolute inset-0 flex items-center justify-center text-[12px] text-koma-fg opacity-35">
             Drag a shape onto the canvas
@@ -1342,6 +1651,15 @@ export function DiagramTab({ tab }: { tab: Extract<Tab, { kind: 'diagram' }> }) 
         </aside>
       ) : null}
       </div>
+      {picker ? (
+        <DiagramShapePicker
+          x={picker.x}
+          y={picker.y}
+          faint={picker.mode === 'arrow'}
+          onPick={(kind) => pickShape(picker, kind)}
+          onClose={closePicker}
+        />
+      ) : null}
       {chatMenu ? (
         <div
           className="fixed z-[80] min-w-[160px] rounded border border-koma-border bg-koma-panel py-1 shadow-lg"
@@ -1405,13 +1723,118 @@ export function DiagramTab({ tab }: { tab: Extract<Tab, { kind: 'diagram' }> }) 
   )
 }
 
-/** Segment and end handles of the selected line, in screen space so they keep their size at any zoom. */
+/** Where the arrow picker opens: just past the arrow, away from the shape. Client pixels. */
+function pickerSpot(direction: DiagramDirection, rect: DOMRect): { x: number; y: number } {
+  const width = 300
+  const height = 90
+  if (direction === 'e') return { x: rect.right + 6, y: rect.top + rect.height / 2 - height / 2 }
+  if (direction === 'w') return { x: Math.max(4, rect.left - 6 - width), y: rect.top + rect.height / 2 - height / 2 }
+  if (direction === 'n') return { x: Math.max(4, rect.left + rect.width / 2 - width / 2), y: Math.max(4, rect.top - 6 - height) }
+  return { x: Math.max(4, rect.left + rect.width / 2 - width / 2), y: rect.bottom + 6 }
+}
+
+// draw.io's hover arrow outlines (HoverIcons.triangleUp/Right/Down/Left), in their own boxes.
+const ARROWS: { direction: DiagramDirection; w: number; h: number; d: string }[] = [
+  { direction: 'n', w: 18, h: 28, d: 'M6 26 L12 26 L12 12 L18 12 L9 1 L1 12 L6 12 Z' },
+  { direction: 'e', w: 26, h: 18, d: 'M1 6 L14 6 L14 1 L26 9 L14 18 L14 12 L1 12 Z' },
+  { direction: 's', w: 18, h: 26, d: 'M6 1 L6 14 L1 14 L9 26 L18 14 L12 14 L12 1 Z' },
+  { direction: 'w', w: 28, h: 18, d: 'M1 9 L12 1 L12 6 L26 6 L26 12 L12 12 L12 18 Z' },
+]
+
+/**
+ * The four arrows around a hovered shape. Click adds a connected copy, a drag starts a
+ * line, a short hover offers other shapes. An arrow hides when a neighbor (not much larger
+ * than this shape) already sits where it points, as in draw.io.
+ */
+function HoverArrows({
+  node,
+  nodes,
+  zoom,
+  gap,
+  screenPoint,
+  onDown,
+  onEnter,
+  onLeave,
+}: {
+  node: DiagramNode
+  nodes: DiagramNode[]
+  zoom: number
+  gap: number
+  screenPoint: (point: DiagramPoint) => DiagramPoint
+  onDown: (direction: DiagramDirection, e: ReactPointerEvent) => void
+  onEnter: (direction: DiagramDirection, rect: DOMRect) => void
+  onLeave: () => void
+}) {
+  const box = nodeBounds(node)
+  const topLeft = screenPoint({ x: box.x, y: box.y })
+  const bottomRight = screenPoint({ x: box.x + box.w, y: box.y + box.h })
+  const cx = (topLeft.x + bottomRight.x) / 2
+  const cy = (topLeft.y + bottomRight.y) / 2
+  const blocked = (direction: DiagramDirection) => {
+    const reach = (gap + 12) / zoom
+    const probe =
+      direction === 'n'
+        ? { x: box.x + box.w / 2, y: box.y - reach }
+        : direction === 's'
+          ? { x: box.x + box.w / 2, y: box.y + box.h + reach }
+          : direction === 'w'
+            ? { x: box.x - reach, y: box.y + box.h / 2 }
+            : { x: box.x + box.w + reach, y: box.y + box.h / 2 }
+    return nodes.some((other) => {
+      if (other.id === node.id) return false
+      const b = nodeBounds(other)
+      const inside = probe.x >= b.x && probe.x <= b.x + b.w && probe.y >= b.y && probe.y <= b.y + b.h
+      return inside && b.w < 3 * box.w && b.h < 3 * box.h
+    })
+  }
+  return (
+    <>
+      {ARROWS.map((arrow) => {
+        if (blocked(arrow.direction)) return null
+        const left =
+          arrow.direction === 'e' ? bottomRight.x + gap : arrow.direction === 'w' ? topLeft.x - gap - arrow.w : cx - arrow.w / 2
+        const top =
+          arrow.direction === 's' ? bottomRight.y + gap : arrow.direction === 'n' ? topLeft.y - gap - arrow.h : cy - arrow.h / 2
+        return (
+          <svg
+            key={arrow.direction}
+            data-diagram-ui=""
+            viewBox={`0 0 ${arrow.w} ${arrow.h}`}
+            width={arrow.w}
+            height={arrow.h}
+            className="absolute z-20 opacity-40 transition-opacity hover:opacity-100"
+            style={{ left, top, cursor: 'copy' }}
+            onPointerDown={(e) => {
+              if (e.button !== 0) return
+              e.stopPropagation()
+              e.preventDefault()
+              onDown(arrow.direction, e)
+            }}
+            onPointerEnter={(e) => onEnter(arrow.direction, e.currentTarget.getBoundingClientRect())}
+            onPointerLeave={onLeave}
+          >
+            <title>Click to add a connected shape, drag to connect</title>
+            <path d={arrow.d} fill="var(--color-koma-accent)" stroke="var(--color-koma-bg)" strokeWidth={1} />
+          </svg>
+        )
+      })}
+    </>
+  )
+}
+
+/**
+ * Handles of the selected line, in screen space so they keep their size at any zoom.
+ * Elbow lines slide whole segments; straight lines get bends, with faint "virtual" bends at
+ * each segment middle that turn real when dragged (draw.io virtualBendsEnabled).
+ */
 function EdgeHandles({
   edge,
   byId,
   screenPoint,
   dragging,
   onSegment,
+  onBend,
+  onRemoveBend,
   onAnchor,
 }: {
   edge: DiagramEdge
@@ -1419,6 +1842,9 @@ function EdgeHandles({
   screenPoint: (point: DiagramPoint) => DiagramPoint
   dragging: boolean
   onSegment: (index: number, points: DiagramPoint[]) => void
+  /** `insertAt` adds a bend at that doc point first; without it the existing bend moves. */
+  onBend: (index: number, insertAt?: DiagramPoint) => void
+  onRemoveBend: (index: number) => void
   onAnchor: (end: 'from' | 'to') => void
 }) {
   const from = byId.get(edge.from)
@@ -1426,6 +1852,7 @@ function EdgeHandles({
   if (!from || !to) return null
   const route = edgePoints(from, to, edge)
   const points = route.map(screenPoint)
+  const straight = edgeStyle(edge).route === 'straight'
   const active = dragging ? '' : 'pointer-events-auto'
   const grab = (e: ReactPointerEvent, run: () => void) => {
     if (e.button !== 0) return
@@ -1438,13 +1865,31 @@ function EdgeHandles({
       {points.slice(0, -1).map((point, index) => {
         const next = points[index + 1]
         if (!next) return null
+        const mid = { x: (point.x + next.x) / 2, y: (point.y + next.y) / 2 }
+        if (straight) {
+          const docMid = { x: (route[index].x + route[index + 1].x) / 2, y: (route[index].y + route[index + 1].y) / 2 }
+          return (
+            <circle
+              key={`virtual-${index}`}
+              className={`${active} opacity-50 hover:opacity-100`}
+              cx={mid.x}
+              cy={mid.y}
+              r={4}
+              fill="var(--color-koma-accent)"
+              stroke="var(--color-koma-bg)"
+              strokeWidth={1}
+              style={{ cursor: 'move' }}
+              onPointerDown={(e) => grab(e, () => onBend(index, docMid))}
+            />
+          )
+        }
         const horizontal = Math.abs(next.x - point.x) >= Math.abs(next.y - point.y)
         return (
           <circle
             key={`seg-${index}`}
             className={active}
-            cx={(point.x + next.x) / 2}
-            cy={(point.y + next.y) / 2}
+            cx={mid.x}
+            cy={mid.y}
             r={4}
             fill="var(--color-koma-accent)"
             stroke="var(--color-koma-bg)"
@@ -1454,6 +1899,32 @@ function EdgeHandles({
           />
         )
       })}
+      {straight
+        ? (edge.bends ?? []).map((bend, index) => {
+            const at = screenPoint(bend)
+            return (
+              <rect
+                key={`bend-${index}`}
+                className={active}
+                x={at.x - 4}
+                y={at.y - 4}
+                width={8}
+                height={8}
+                fill="var(--color-koma-accent)"
+                stroke="var(--color-koma-bg)"
+                strokeWidth={1}
+                style={{ cursor: 'move' }}
+                onPointerDown={(e) => grab(e, () => onBend(index))}
+                onDoubleClick={(e) => {
+                  e.stopPropagation()
+                  onRemoveBend(index)
+                }}
+              >
+                <title>Drag to move, double-click to remove</title>
+              </rect>
+            )
+          })
+        : null}
       {(['from', 'to'] as const).map((end) => {
         const point = end === 'from' ? points[0] : points[points.length - 1]
         if (!point) return null

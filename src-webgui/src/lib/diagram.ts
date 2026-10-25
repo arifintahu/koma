@@ -63,6 +63,8 @@ export type DiagramEdge = {
   bends?: DiagramPoint[]
   /** Short label drawn on the line. Omitted when blank. */
   text?: string
+  /** Where the label sits, as a fraction of the route length. Omitted means the middle. */
+  labelAt?: number
   /** Markdown description. Omitted when blank. The readable copy is the notes file. */
   detail?: string
 }
@@ -256,6 +258,8 @@ function parseEdges(value: unknown): DiagramEdge[] | null {
     if (bends) edge.bends = bends
     const label = parseLineLabel(row.text)
     if (label) edge.text = label
+    const labelAt = num(row.labelAt)
+    if (labelAt != null && labelAt >= 0 && labelAt <= 1 && labelAt !== 0.5) edge.labelAt = labelAt
     const detail = parseDetail(row.detail)
     if (detail) edge.detail = detail
     edges.push(edge)
@@ -321,6 +325,7 @@ export function serializeDiagram(doc: DiagramDoc): string {
       else if (e.toSide) row.toSide = e.toSide
       if (e.bends?.length) row.bends = e.bends.map((p) => ({ x: p.x, y: p.y }))
       if (e.text?.trim()) row.text = e.text
+      if (e.labelAt != null && e.labelAt !== 0.5) row.labelAt = e.labelAt
       if (e.detail?.trim()) row.detail = e.detail
       return row
     }),
@@ -693,6 +698,146 @@ export function hitDiagram(doc: DiagramDoc, point: DiagramPoint, tolerance: numb
   return best
 }
 
+export type DiagramGuide = { axis: 'x' | 'y'; at: number; from: number; to: number }
+
+/**
+ * draw.io-style alignment: the moving box's edges and middle snap to the same lines of
+ * other boxes within the tolerance. `xs`/`ys` pick which lines of the moving box take part
+ * (fractions of its size), so a resize only snaps the edge being dragged.
+ */
+export function diagramGuides(
+  targets: readonly DiagramRect[],
+  moving: DiagramRect,
+  tolerance: number,
+  xs: readonly number[] = [0, 0.5, 1],
+  ys: readonly number[] = [0, 0.5, 1],
+): { dx: number; dy: number; guides: DiagramGuide[] } {
+  const axis = (fractions: readonly number[], start: number, size: number, pick: (rect: DiagramRect) => [number, number]) => {
+    let best: number | null = null
+    for (const target of targets) {
+      const [tStart, tSize] = pick(target)
+      for (const f of fractions) {
+        const line = start + size * f
+        for (const t of [tStart, tStart + tSize / 2, tStart + tSize]) {
+          const d = t - line
+          if (Math.abs(d) <= tolerance && (best == null || Math.abs(d) < Math.abs(best))) best = d
+        }
+      }
+    }
+    return best ?? 0
+  }
+  const dx = xs.length ? axis(xs, moving.x, moving.w, (r) => [r.x, r.w]) : 0
+  const dy = ys.length ? axis(ys, moving.y, moving.h, (r) => [r.y, r.h]) : 0
+  const moved = { ...moving, x: moving.x + dx, y: moving.y + dy }
+  const guides: DiagramGuide[] = []
+  // A guide is drawn for every line of the moved box that now sits exactly on a target's line.
+  const collect = (axisName: 'x' | 'y', fractions: readonly number[], pick: (rect: DiagramRect) => [number, number, number, number]) => {
+    const [mStart, mSize, mCross, mCrossSize] = pick(moved)
+    for (const f of fractions) {
+      const line = mStart + mSize * f
+      let from = mCross
+      let to = mCross + mCrossSize
+      let hit = false
+      for (const target of targets) {
+        const [tStart, tSize, tCross, tCrossSize] = pick(target)
+        if (![tStart, tStart + tSize / 2, tStart + tSize].some((t) => Math.abs(t - line) < 0.5)) continue
+        hit = true
+        from = Math.min(from, tCross)
+        to = Math.max(to, tCross + tCrossSize)
+      }
+      if (hit) guides.push({ axis: axisName, at: line, from, to })
+    }
+  }
+  collect('x', xs, (r) => [r.x, r.w, r.y, r.h])
+  collect('y', ys, (r) => [r.y, r.h, r.x, r.w])
+  return { dx, dy, guides }
+}
+
+export type DiagramDirection = 'n' | 'e' | 's' | 'w'
+
+/** draw.io `defaultEdgeLength`: the gap between a shape and the one its arrow adds. */
+export const DIAGRAM_EDGE_LENGTH = 80
+
+function intersects(a: DiagramRect, b: DiagramRect): boolean {
+  return a.x < b.x + b.w && a.x + a.w > b.x && a.y < b.y + b.h && a.y + a.h > b.y
+}
+
+/** Point one edge length out from the middle of a side of the shape's box. */
+function directionPoint(box: DiagramRect, direction: DiagramDirection, length: number): DiagramPoint {
+  const cx = box.x + box.w / 2
+  const cy = box.y + box.h / 2
+  if (direction === 'n') return { x: cx, y: box.y - length }
+  if (direction === 's') return { x: cx, y: box.y + box.h + length }
+  if (direction === 'w') return { x: box.x - length, y: cy }
+  return { x: box.x + box.w + length, y: cy }
+}
+
+/**
+ * The shape a hover arrow would connect to: one that already sits near the arrow's target
+ * point and does not overlap the source (draw.io `connectVertex`).
+ */
+export function arrowTarget(doc: DiagramDoc, sourceId: string, direction: DiagramDirection): DiagramNode | null {
+  const source = doc.nodes.find((node) => node.id === sourceId)
+  if (!source) return null
+  const box = nodeBounds(source)
+  const point = directionPoint(box, direction, DIAGRAM_EDGE_LENGTH)
+  const probe = { x: point.x - 40, y: point.y - 40, w: 80, h: 80 }
+  for (let i = doc.nodes.length - 1; i >= 0; i--) {
+    const node = doc.nodes[i]
+    if (!node || node.id === sourceId) continue
+    const bounds = nodeBounds(node)
+    if (intersects(bounds, probe) && !intersects(bounds, box)) return node
+  }
+  return null
+}
+
+/**
+ * Click on a hover arrow: connect to the shape already there, or add one an edge length
+ * away (a blank copy of the source, or `shape` when the picker chose one) and connect it.
+ */
+export function connectInDirection(
+  doc: DiagramDoc,
+  sourceId: string,
+  direction: DiagramDirection,
+  mint: (prefix: string) => string,
+  shape?: Pick<DiagramNode, 'kind' | 'w' | 'h'>,
+  edgeStyle?: Partial<DiagramEdge>,
+): { doc: DiagramDoc; nodeId: string; edgeId: string } | null {
+  const source = doc.nodes.find((node) => node.id === sourceId)
+  if (!source) return null
+  const existing = shape ? null : arrowTarget(doc, sourceId, direction)
+  const edgeId = mint('e')
+  const line = (to: string): DiagramEdge => ({ ...edgeStyle, id: edgeId, from: sourceId, to })
+  if (existing) return { doc: { ...doc, edges: [...doc.edges, line(existing.id)] }, nodeId: existing.id, edgeId }
+  const w = shape?.w ?? source.w
+  const h = shape?.h ?? source.h
+  const half = direction === 'e' || direction === 'w' ? w / 2 : h / 2
+  const center = directionPoint(nodeBounds(source), direction, DIAGRAM_EDGE_LENGTH + half)
+  const node: DiagramNode = shape
+    ? { id: mint('n'), kind: shape.kind, x: center.x - w / 2, y: center.y - h / 2, w, h, text: '' }
+    : { ...copyNode(source, mint('n'), 0, 0), x: center.x - w / 2, y: center.y - h / 2, text: '' }
+  delete node.detail
+  delete node.rotation
+  return {
+    doc: { ...doc, nodes: [...doc.nodes, node], edges: [...doc.edges, line(node.id)] },
+    nodeId: node.id,
+    edgeId,
+  }
+}
+
+/** Screen-space tolerance, in doc units, inside which a drop pins a port instead of floating. */
+export const DIAGRAM_PORT_SNAP = 10
+
+/**
+ * Where a connection dropped at `point` attaches: a fixed port when the point is near one,
+ * else a floating end that follows the nearest side as shapes move (draw.io outline connect).
+ */
+export function connectionEnd(node: DiagramNode, point: DiagramPoint, portSnap: number): { port?: number } {
+  const port = nearestPort(node, point)
+  const anchor = portAnchor(node, port)
+  return Math.hypot(anchor.x - point.x, anchor.y - point.y) <= portSnap ? { port } : {}
+}
+
 export function nearestSide(node: DiagramNode, point: DiagramPoint): DiagramSide {
   let best: DiagramSide = 'e'
   let dist = Infinity
@@ -707,6 +852,18 @@ export function nearestSide(node: DiagramNode, point: DiagramPoint): DiagramSide
   return best
 }
 
+export type DiagramResizeOptions = {
+  /** Keep the width-to-height ratio (Shift). */
+  lock?: boolean
+  /** Grow both sides around the center (Alt). */
+  center?: boolean
+}
+
+/**
+ * Drag one handle by a doc-space delta. The math runs in the shape's own axes, and the
+ * opposite handle (or the center) stays put on screen, so rotated shapes do not drift.
+ * Grid snap applies only to unrotated shapes, where an edge can actually sit on the grid.
+ */
 export function resizeNode(
   node: DiagramNode,
   handle: DiagramHandle,
@@ -714,37 +871,50 @@ export function resizeNode(
   dy: number,
   grid: number,
   enabled: boolean,
+  options: DiagramResizeOptions = {},
 ): DiagramNode {
-  const rad = (-(node.rotation ?? 0) * Math.PI) / 180
+  const rotation = node.rotation ?? 0
+  const rad = (-rotation * Math.PI) / 180
   const lx = dx * Math.cos(rad) - dy * Math.sin(rad)
   const ly = dx * Math.sin(rad) + dy * Math.cos(rad)
-  const right = node.x + node.w
-  const bottom = node.y + node.h
-  let x = node.x
-  let y = node.y
-  let w = node.w
-  let h = node.h
-  if (handle.includes('w')) {
-    x = snap(node.x + lx, grid, enabled)
-    w = right - x
-  } else if (handle.includes('e')) {
-    w = snap(right + lx, grid, enabled) - x
+  const snapOn = enabled && !rotation
+  const xSide = handle.includes('w') ? -1 : handle.includes('e') ? 1 : 0
+  const ySide = handle.includes('n') ? -1 : handle.includes('s') ? 1 : 0
+  const grow = (size: number, side: number, delta: number, origin: number) => {
+    if (!side) return size
+    const factor = options.center ? 2 : 1
+    let next = size + side * delta * factor
+    if (snapOn) {
+      // Snap the dragged edge itself, then derive the size from the fixed edge (or the center).
+      const fixed = options.center ? origin + size / 2 : side > 0 ? origin : origin + size
+      const edge = snap(side > 0 ? fixed + (options.center ? next / 2 : next) : fixed - (options.center ? next / 2 : next), grid, true)
+      next = Math.abs(edge - fixed) * factor
+    }
+    return next
   }
-  if (handle.includes('n')) {
-    y = snap(node.y + ly, grid, enabled)
-    h = bottom - y
-  } else if (handle.includes('s')) {
-    h = snap(bottom + ly, grid, enabled) - y
+  let w = grow(node.w, xSide, lx, node.x)
+  let h = grow(node.h, ySide, ly, node.y)
+  if (options.lock && node.w > 0 && node.h > 0) {
+    const ratio = node.w / node.h
+    if (xSide && ySide) {
+      // Corners follow whichever axis moved further, relative to its size.
+      if (Math.abs(w / node.w - 1) >= Math.abs(h / node.h - 1)) h = w / ratio
+      else w = h * ratio
+    } else if (xSide) h = w / ratio
+    else if (ySide) w = h * ratio
   }
-  if (w < MIN_W) {
-    if (handle.includes('w')) x = right - MIN_W
-    w = MIN_W
-  }
-  if (h < MIN_H) {
-    if (handle.includes('n')) y = bottom - MIN_H
-    h = MIN_H
-  }
-  return { ...node, x, y, w, h }
+  w = Math.max(MIN_W, w)
+  h = Math.max(MIN_H, h)
+  // Fraction of the box that must not move: the opposite side, or the middle for an
+  // axis no handle drags (it only changes under the aspect lock) and for Alt.
+  const pin = (side: number) => (options.center || !side ? 0.5 : side > 0 ? 0 : 1)
+  const fx = pin(xSide)
+  const fy = pin(ySide)
+  const before = rotatePoint({ x: node.x + node.w * fx, y: node.y + node.h * fy }, nodeCenter(node), rotation)
+  const offset = rotatePoint({ x: w * fx - w / 2, y: h * fy - h / 2 }, { x: 0, y: 0 }, rotation)
+  const cx = before.x - offset.x
+  const cy = before.y - offset.y
+  return { ...node, x: cx - w / 2, y: cy - h / 2, w, h }
 }
 
 export function pointerAngle(node: DiagramNode, point: DiagramPoint): number {
@@ -791,23 +961,28 @@ function routeEnd(
   other: DiagramNode,
   port: number | undefined,
   side: DiagramSide | undefined,
+  toward?: DiagramPoint,
 ): { point: DiagramPoint; side: DiagramSide } {
   if (port != null && port >= 0 && port < DIAGRAM_PORTS) {
     return { point: portAnchor(node, port), side: portSide(port) }
   }
-  const resolved = side ?? nearestSide(node, nodeCenter(other))
+  const resolved = side ?? nearestSide(node, toward ?? nodeCenter(other))
   return { point: sideAnchor(node, resolved), side: resolved }
 }
 
 export function edgeRoute(from: DiagramNode, to: DiagramNode, edge: DiagramEdge): DiagramPoint[] {
   const style = edgeStyle(edge)
-  const startEnd = routeEnd(from, to, edge.fromPort, edge.fromSide)
-  const endEnd = routeEnd(to, from, edge.toPort, edge.toSide)
+  // A straight line with bends aims each floating end at its nearest bend, not the far shape.
+  const straight = style.route === 'straight'
+  const first = straight ? edge.bends?.[0] : undefined
+  const last = straight ? edge.bends?.[edge.bends.length - 1] : undefined
+  const startEnd = routeEnd(from, to, edge.fromPort, edge.fromSide, first)
+  const endEnd = routeEnd(to, from, edge.toPort, edge.toSide, last)
   const fromSide = startEnd.side
   const toSide = endEnd.side
   const start = startEnd.point
   const end = endEnd.point
-  if (style.route === 'straight') return [start, end]
+  if (straight) return edge.bends?.length ? [start, ...edge.bends, end] : [start, end]
   if (edge.bends?.length) return dedupe([start, ...edge.bends, end])
   const stub = 24
   const leave = outgoing(start, fromSide, stub)
@@ -893,28 +1068,64 @@ export function routePath(points: DiagramPoint[], rounded: boolean): string {
 
 /** Point halfway along a route, measured by segment length. */
 export function routeMidpoint(points: DiagramPoint[]): DiagramPoint {
+  return routePointAt(points, 0.5)
+}
+
+/** Point at fraction `t` of the route length. */
+export function routePointAt(points: DiagramPoint[], t: number): DiagramPoint {
   if (!points.length) return { x: 0, y: 0 }
   if (points.length === 1) return points[0]
-  let total = 0
-  const lengths: number[] = []
-  for (let i = 1; i < points.length; i++) {
-    const prev = points[i - 1]
-    const point = points[i]
-    const length = Math.hypot(point.x - prev.x, point.y - prev.y)
-    lengths.push(length)
-    total += length
-  }
+  const lengths = points.slice(1).map((point, i) => Math.hypot(point.x - points[i].x, point.y - points[i].y))
+  const total = lengths.reduce((sum, length) => sum + length, 0)
   if (total === 0) return points[0]
-  let walk = total / 2
+  let walk = Math.max(0, Math.min(1, t)) * total
   for (let i = 0; i < lengths.length; i++) {
     const length = lengths[i]
-    const start = points[i]
-    const end = points[i + 1]
     if (walk <= length || i === lengths.length - 1) {
-      const t = length === 0 ? 0 : Math.min(1, walk / length)
-      return { x: start.x + (end.x - start.x) * t, y: start.y + (end.y - start.y) * t }
+      const k = length === 0 ? 0 : Math.min(1, walk / length)
+      return { x: points[i].x + (points[i + 1].x - points[i].x) * k, y: points[i].y + (points[i + 1].y - points[i].y) * k }
     }
     walk -= length
   }
   return points[points.length - 1]
+}
+
+/** Fraction of the route length closest to the point (inverse of `routePointAt`). */
+export function routeFractionAt(points: DiagramPoint[], point: DiagramPoint): number {
+  let total = 0
+  let best = 0
+  let bestDist = Infinity
+  const lengths: number[] = []
+  for (let i = 1; i < points.length; i++) {
+    const a = points[i - 1]
+    const b = points[i]
+    const length = Math.hypot(b.x - a.x, b.y - a.y)
+    const k = length ? Math.max(0, Math.min(1, ((point.x - a.x) * (b.x - a.x) + (point.y - a.y) * (b.y - a.y)) / (length * length))) : 0
+    const d = Math.hypot(point.x - (a.x + (b.x - a.x) * k), point.y - (a.y + (b.y - a.y) * k))
+    if (d < bestDist) {
+      bestDist = d
+      best = total + length * k
+    }
+    lengths.push(length)
+    total += length
+  }
+  return total ? best / total : 0.5
+}
+
+/** New bend on segment `index` of the route (0 is the segment leaving the source). */
+export function insertBend(bends: readonly DiagramPoint[] | undefined, index: number, point: DiagramPoint): DiagramPoint[] {
+  const list = [...(bends ?? [])]
+  list.splice(Math.max(0, Math.min(index, list.length)), 0, point)
+  return list
+}
+
+/** Bends that sit on the straight line between their neighbors add nothing, so they go (draw.io straightRemove). */
+export function dropStraightBends(start: DiagramPoint, bends: readonly DiagramPoint[], end: DiagramPoint, tolerance = 2): DiagramPoint[] {
+  const kept: DiagramPoint[] = []
+  for (let i = 0; i < bends.length; i++) {
+    const prev = kept[kept.length - 1] ?? start
+    const next = bends[i + 1] ?? end
+    if (distanceToSegment(bends[i], prev, next) > tolerance) kept.push(bends[i])
+  }
+  return kept
 }

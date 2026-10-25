@@ -1,6 +1,19 @@
 import { describe, expect, it } from 'vitest'
 import {
+  arrowTarget,
+  connectInDirection,
+  connectionEnd,
   copyDiagramShapes,
+  diagramGuides,
+  dropStraightBends,
+  edgeRoute,
+  insertBend,
+  nodeCenter,
+  portAnchor,
+  resizeNode,
+  rotatePoint,
+  routeFractionAt,
+  routePointAt,
   deleteDiagramSelection,
   emptyDiagram,
   hitDiagram,
@@ -85,5 +98,74 @@ describe('diagram edits', () => {
     expect(hitDiagram(doc, { x: 50, y: 25 }, 6)).toEqual({ type: 'node', id: 'a' })
     expect(hitDiagram(doc, { x: 350, y: 27 }, 6)).toEqual({ type: 'edge', id: 'bc' })
     expect(hitDiagram(doc, { x: 350, y: 60 }, 6)).toBeNull()
+  })
+})
+
+describe('diagram controls', () => {
+  it('guides pull a nearby edge onto another shape and report the line', () => {
+    const result = diagramGuides([{ x: 0, y: 0, w: 100, h: 50 }], { x: 103, y: 200, w: 60, h: 40 }, 4)
+    expect(result.dx).toBe(-3)
+    expect(result.dy).toBe(0)
+    expect(result.guides).toEqual([{ axis: 'x', at: 100, from: 0, to: 240 }])
+    expect(diagramGuides([{ x: 0, y: 0, w: 100, h: 50 }], { x: 110, y: 200, w: 60, h: 40 }, 4).dx).toBe(0)
+  })
+
+  it('resize keeps the ratio with Shift and the center with Alt', () => {
+    const node = box('a', 0, 0)
+    const locked = resizeNode(node, 'se', 50, 0, 16, false, { lock: true })
+    expect([locked.w, locked.h]).toEqual([150, 75])
+    const centered = resizeNode(node, 'e', 10, 0, 16, false, { center: true })
+    expect([centered.x, centered.w]).toEqual([-10, 120])
+  })
+
+  it('resizing a rotated shape keeps the opposite corner in place', () => {
+    const node = box('a', 0, 0, { rotation: 30 })
+    const corner = (n: DiagramNode) => rotatePoint({ x: n.x, y: n.y }, nodeCenter(n), 30)
+    const resized = resizeNode(node, 'se', 20, 35, 16, true)
+    expect(resized.w).not.toBe(100)
+    expect(corner(resized).x).toBeCloseTo(corner(node).x)
+    expect(corner(resized).y).toBeCloseTo(corner(node).y)
+  })
+
+  it('a hover arrow adds a blank copy one edge length away and connects it', () => {
+    let n = 0
+    const doc: DiagramDoc = { ...emptyDiagram(), nodes: [box('a', 0, 0, { fillColor: '#112233' })] }
+    const result = connectInDirection(doc, 'a', 'e', (prefix) => `${prefix}${++n}`)
+    expect(result).not.toBeNull()
+    const added = result!.doc.nodes.find((node) => node.id === result!.nodeId)
+    expect(added).toMatchObject({ x: 180, y: 0, w: 100, h: 50, text: '', fillColor: '#112233' })
+    expect(result!.doc.edges).toEqual([{ id: 'e1', from: 'a', to: result!.nodeId }])
+  })
+
+  it('a hover arrow connects to a shape already sitting there', () => {
+    const doc: DiagramDoc = { ...emptyDiagram(), nodes: [box('a', 0, 0), box('b', 170, 10)] }
+    expect(arrowTarget(doc, 'a', 'e')?.id).toBe('b')
+    expect(arrowTarget(doc, 'a', 's')).toBeNull()
+    const result = connectInDirection(doc, 'a', 'e', (prefix) => `${prefix}1`)
+    expect(result?.doc.nodes).toHaveLength(2)
+    expect(result?.nodeId).toBe('b')
+  })
+
+  it('a drop near a port pins it; on the body the end floats', () => {
+    const node = box('a', 0, 0)
+    const port = portAnchor(node, 6)
+    expect(connectionEnd(node, { x: port.x - 3, y: port.y + 2 }, 10)).toEqual({ port: 6 })
+    expect(connectionEnd(node, { x: 50, y: 25 }, 10)).toEqual({})
+  })
+
+  it('bends insert per segment and straight ones drop away', () => {
+    expect(insertBend([{ x: 1, y: 1 }], 1, { x: 2, y: 2 })).toEqual([{ x: 1, y: 1 }, { x: 2, y: 2 }])
+    // 25,25 and 75,25 lie on the lines to their neighbors; only the peak is a real bend.
+    expect(dropStraightBends({ x: 0, y: 0 }, [{ x: 25, y: 25 }, { x: 50, y: 50 }, { x: 75, y: 25 }], { x: 100, y: 0 })).toEqual([{ x: 50, y: 50 }])
+    const doc = threeInARow()
+    const straight = edgeRoute(doc.nodes[0], doc.nodes[1], { id: 'x', from: 'a', to: 'b', route: 'straight', bends: [{ x: 150, y: 80 }] })
+    expect(straight).toHaveLength(3)
+    expect(straight[1]).toEqual({ x: 150, y: 80 })
+  })
+
+  it('a label fraction maps to a point and back', () => {
+    const points = [{ x: 0, y: 0 }, { x: 100, y: 0 }, { x: 100, y: 100 }]
+    expect(routePointAt(points, 0.75)).toEqual({ x: 100, y: 50 })
+    expect(routeFractionAt(points, { x: 104, y: 50 })).toBeCloseTo(0.75)
   })
 })

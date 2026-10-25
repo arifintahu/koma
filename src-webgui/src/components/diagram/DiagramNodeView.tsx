@@ -16,7 +16,8 @@ export const DiagramNodeView = memo(function DiagramNodeView({
   node: DiagramNode
   /** Accent outline: the start of a click-to-connect, or a connection target. */
   highlight: boolean
-  editing: boolean
+  /** Editing starts with the whole label selected, or with the caret after typed text. */
+  editing: false | 'select' | 'end'
   onEditText: (id: string, text: string) => void
   onEditDone: () => void
 }) {
@@ -58,15 +59,25 @@ export const DiagramNodeView = memo(function DiagramNodeView({
         </svg>
       ) : null}
       {editing ? (
-        <input
+        <textarea
           autoFocus
           defaultValue={node.text}
-          className="pointer-events-auto z-10 w-full border-0 bg-transparent px-2 text-center text-[12px] shadow-none outline-none"
+          rows={Math.max(1, node.text.split('\n').length)}
+          className="pointer-events-auto z-10 max-h-full w-full resize-none overflow-hidden border-0 bg-transparent px-2 text-center text-[12px] leading-4 shadow-none outline-none"
           style={{ color: paint.textColor || 'var(--color-koma-fg)' }}
+          onFocus={(e) => {
+            const field = e.currentTarget
+            if (editing === 'select') field.select()
+            else field.setSelectionRange(field.value.length, field.value.length)
+          }}
           onPointerDown={(e) => e.stopPropagation()}
-          onChange={(e) => onEditText(node.id, e.target.value)}
+          onChange={(e) => {
+            e.currentTarget.rows = Math.max(1, e.currentTarget.value.split('\n').length)
+            onEditText(node.id, e.target.value)
+          }}
           onKeyDown={(e) => {
-            if (e.key === 'Enter' || e.key === 'Escape') {
+            // Shift+Enter breaks the line; Enter and Escape finish, as in draw.io.
+            if ((e.key === 'Enter' && !e.shiftKey) || e.key === 'Escape') {
               e.preventDefault()
               onEditDone()
             }
@@ -75,7 +86,7 @@ export const DiagramNodeView = memo(function DiagramNodeView({
         />
       ) : (
         <span
-          className="z-10 truncate px-2 text-center text-[12px]"
+          className="z-10 max-h-full overflow-hidden whitespace-pre-wrap break-words px-2 text-center text-[12px] leading-4"
           style={{ color: paint.textColor || 'var(--color-koma-fg)' }}
           dangerouslySetInnerHTML={{ __html: inlineToHtml(node.text || ' ') }}
         />
