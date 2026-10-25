@@ -378,18 +378,20 @@ mod tests {
             use std::io::Write;
             use std::os::unix::fs::OpenOptionsExt;
             let bin = tmp.join("rust-analyzer");
-            let mut f = std::fs::OpenOptions::new()
-                .write(true)
-                .create(true)
-                .truncate(true)
-                .mode(0o755)
-                .open(&bin)
+            {
+                let mut f = std::fs::OpenOptions::new()
+                    .write(true)
+                    .create(true)
+                    .truncate(true)
+                    .mode(0o755)
+                    .open(&bin)
+                    .unwrap();
+                writeln!(
+                    f,
+                    "#!/bin/sh\necho \"error: Unknown binary 'rust-analyzer' in official toolchain 'stable-aarch64-apple-darwin'.\" >&2\nexit 1"
+                )
                 .unwrap();
-            writeln!(
-                f,
-                "#!/bin/sh\necho \"error: Unknown binary 'rust-analyzer' in official toolchain 'stable-aarch64-apple-darwin'.\" >&2\nexit 1"
-            )
-            .unwrap();
+            }
             assert_eq!(classify_path_binary(&bin), PathBinary::Broken);
         }
         #[cfg(not(unix))]
@@ -420,14 +422,16 @@ mod tests {
             use std::io::Write;
             use std::os::unix::fs::OpenOptionsExt;
             let bin = tmp.join("fake-ls");
-            let mut f = std::fs::OpenOptions::new()
-                .write(true)
-                .create(true)
-                .truncate(true)
-                .mode(0o755)
-                .open(&bin)
-                .unwrap();
-            writeln!(f, "#!/bin/sh\necho 'fake-ls 1.2.3'\nexit 0").unwrap();
+            {
+                let mut f = std::fs::OpenOptions::new()
+                    .write(true)
+                    .create(true)
+                    .truncate(true)
+                    .mode(0o755)
+                    .open(&bin)
+                    .unwrap();
+                writeln!(f, "#!/bin/sh\necho 'fake-ls 1.2.3'\nexit 0").unwrap();
+            }
             match classify_path_binary(&bin) {
                 PathBinary::Usable { version } => {
                     assert_eq!(version.as_deref(), Some("fake-ls 1.2.3"));
