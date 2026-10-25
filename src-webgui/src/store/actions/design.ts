@@ -27,7 +27,8 @@ export function designActions(set: StoreSet, get: StoreGet): Pick<
         if (
           prev.selection === next.selection &&
           prev.focusId === next.focusId &&
-          prev.overrideTargetId === next.overrideTargetId
+          prev.overrideTargetId === next.overrideTargetId &&
+          prev.view === next.view
         ) {
           return s
         }

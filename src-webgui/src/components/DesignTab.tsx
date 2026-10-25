@@ -1,4 +1,5 @@
 import { canvasPoint } from '../lib/uiScale'
+import { CODING_AUTOSAVE_MS } from '../lib/coding-autosave'
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react'
 import { ChevronRight, Frame, Hand, Minus, MousePointer2, PenTool, Plus, Type, PanelRightClose, PanelRightOpen, X } from 'lucide-react'
 import { KomaSelect } from './KomaSelect'
@@ -62,6 +63,8 @@ import {
   nodeChrome,
   nodeFromPen,
   hitDesignDeepest,
+  nodeBoxOrigin,
+  nodeCanvasPoint,
   nodeCenter,
   nodeOrigin,
   nudgeDesignNodes,
@@ -176,6 +179,9 @@ import {
   projectDoc,
   shapeCorners,
   UNDO_CAP,
+  clearDesignHistory,
+  designHistory,
+  type DesignHistoryEntry,
   ZOOM_KEY_STEP,
   ZOOM_MAX,
   ZOOM_PER_PIXEL,
@@ -218,8 +224,9 @@ export function DesignTab({ tab }: { tab: Extract<Tab, { kind: 'design' }> }) {
   const paintDocRef = useRef<DesignDoc | null>(null)
   /** Pointer held by the canvas while a drag runs, so a release outside the window still ends it. */
   const captureRef = useRef<number | null>(null)
-  const pastRef = useRef<DesignDoc[]>([])
-  const futureRef = useRef<DesignDoc[]>([])
+  const historyRef = useRef(designHistory(key))
+  const pastRef = useRef(historyRef.current.past)
+  const futureRef = useRef(historyRef.current.future)
   const nudgeOpenRef = useRef(false)
   const nudgeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const dragRef = useRef<Drag | null>(null)
@@ -253,6 +260,7 @@ export function DesignTab({ tab }: { tab: Extract<Tab, { kind: 'design' }> }) {
   const [penHandle, setPenHandle] = useState<number | null>(null)
   const [menu, setMenu] = useState<{ x: number; y: number; canvasX: number; canvasY: number } | null>(null)
   const commandsRef = useRef<DesignCommands | null>(null)
+  const pasteTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const stepOutRef = useRef<() => void>(() => {})
   const layerOpsRef = useRef<(action: DesignLayerOp) => void>(() => {})
   const penApplyRef = useRef<(draft: PenDraft, closed?: boolean) => void>(() => {})
@@ -284,8 +292,13 @@ export function DesignTab({ tab }: { tab: Extract<Tab, { kind: 'design' }> }) {
   enteredContainerRef.current = enteredContainerId
 
   useEffect(() => {
-    pastRef.current = []
-    futureRef.current = []
+    // History outlives the tab. A document that was reloaded underneath it starts fresh.
+    const history = designHistory(key)
+    const current = useKoma.getState().design?.docs?.[key]?.doc ?? null
+    if (history.head && current !== history.head) clearDesignHistory(history)
+    historyRef.current = history
+    pastRef.current = history.past
+    futureRef.current = history.future
     setSelection([])
     setEnteredContainerId(null)
     setEditing(null)
@@ -300,12 +313,34 @@ export function DesignTab({ tab }: { tab: Extract<Tab, { kind: 'design' }> }) {
       patchDebounceRef.current = null
     }
     pendingTypePatchRef.current = null
-    const next = { panX: 40, panY: 40, zoom: 1 }
+    const next = useKoma.getState().design?.fileUi?.[key]?.view ?? { panX: 40, panY: 40, zoom: 1 }
     viewRef.current = next
     setView(next)
     setLayerZoom(next.zoom)
     setRev((value) => value + 1)
+    return () => setDesignFileUi(tab.root, tab.path, { view: viewRef.current })
   }, [key])
+
+  useEffect(() => {
+    historyRef.current.head = file?.doc ?? null
+  }, [file?.doc])
+
+  // Autosave follows the coding autosave setting, and waits for a drag to end.
+  const autosave = useKoma((s) => !!s.settingsValues?.codingAutosave)
+  useEffect(() => {
+    if (!autosave || !file?.dirty || file.saving || file.loading || file.error) return
+    let timer: ReturnType<typeof setTimeout>
+    const attempt = () => {
+      if (dragRef.current) {
+        timer = setTimeout(attempt, CODING_AUTOSAVE_MS)
+        return
+      }
+      const current = useKoma.getState().design?.docs?.[key]
+      if (current?.dirty && !current.saving && !current.loading && !current.error) saveDesign(tab.root, tab.path)
+    }
+    timer = setTimeout(attempt, CODING_AUTOSAVE_MS)
+    return () => clearTimeout(timer)
+  }, [autosave, file?.dirty, file?.doc, file?.error, file?.loading, file?.saving, key, saveDesign, tab.path, tab.root])
 
   useEffect(() => {
     const onFocus = (event: Event) => {
@@ -400,9 +435,9 @@ export function DesignTab({ tab }: { tab: Extract<Tab, { kind: 'design' }> }) {
 
   const note = (doc: DesignDoc) => {
     closeNudge()
-    pastRef.current.push(doc)
+    pastRef.current.push({ doc, selection: selectionRef.current })
     if (pastRef.current.length > UNDO_CAP) pastRef.current.shift()
-    futureRef.current = []
+    futureRef.current.length = 0
     setRev((value) => value + 1)
   }
   const noteRef = useRef(note)
@@ -453,6 +488,27 @@ export function DesignTab({ tab }: { tab: Extract<Tab, { kind: 'design' }> }) {
     }
   }
 
+  const importImagesRef = useRef(importImages)
+  importImagesRef.current = importImages
+
+  // Images pasted from the system clipboard, such as a screenshot, land in the middle of the view.
+  useEffect(() => {
+    if (!active) return
+    const onPaste = (event: ClipboardEvent) => {
+      const target = event.target as HTMLElement | null
+      if (isTerminalInputTarget(event.target) || target?.closest?.('input, textarea, [contenteditable="true"], [contenteditable="plaintext-only"]')) return
+      const files = [...(event.clipboardData?.files ?? [])].filter((item) => (item.type || mimeForName(item.name))?.startsWith('image/'))
+      if (!files.length) return
+      event.preventDefault()
+      if (pasteTimerRef.current) clearTimeout(pasteTimerRef.current)
+      pasteTimerRef.current = null
+      const view = viewportBox()
+      void importImagesRef.current(files, view ? { x: view.x + view.w / 2, y: view.y + view.h / 2 } : undefined)
+    }
+    window.addEventListener('paste', onPaste)
+    return () => window.removeEventListener('paste', onPaste)
+  }, [active])
+
   const commitStored = (next: DesignDoc, noteOnce = false) => {
     const stored = useKoma.getState().design?.docs?.[key]?.doc
     if (!stored) return
@@ -469,26 +525,23 @@ export function DesignTab({ tab }: { tab: Extract<Tab, { kind: 'design' }> }) {
   const commitRef = useRef(commit)
   commitRef.current = commit
 
-  const undo = () => {
+  /** Swap the document for a history entry and bring back the selection it had. */
+  const travel = (from: DesignHistoryEntry[], to: DesignHistoryEntry[]) => {
     closeNudge()
-    const prev = pastRef.current.pop()
-    if (!prev) return
+    const entry = from.pop()
+    if (!entry) return
     const current = useKoma.getState().design?.docs?.[key]?.doc
-    if (current) futureRef.current.push(current)
+    if (current) to.push({ doc: current, selection: selectionRef.current })
     setRev((value) => value + 1)
     setEditing(null)
-    updateDesign(tab.root, tab.path, prev)
+    updateDesign(tab.root, tab.path, entry.doc)
+    const view = editingDoc(entry.doc, focusRef.current)
+    const selection = entry.selection.filter((id) => locateDesign(view, id))
+    selectionRef.current = selection
+    setSelection(selection)
   }
-  const redo = () => {
-    closeNudge()
-    const next = futureRef.current.pop()
-    if (!next) return
-    const current = useKoma.getState().design?.docs?.[key]?.doc
-    if (current) pastRef.current.push(current)
-    setRev((value) => value + 1)
-    setEditing(null)
-    updateDesign(tab.root, tab.path, next)
-  }
+  const undo = () => travel(pastRef.current, futureRef.current)
+  const redo = () => travel(futureRef.current, pastRef.current)
   const undoRef = useRef(undo)
   const redoRef = useRef(redo)
   undoRef.current = undo
@@ -499,8 +552,7 @@ export function DesignTab({ tab }: { tab: Extract<Tab, { kind: 'design' }> }) {
     if (!saved) return
     const parsed = parseDesign(saved)
     if (parsed.error) return
-    pastRef.current = []
-    futureRef.current = []
+    clearDesignHistory(historyRef.current)
     setRev((value) => value + 1)
     setEditing(null)
     updateDesign(tab.root, tab.path, parsed.doc)
@@ -582,8 +634,7 @@ export function DesignTab({ tab }: { tab: Extract<Tab, { kind: 'design' }> }) {
     const onRestore = (event: Event) => {
       const detail = (event as CustomEvent<{ root: string; path: string }>).detail
       if (!detail || detail.root !== tab.root || detail.path !== tab.path) return
-      pastRef.current = []
-      futureRef.current = []
+      clearDesignHistory(historyRef.current)
       setEditing(null)
       setRev((value) => value + 1)
     }
@@ -1136,8 +1187,12 @@ export function DesignTab({ tab }: { tab: Extract<Tab, { kind: 'design' }> }) {
         return
       }
       if (meta && !event.shiftKey && !event.altKey && event.key.toLowerCase() === 'v') {
-        event.preventDefault()
-        commandsRef.current?.paste()
+        // The browser's paste event comes next and may carry an image. The shape paste waits one turn for it.
+        if (pasteTimerRef.current) clearTimeout(pasteTimerRef.current)
+        pasteTimerRef.current = setTimeout(() => {
+          pasteTimerRef.current = null
+          commandsRef.current?.paste()
+        }, 0)
         return
       }
       if (meta && !event.shiftKey && !event.altKey && event.key.toLowerCase() === 'd') {
@@ -1428,13 +1483,18 @@ export function DesignTab({ tab }: { tab: Extract<Tab, { kind: 'design' }> }) {
   commandsRef.current = {
     copy: () => {
       const open = viewDoc()
-      const ids = selectionRef.current
-      if (!open || !ids.length) return
-      const rows = ids.map((id) => locateDesign(open.doc, id)).filter((row) => row != null)
-      if (!rows.length || rows.some((row) => row.parentId !== rows[0].parentId)) return
+      if (!open || !selectionRef.current.length) return
+      const rows = designRoots(open.doc, selectionRef.current).map((id) => locateDesign(open.doc, id)).filter((row) => row != null)
+      if (!rows.length) return
+      // Shapes from different parents travel in canvas space and land side by side.
+      const shared = rows.every((row) => row.parentId === rows[0].parentId)
+      const nodes = shared ? rows.map((row) => row.node) : rows.map((row) => {
+        const origin = nodeBoxOrigin(open.doc, row.node.id)
+        return origin ? { ...row.node, x: origin.x, y: origin.y } : row.node
+      })
       const components = open.doc.components.filter((component) => rows.some((row) => row.node.kind === 'instance' && row.node.component === component.id))
       const images = open.doc.images
-      const slice = { nodes: rows.map((row) => row.node), parentId: rows[0].parentId, components: components.length ? components : undefined, images }
+      const slice = { nodes, parentId: shared ? rows[0].parentId : null, components: components.length ? components : undefined, images }
       setCopiedShape(slice)
       void navigator.clipboard?.writeText(serializeDesignSlice(slice.nodes, { components, images })).catch(() => undefined)
     },
@@ -1444,28 +1504,37 @@ export function DesignTab({ tab }: { tab: Extract<Tab, { kind: 'design' }> }) {
       const clip = getCopiedShape()
       const sources = clip?.nodes.length ? clip.nodes : []
       const finish = (nodes: DesignNode[], extras?: { parentId?: string | null; components?: DesignDoc['components']; images?: DesignDoc['images'] }) => {
-      const step = open.doc.snap && open.doc.grid > 0 ? open.doc.grid : 10
+      const source = extras ? extras.parentId : clip?.parentId
+      const lone = selectionRef.current.length === 1 ? findDesignNode(open.doc, selectionRef.current[0]) : null
+      // Paste lands in a selected frame, unless it carries frames itself; otherwise next to where it was copied.
+      const into = !at && lone?.kind === 'frame' && !nodes.some((node) => node.kind === 'frame') ? lone.id : null
       const parentId = at
         ? frameAtPoint(open.doc, at.x, at.y, '')
-        : extras?.parentId && locateDesign(open.doc, extras.parentId)
-          ? extras.parentId
-          : clip?.parentId && locateDesign(open.doc, clip.parentId)
-            ? clip.parentId
-            : null
+        : into ?? (source && locateDesign(open.doc, source) ? source : null)
+      const minX = Math.min(...nodes.map((node) => node.x))
+      const minY = Math.min(...nodes.map((node) => node.y))
+      const spanW = Math.max(...nodes.map((node) => node.x + node.w)) - minX
+      const spanH = Math.max(...nodes.map((node) => node.y + node.h)) - minY
+      let shift = { x: 0, y: 0 }
+      if (at) {
+        const local = canvasToContent(open.doc, parentId, at.x, at.y)
+        if (local) shift = { x: local.x - minX, y: local.y - minY }
+      } else if (into && into !== source && lone) {
+        shift = { x: (lone.w - spanW) / 2 - minX, y: (lone.h - spanH) / 2 - minY }
+      } else {
+        // In place while the copied spot is on screen; else in the middle of the view.
+        const view = viewportBox()
+        const corner = parentId ? nodeCanvasPoint(open.doc, parentId, minX, minY) : { x: minX, y: minY }
+        const visible = !view || !corner || (corner.x < view.x + view.w && corner.x + spanW > view.x && corner.y < view.y + view.h && corner.y + spanH > view.y)
+        const center = view && !visible ? canvasToContent(open.doc, parentId, view.x + view.w / 2, view.y + view.h / 2) : null
+        if (center) shift = { x: center.x - spanW / 2 - minX, y: center.y - spanH / 2 - minY }
+      }
       let next = open.doc
       const pasted: DesignNode[] = []
       for (const source of nodes) {
-        const node = copyTree(source, () => mintId('n'), step, step)
-        if (at && parentId) {
-          const local = canvasToContent(open.doc, parentId, at.x, at.y)
-          if (local) {
-            node.x = snapDesign(local.x, open.doc.grid, open.doc.snap)
-            node.y = snapDesign(local.y, open.doc.grid, open.doc.snap)
-          }
-        } else if (at) {
-          node.x = snapDesign(at.x, open.doc.grid, open.doc.snap)
-          node.y = snapDesign(at.y, open.doc.grid, open.doc.snap)
-        }
+        const node = copyTree(source, () => mintId('n'))
+        node.x = snapDesign(source.x + shift.x, open.doc.grid, open.doc.snap)
+        node.y = snapDesign(source.y + shift.y, open.doc.grid, open.doc.snap)
         if (parentId) next = insertDesignNode(next, parentId, node)
         else if (focusRef.current && node.kind !== 'frame' && node.kind !== 'group' && next.screens[0]) next = insertDesignNode(next, next.screens[0].id, node)
         else if (focusRef.current && node.kind !== 'frame' && node.kind !== 'group') {
@@ -2274,7 +2343,7 @@ export function DesignTab({ tab }: { tab: Extract<Tab, { kind: 'design' }> }) {
       if (!stored || !view || node?.kind !== 'text' || node.text?.trim()) return
       const next = projectDoc(stored, focusRef.current, deleteDesignNode(view, node.id))
       const top = pastRef.current[pastRef.current.length - 1]
-      if (top && sameDesign(top, next)) pastRef.current.pop()
+      if (top && sameDesign(top.doc, next)) pastRef.current.pop()
       selectionRef.current = selectionRef.current.filter((id) => id !== node.id)
       setSelection(selectionRef.current)
       updateDesign(tab.root, tab.path, next)

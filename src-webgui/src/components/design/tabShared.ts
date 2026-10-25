@@ -18,7 +18,7 @@ import {
 } from '../../lib/design'
 
 export const DESIGN_PATCH_DEBOUNCE_MS = 200
-export const UNDO_CAP = 50
+export const UNDO_CAP = 200
 export const ZOOM_MIN = 0.02
 export const ZOOM_MAX = 64
 /** Zoom factor for one + or - key press. */
@@ -92,6 +92,26 @@ export type Drag =
   | { kind: 'pen'; index: number; space: boolean }
   | { kind: 'vertex'; id: string; index: number; startX: number; startY: number; remembered: boolean }
   | { kind: 'handle'; id: string; segment: number; end: 'start' | 'end'; startX: number; startY: number; remembered: boolean }
+
+export type DesignHistoryEntry = { doc: DesignDoc; selection: string[] }
+/** Undo stacks per file, outside the tab, so switching tabs keeps them. `head` is the document they lead up to. */
+export type DesignHistory = { past: DesignHistoryEntry[]; future: DesignHistoryEntry[]; head: DesignDoc | null }
+
+const histories = new Map<string, DesignHistory>()
+
+export function designHistory(key: string): DesignHistory {
+  let history = histories.get(key)
+  if (!history) {
+    history = { past: [], future: [], head: null }
+    histories.set(key, history)
+  }
+  return history
+}
+
+export function clearDesignHistory(history: DesignHistory) {
+  history.past.length = 0
+  history.future.length = 0
+}
 
 let copiedShape: { nodes: DesignNode[]; parentId: string | null; components?: DesignDoc['components']; images?: DesignDoc['images'] } | null = null
 let copiedStyle: DesignStyle | null = null
