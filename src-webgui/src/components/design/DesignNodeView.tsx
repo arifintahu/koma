@@ -38,6 +38,7 @@ import {
   paintCss,
   weightCss,
 } from './tabShared'
+import { DesignTextEditor } from './DesignTextEditor'
 
 export type DesignNodeHandlers = {
   onSelect: (id: string, event: ReactPointerEvent<HTMLDivElement>) => void
@@ -290,52 +291,45 @@ export const DesignNodeView = memo(function DesignNodeView({
             ))}
           </svg>
         ) : null}
-        {node.kind === 'text' && editing === node.id ? (
-          <textarea
-            autoFocus
-            value={node.text ?? ''}
-            onChange={(event) => onText(node.id, event.target.value)}
-            onSelect={(event) => onTextRange?.(node.id, event.currentTarget.selectionStart, event.currentTarget.selectionEnd)}
-            onKeyUp={(event) => onTextRange?.(node.id, event.currentTarget.selectionStart, event.currentTarget.selectionEnd)}
-            onMouseUp={(event) => onTextRange?.(node.id, event.currentTarget.selectionStart, event.currentTarget.selectionEnd)}
-            onBlur={onTextBlur}
-            onPointerDown={(event) => event.stopPropagation()}
-            onKeyDown={(event) => {
-              if (event.key === 'Escape') {
-                event.preventDefault()
-                onTextBlur()
-              }
-            }}
-            className="z-10 h-full w-full resize-none border-0 bg-transparent px-1 shadow-none outline-none"
-            style={{ ...textTypeStyle, textAlign: style.align }}
-          />
-        ) : node.kind === 'text' ? (
+        {node.kind === 'text' ? (
           <div
-            className="flex h-full w-full px-1"
+            className="flex h-full w-full"
             style={{
               ...textTypeStyle,
-              justifyContent: style.align === 'center' ? 'center' : style.align === 'right' ? 'flex-end' : style.align === 'justify' ? 'stretch' : 'flex-start',
+              justifyContent: style.align === 'center' ? 'center' : style.align === 'right' ? 'flex-end' : 'flex-start',
               textAlign: style.align,
               alignItems: style.vertical === 'top' ? 'flex-start' : style.vertical === 'bottom' ? 'flex-end' : 'center',
             }}
           >
-            <span className="whitespace-pre-wrap">
-              {splitTextByRuns(node.text || 'Text', node.runs).map((part, index) => (
-                <span
-                  key={`${part.text}-${index}`}
-                  style={{
-                    fontSize: part.run?.fontSize,
-                    fontWeight: part.run?.weight ? weightCss(part.run.weight) : undefined,
-                    fontStyle: part.run?.italic ? 'italic' : undefined,
-                    textDecoration: [part.run?.underline ? 'underline' : '', part.run?.strike ? 'line-through' : ''].filter(Boolean).join(' ') || undefined,
-                    fontFamily: part.run?.fontFamily || undefined,
-                    color: part.run?.color ? paintCss(doc, part.run.color, 'inherit') : undefined,
-                  }}
-                >
-                  {part.text}
-                </span>
-              ))}
-            </span>
+            {editing === node.id ? (
+              <DesignTextEditor
+                doc={doc}
+                text={node.text ?? ''}
+                runs={node.runs}
+                style={{ flex: style.align === 'justify' ? 1 : undefined }}
+                onText={(text) => onText(node.id, text)}
+                onTextRange={onTextRange ? (start, end) => onTextRange(node.id, start, end) : undefined}
+                onDone={onTextBlur}
+              />
+            ) : (
+              <span className="whitespace-pre-wrap" style={{ flex: style.align === 'justify' ? 1 : undefined }}>
+                {splitTextByRuns(node.text || 'Text', node.runs).map((part, index) => (
+                  <span
+                    key={`${part.text}-${index}`}
+                    style={{
+                      fontSize: part.run?.fontSize,
+                      fontWeight: part.run?.weight ? weightCss(part.run.weight) : undefined,
+                      fontStyle: part.run?.italic ? 'italic' : undefined,
+                      textDecoration: [part.run?.underline ? 'underline' : '', part.run?.strike ? 'line-through' : ''].filter(Boolean).join(' ') || undefined,
+                      fontFamily: part.run?.fontFamily || undefined,
+                      color: part.run?.color ? paintCss(doc, part.run.color, 'inherit') : undefined,
+                    }}
+                  >
+                    {part.text}
+                  </span>
+                ))}
+              </span>
+            )}
           </div>
         ) : node.kind === 'instance' && !visual ? (
           <span className="pointer-events-none absolute left-2 top-1 truncate text-[11px] text-koma-dim">Missing component</span>

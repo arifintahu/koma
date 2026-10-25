@@ -1087,7 +1087,7 @@ export function DesignTab({ tab }: { tab: Extract<Tab, { kind: 'design' }> }) {
     if (!active) return
     const onKey = (event: KeyboardEvent) => {
       if (isTerminalInputTarget(event.target)) return
-      const typing = !!(event.target as HTMLElement | null)?.closest('input, textarea, [contenteditable="true"]')
+      const typing = !!(event.target as HTMLElement | null)?.closest('input, textarea, [contenteditable="true"], [contenteditable="plaintext-only"]')
       if ((event.metaKey || event.ctrlKey) && !event.shiftKey && !event.altKey && event.key.toLowerCase() === 's') {
         event.preventDefault()
         saveDesign(tab.root, tab.path)
