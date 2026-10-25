@@ -1098,6 +1098,61 @@ export function hitDesign(doc: DesignDoc, x: number, y: number, deep = false): D
   return null
 }
 
+/** The innermost node under a canvas point, through groups too, for a Cmd or Ctrl click. A locked node or an instance stops the walk. */
+export function hitDesignDeepest(doc: DesignDoc, x: number, y: number): DesignNode | null {
+  for (let i = doc.screens.length - 1; i >= 0; i--) {
+    const found = deepestIn(doc.screens[i], x, y)
+    if (found) return found
+  }
+  return null
+}
+
+function deepestIn(node: DesignNode, x: number, y: number): DesignNode | null {
+  if (node.visible === false) return null
+  const local = parentPointToContent(node, x, y)
+  const inside = insideNode(node, local, node.kind === 'line' ? 6 : 0)
+  if (node.locked || node.kind === 'instance') return inside ? node : null
+  if (designClips(node) && !inside) return null
+  const children = node.children ?? []
+  for (let i = children.length - 1; i >= 0; i--) {
+    const found = deepestIn(children[i], local.x, local.y)
+    if (found) return found
+  }
+  return inside ? node : null
+}
+
+/**
+ * The sibling Tab moves to. A step of 1 goes down the layers list, toward the back, and wraps.
+ * Hidden siblings are skipped. A node with no visible sibling stays.
+ */
+export function stepDesignSibling(doc: DesignDoc, id: string, step: 1 | -1): string {
+  const located = locateDesign(doc, id)
+  if (!located) return id
+  const siblings = located.parentId == null ? doc.screens : findDesignNode(doc, located.parentId)?.children ?? []
+  const from = siblings.findIndex((item) => item.id === id)
+  for (let offset = 1; offset < siblings.length; offset++) {
+    const next = siblings[(from - step * offset + siblings.length * offset) % siblings.length]
+    if (next && next.visible !== false) return next.id
+  }
+  return id
+}
+
+/** Enter: the children of each selected container. A selection with no children stays. */
+export function designChildIds(doc: DesignDoc, ids: readonly string[]): string[] {
+  const children = ids.flatMap((id) => (findDesignNode(doc, id)?.children ?? []).filter((child) => child.visible !== false).map((child) => child.id))
+  return children.length ? children : [...ids]
+}
+
+/** Shift+Enter: the parents of the selection. Screens stay selected. */
+export function designParentIds(doc: DesignDoc, ids: readonly string[]): string[] {
+  const parents: string[] = []
+  for (const id of ids) {
+    const parentId = locateDesign(doc, id)?.parentId ?? id
+    if (!parents.includes(parentId)) parents.push(parentId)
+  }
+  return parents
+}
+
 /** True when the user has double-clicked into a group, frame, or instance for scoped editing. */
 export function canEnterDesignContainer(node: DesignNode | null | undefined): boolean {
   return node?.kind === 'group' || node?.kind === 'frame' || node?.kind === 'instance'
@@ -1776,6 +1831,24 @@ export function layerDropIndex(siblingIds: readonly string[], targetId: string, 
   const index = siblingIds.indexOf(targetId)
   if (index < 0) return null
   return place === 'before' ? index + 1 : index
+}
+
+/**
+ * Move layers next to a target row, keeping their order. Ids run top to bottom as the layers panel lists them,
+ * where the top row is the frontmost child. A target of null with `inside` appends to the parent.
+ */
+export function moveDesignNodes(doc: DesignDoc, ids: readonly string[], parentId: string | null, targetId: string | null, place: 'before' | 'after' | 'inside'): DesignDoc {
+  // Each insert lands on the same side of the target, so the order of inserts decides the stacking.
+  const order = place === 'before' ? ids : [...ids].reverse()
+  let next = doc
+  for (const id of order) {
+    if (id === targetId) continue
+    const siblings = parentId == null ? next.screens : findDesignNode(next, parentId)?.children ?? []
+    const index = place === 'inside' || !targetId ? siblings.length : layerDropIndex(siblings.map((item) => item.id), targetId, place)
+    if (index == null) continue
+    next = moveDesignNode(next, id, parentId, index)
+  }
+  return next
 }
 
 /** Add auto layout. Several nodes are framed first. A lone non-frame is framed too. */
@@ -2877,6 +2950,22 @@ function designMeasures(moved: DesignRect, targets: DesignRect[]): DesignMeasure
     measures.push({ axis: 'y', x: (start + end) / 2, y: moved.y + moved.h, length: below.gap, label: String(Math.round(below.gap)) })
   }
   return measures
+}
+
+/** Distances from a selection box to a hovered box, for Alt-hover. Inside a box, they run to its edges; apart, to the nearest gap. */
+export function designDistances(moving: DesignRect, target: DesignRect): DesignMeasure[] {
+  const contains = (outer: DesignRect, inner: DesignRect) => boxInside(inner, outer) && (inner.w < outer.w || inner.h < outer.h)
+  if (!contains(target, moving) && !contains(moving, target)) return designMeasures(moving, [target])
+  const [inner, outer] = contains(target, moving) ? [moving, target] : [target, moving]
+  const midY = inner.y + inner.h / 2
+  const midX = inner.x + inner.w / 2
+  const gaps: DesignMeasure[] = [
+    { axis: 'x', x: outer.x, y: midY, length: inner.x - outer.x, label: '' },
+    { axis: 'x', x: inner.x + inner.w, y: midY, length: outer.x + outer.w - (inner.x + inner.w), label: '' },
+    { axis: 'y', x: midX, y: outer.y, length: inner.y - outer.y, label: '' },
+    { axis: 'y', x: midX, y: inner.y + inner.h, length: outer.y + outer.h - (inner.y + inner.h), label: '' },
+  ]
+  return gaps.filter((gap) => gap.length >= 0.5).map((gap) => ({ ...gap, label: String(Math.round(gap.length)) }))
 }
 
 /** Move a flow child to a new index among its non-absolute siblings. */

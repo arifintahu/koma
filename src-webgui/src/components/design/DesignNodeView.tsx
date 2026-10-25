@@ -183,7 +183,8 @@ export const DesignNodeView = memo(function DesignNodeView({
         maskRepeat: maskStyle?.maskRepeat,
         WebkitMaskRepeat: maskStyle?.WebkitMaskRepeat,
         maskMode: maskStyle?.maskMode,
-        cursor: !hitHere || node.locked || dragCursor ? undefined : cropEdit ? 'move' : 'grab',
+        // Shapes keep the arrow, like Penpot; the grab hand is for panning.
+        cursor: cropEdit && hitHere && !node.locked && !dragCursor ? 'move' : undefined,
       }}
       onPointerDown={hitHere ? (event) => onSelect(node.id, event) : undefined}
       onContextMenu={hitHere ? (event) => {
@@ -211,7 +212,7 @@ export const DesignNodeView = memo(function DesignNodeView({
     >
       {container ? (
         <span
-          className={`absolute left-0 truncate text-[11px] ${selected ? 'text-koma-fg' : 'text-koma-dim'} ${hitHere && !locked && !node.locked ? 'pointer-events-auto cursor-grab' : 'pointer-events-none'}`}
+          className={`absolute left-0 truncate text-[11px] ${selected ? 'text-koma-fg' : 'text-koma-dim'} ${hitHere && !locked && !node.locked ? 'pointer-events-auto' : 'pointer-events-none'}`}
           style={{ top: -16, maxWidth: Math.max(boxW, 80) }}
           onPointerDown={
             hitHere && !locked && !node.locked

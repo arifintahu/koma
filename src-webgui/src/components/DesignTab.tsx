@@ -1,10 +1,10 @@
 import { canvasPoint } from '../lib/uiScale'
-import { useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react'
+import { useEffect, useMemo, useRef, useState, useSyncExternalStore, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react'
 import { ChevronRight, Frame, Hand, Minus, MousePointer2, PenTool, Plus, Type, PanelRightClose, PanelRightOpen, X } from 'lucide-react'
 import { KomaSelect } from './KomaSelect'
 import { TokenEditor } from './panels/DesignPanel'
 import { DesignMenu, type DesignMenuItem } from './DesignMenu'
-import { getDesignUi, publishDesignUi, type DesignLayerOp } from '../lib/designUi'
+import { getDesignHover, getDesignUi, publishDesignUi, setDesignHover, subscribeDesignHover, type DesignLayerOp } from '../lib/designUi'
 import { isTerminalInputTarget } from '../lib/terminalInput'
 import {
   COMPONENT_MIME,
@@ -15,6 +15,9 @@ import {
   canLeaveParent,
   canvasDeltaToSpace,
   designAxisAligned,
+  designChildIds,
+  designDistances,
+  designParentIds,
   designTurnSign,
   canvasToContent,
   cornerPixels,
@@ -53,10 +56,12 @@ import {
   effectiveInstanceChild,
   mergeDesignOverride,
   pickVariant,
-  moveDesignNode,
+  moveDesignNodes,
+  stepDesignSibling,
   nextVariantProps,
   nodeChrome,
   nodeFromPen,
+  hitDesignDeepest,
   nodeCenter,
   nodeOrigin,
   nudgeDesignNodes,
@@ -76,6 +81,7 @@ import {
   hitDesignInScope,
   resolveDesignSelectHit,
   validateDesignEnteredContainer,
+  selectDesignHit,
   selectDesignRect,
   sharedValue,
   sameDesign,
@@ -162,6 +168,7 @@ import {
   setCopiedStyle,
   editingDoc,
   paintOnlyDoc,
+  deepSelectKey,
   instanceAxes,
   lineBox,
   lineEnds,
@@ -169,6 +176,7 @@ import {
   projectDoc,
   shapeCorners,
   UNDO_CAP,
+  ZOOM_KEY_STEP,
   ZOOM_MAX,
   ZOOM_PER_PIXEL,
   ZOOM_SETTLE_MS,
@@ -228,6 +236,9 @@ export function DesignTab({ tab }: { tab: Extract<Tab, { kind: 'design' }> }) {
   /** Zoom the node layer is laid out at. A gesture scales that layout with a transform and settles here when it pauses. */
   const [layerZoom, setLayerZoom] = useState(viewRef.current.zoom)
   const settleRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const hoverId = useSyncExternalStore(subscribeDesignHover, getDesignHover)
+  const hoverFrameRef = useRef<{ frame: number; clientX: number; clientY: number; deep: boolean }>({ frame: 0, clientX: 0, clientY: 0, deep: false })
+  const [altDown, setAltDown] = useState(false)
   const [tool, setTool] = useState<Tool>('select')
   const [selection, setSelection] = useState<string[]>([])
   const [editing, setEditing] = useState<string | null>(null)
@@ -595,6 +606,8 @@ export function DesignTab({ tab }: { tab: Extract<Tab, { kind: 'design' }> }) {
       if (!local) return
       node = { ...node, x: snapDesign(local.x, doc.grid, doc.snap), y: snapDesign(local.y, doc.grid, doc.snap) }
       if (toolRef.current === 'section') node = { ...node, section: true, name: 'Section' }
+      // A click types on one growing line; a dragged box keeps its width and wraps.
+      if (drag.shape === 'text') node = { ...node, text: '', textHug: tiny ? 'width' : 'height' }
       let next = doc
       if (drag.parentId) next = insertDesignNode(doc, drag.parentId, node)
       else if (focusRef.current && node.kind !== 'frame' && node.kind !== 'group') {
@@ -611,6 +624,11 @@ export function DesignTab({ tab }: { tab: Extract<Tab, { kind: 'design' }> }) {
       setSelection([node.id])
       setPropsOpen(true)
       setTool('select')
+      if (drag.shape === 'text') {
+        // Typing folds into the creation's undo step.
+        labelNoted.current = true
+        setEditing(node.id)
+      }
     }
     const move = (event: PointerEvent) => {
       const drag = dragRef.current
@@ -619,6 +637,7 @@ export function DesignTab({ tab }: { tab: Extract<Tab, { kind: 'design' }> }) {
         if (hover) setPenHover(hover)
       }
       if (!drag) return
+      setDesignHover(null)
       if (captureRef.current == null && (drag.kind !== 'move' || drag.moved)) {
         try {
           canvasRef.current?.setPointerCapture(event.pointerId)
@@ -936,6 +955,8 @@ export function DesignTab({ tab }: { tab: Extract<Tab, { kind: 'design' }> }) {
         release()
         spaceRef.current = false
         setSpaceDown(false)
+        setAltDown(false)
+        setDesignHover(null)
       }
     }
     const up = (event: PointerEvent) => {
@@ -1072,6 +1093,7 @@ export function DesignTab({ tab }: { tab: Extract<Tab, { kind: 'design' }> }) {
         saveDesign(tab.root, tab.path)
         return
       }
+      if (event.key === 'Alt') setAltDown(event.type === 'keydown' && !typing)
       if (event.code === 'Space') {
         if (typing) return
         event.preventDefault()
@@ -1235,7 +1257,24 @@ export function DesignTab({ tab }: { tab: Extract<Tab, { kind: 'design' }> }) {
       if (event.key === 'Enter' && !meta) {
         event.preventDefault()
         if (toolRef.current === 'pen' && penRef.current) finishPenRef.current(false)
-        else setVectorEditId(null)
+        else if (vectorEditRef.current) setVectorEditId(null)
+        else if (event.shiftKey) commandsRef.current?.selectParent()
+        else commandsRef.current?.selectChildren()
+        return
+      }
+      if (event.key === 'Tab' && !meta && !event.altKey && selectionRef.current.length) {
+        event.preventDefault()
+        commandsRef.current?.step(event.shiftKey ? -1 : 1)
+        return
+      }
+      if (!meta && !event.altKey && (event.key === '=' || event.key === '+' || event.key === '-')) {
+        event.preventDefault()
+        commandsRef.current?.zoomStep(event.key === '-' ? 1 / ZOOM_KEY_STEP : ZOOM_KEY_STEP)
+        return
+      }
+      if (!meta && !event.altKey && event.shiftKey && event.code === 'Digit0') {
+        event.preventDefault()
+        commandsRef.current?.zoomStep(0)
         return
       }
       if (event.key === 'Escape') {
@@ -1618,6 +1657,40 @@ export function DesignTab({ tab }: { tab: Extract<Tab, { kind: 'design' }> }) {
       setSelection([id])
       setPropsOpen(true)
     },
+    step: (dir) => {
+      const open = viewDoc()
+      const id = selectionRef.current[selectionRef.current.length - 1]
+      if (!open || !id) return
+      setSelection([stepDesignSibling(open.doc, id, dir)])
+      setPropsOpen(true)
+    },
+    selectChildren: () => {
+      const open = viewDoc()
+      const ids = selectionRef.current
+      if (!open || !ids.length) return
+      const lone = ids.length === 1 ? findDesignNode(open.doc, ids[0]) : null
+      if (lone?.kind === 'text' && !lone.locked) {
+        setEditing(lone.id)
+        labelNoted.current = false
+        return
+      }
+      const children = designChildIds(open.doc, ids)
+      if (ids.length === 1 && children[0] !== ids[0]) setEnteredContainerId(ids[0])
+      setSelection(children)
+    },
+    selectParent: () => {
+      const open = viewDoc()
+      const ids = selectionRef.current
+      if (!open || !ids.length) return
+      const parents = designParentIds(open.doc, ids)
+      setSelection(parents)
+      setEnteredContainerId(parents.length === 1 ? designEnterScopeForLayerSelect(open.doc, parents[0]) : null)
+    },
+    zoomStep: (factor) => {
+      const rect = canvasRef.current?.getBoundingClientRect()
+      if (!rect) return
+      zoomAt(rect.left + rect.width / 2, rect.top + rect.height / 2, factor ? viewRef.current.zoom * factor : 1)
+    },
     boolean: (op) => {
       const open = viewDoc()
       const ids = selectionRef.current
@@ -1656,8 +1729,13 @@ export function DesignTab({ tab }: { tab: Extract<Tab, { kind: 'design' }> }) {
     }
     if (action.op === 'select') {
       const ids = selectionRef.current
-      setSelection(action.shift ? (ids.includes(action.id) ? ids.filter((item) => item !== action.id) : [...ids, action.id]) : [action.id])
-      if (!action.shift) setEnteredContainerId(designEnterScopeForLayerSelect(open.doc, action.id))
+      const last = action.ids[action.ids.length - 1]
+      if (!last) return
+      if (action.toggle) setSelection(ids.includes(last) ? ids.filter((item) => item !== last) : [...ids, last])
+      else {
+        setSelection(action.ids)
+        setEnteredContainerId(designEnterScopeForLayerSelect(open.doc, last))
+      }
       setPropsOpen(true)
       setEditing(null)
       return
@@ -1681,9 +1759,11 @@ export function DesignTab({ tab }: { tab: Extract<Tab, { kind: 'design' }> }) {
       return
     }
     if (action.op === 'move') {
-      if (focusRef.current && action.parentId == null && locateDesign(open.doc, action.id)?.parentId != null) return
-      if (!canLeaveParent(open.doc, action.id, action.parentId)) return
-      commit(moveDesignNode(open.doc, action.id, action.parentId, action.index))
+      const ids = action.ids.filter((id) => {
+        if (focusRef.current && action.parentId == null && locateDesign(open.doc, id)?.parentId != null) return false
+        return canLeaveParent(open.doc, id, action.parentId)
+      })
+      if (ids.length) commit(moveDesignNodes(open.doc, ids, action.parentId, action.targetId, action.place))
       return
     }
     if (!selectionRef.current.includes(action.id)) setSelection([action.id])
@@ -1752,6 +1832,27 @@ export function DesignTab({ tab }: { tab: Extract<Tab, { kind: 'design' }> }) {
     setDragCursor('grabbing')
   }
 
+  /** Outline what a click would select, once per frame. Cmd or Ctrl hovers the deepest shape. */
+  const onCanvasHover = (event: ReactPointerEvent<HTMLDivElement>) => {
+    const pending = hoverFrameRef.current
+    pending.clientX = event.clientX
+    pending.clientY = event.clientY
+    pending.deep = deepSelectKey(event)
+    if (pending.frame) return
+    pending.frame = requestAnimationFrame(() => {
+      pending.frame = 0
+      const stored = useKoma.getState().design?.docs?.[key]?.doc
+      const point = toDoc(pending.clientX, pending.clientY)
+      if (!stored || !point || dragRef.current || toolRef.current !== 'select' || spaceRef.current) {
+        setDesignHover(null)
+        return
+      }
+      const current = editingDoc(stored, focusRef.current)
+      const hit = pending.deep ? hitDesignDeepest(current, point.x, point.y)?.id : selectDesignHit(current, point.x, point.y, false, enteredContainerRef.current)
+      setDesignHover(hit ?? null)
+    })
+  }
+
   const onCanvasPointerDown = (event: ReactPointerEvent<HTMLDivElement>) => {
     if (event.button === 1 || spaceRef.current || tool === 'pan') {
       event.preventDefault()
@@ -1797,7 +1898,8 @@ export function DesignTab({ tab }: { tab: Extract<Tab, { kind: 'design' }> }) {
     const storedNow = useKoma.getState().design?.docs?.[key]?.doc
     const current = storedNow ? editingDoc(storedNow, focusRef.current) : null
     if (!current) return
-    const resolved = resolveDesignSelectHit(current, point.x, point.y, enteredContainerRef.current)
+    const deepId = deepSelectKey(event) ? hitDesignDeepest(current, point.x, point.y)?.id : undefined
+    const resolved = deepId ? { kind: 'hit' as const, id: deepId } : resolveDesignSelectHit(current, point.x, point.y, enteredContainerRef.current)
     if (resolved.kind === 'exit-and-hit') setEnteredContainerId(resolved.enteredContainerId)
     const target = resolved.kind === 'hit' ? resolved.id : resolved.kind === 'exit-and-hit' ? resolved.id : null
     if (!target) {
@@ -1843,7 +1945,7 @@ export function DesignTab({ tab }: { tab: Extract<Tab, { kind: 'design' }> }) {
       alt: event.altKey,
       scene: null,
     }
-    setDragCursor('grabbing')
+    setDragCursor('default')
   }
 
   const placeInstance = (componentId: string, point: { x: number; y: number }) => {
@@ -1913,6 +2015,11 @@ export function DesignTab({ tab }: { tab: Extract<Tab, { kind: 'design' }> }) {
   const located = selectedId ? locateDesign(doc, selectedId) : null
   const selected = located?.node ?? null
   const multi = selectedNodes.length > 1
+  // Alt over another shape shows the distances from the selection to it.
+  const altFrom = altDown && hoverId && selection.length && !dragCursor && !selection.includes(hoverId) ? designSelectionCanvasBox(doc, selection) : null
+  const altTo = altFrom && hoverId ? designCanvasBox(doc, hoverId) : null
+  const altMeasures = altFrom && altTo ? designDistances(altFrom, altTo) : []
+  const marks = snapMarks ?? (altMeasures.length ? { guides: [], measures: altMeasures } : null)
   const cropEdit = !multi && isImageCropPaint(inspectorPaint)
   cropEditRef.current = cropEdit
   const parentNode = located?.parentId ? findDesignNode(doc, located.parentId) : null
@@ -2075,7 +2182,8 @@ export function DesignTab({ tab }: { tab: Extract<Tab, { kind: 'design' }> }) {
       const point = toDoc(event.clientX, event.clientY)
       let target = id
       if (point) {
-        const resolved = resolveDesignSelectHit(current, point.x, point.y, enteredContainerRef.current)
+        const deepId = deepSelectKey(event) ? hitDesignDeepest(current, point.x, point.y)?.id : undefined
+        const resolved = deepId ? { kind: 'hit' as const, id: deepId } : resolveDesignSelectHit(current, point.x, point.y, enteredContainerRef.current)
         if (resolved.kind === 'clear') {
           selectionRef.current = []
           setSelection([])
@@ -2128,7 +2236,7 @@ export function DesignTab({ tab }: { tab: Extract<Tab, { kind: 'design' }> }) {
         alt: event.altKey,
         scene: null,
       }
-      setDragCursor('grabbing')
+      setDragCursor('default')
     },
     onEdit: (id) => {
       setSelection([id])
@@ -2159,6 +2267,17 @@ export function DesignTab({ tab }: { tab: Extract<Tab, { kind: 'design' }> }) {
       labelNoted.current = false
       setEditing(null)
       setTextRange(null)
+      // Leaving a text box empty removes it, like Penpot. Its undo step already holds the state before the edit.
+      const stored = useKoma.getState().design?.docs?.[key]?.doc
+      const view = stored ? editingDoc(stored, focusRef.current) : null
+      const node = editing && view ? findDesignNode(view, editing) : null
+      if (!stored || !view || node?.kind !== 'text' || node.text?.trim()) return
+      const next = projectDoc(stored, focusRef.current, deleteDesignNode(view, node.id))
+      const top = pastRef.current[pastRef.current.length - 1]
+      if (top && sameDesign(top, next)) pastRef.current.pop()
+      selectionRef.current = selectionRef.current.filter((id) => id !== node.id)
+      setSelection(selectionRef.current)
+      updateDesign(tab.root, tab.path, next)
     },
   }
 
@@ -2210,6 +2329,8 @@ export function DesignTab({ tab }: { tab: Extract<Tab, { kind: 'design' }> }) {
           ref={canvasRef}
           className={`koma-authored-canvas relative min-h-0 min-w-0 flex-1 overflow-hidden select-none ${spaceDown || tool === 'pan' ? 'cursor-grab' : ''}`}
           onPointerDown={onCanvasPointerDown}
+          onPointerMove={onCanvasHover}
+          onPointerLeave={() => setDesignHover(null)}
           onContextMenu={(event) => {
             event.preventDefault()
             const point = toDoc(event.clientX, event.clientY)
@@ -2230,7 +2351,7 @@ export function DesignTab({ tab }: { tab: Extract<Tab, { kind: 'design' }> }) {
             {flowBar ? (
               <div className="pointer-events-none absolute z-10" style={{ left: flowBar.x, top: flowBar.y, width: flowBar.w, height: flowBar.h, background: SELECTION }} />
             ) : null}
-            {snapMarks?.guides.map((guide, index) => (
+            {marks?.guides.map((guide, index) => (
               <div
                 key={`guide-${guide.axis}-${index}`}
                 className="pointer-events-none absolute z-10"
@@ -2251,7 +2372,7 @@ export function DesignTab({ tab }: { tab: Extract<Tab, { kind: 'design' }> }) {
                 }}
               />
             ) : null}
-            {snapMarks?.measures.map((measure, index) => (
+            {marks?.measures.map((measure, index) => (
               <div
                 key={`measure-${measure.axis}-${index}`}
                 className="pointer-events-none absolute z-10"
@@ -2460,6 +2581,7 @@ export function DesignTab({ tab }: { tab: Extract<Tab, { kind: 'design' }> }) {
             dragCursor={dragCursor}
             enteredContainerId={enteredContainerId}
             cropEditId={cropEdit ? selectedId : null}
+            hoverId={tool === 'select' && !vectorEditId ? hoverId : null}
             onCorner={(id, corner, event) => {
               event.preventDefault()
               event.stopPropagation()

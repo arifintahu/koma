@@ -1,3 +1,4 @@
+import { isMacTerminalPlatform } from '../../lib/terminalInput'
 import {
   snapDesign,
   componentView,
@@ -20,6 +21,8 @@ export const DESIGN_PATCH_DEBOUNCE_MS = 200
 export const UNDO_CAP = 50
 export const ZOOM_MIN = 0.02
 export const ZOOM_MAX = 64
+/** Zoom factor for one + or - key press. */
+export const ZOOM_KEY_STEP = 1.3
 /** Zoom change per wheel pixel: about 14% for one mouse notch. */
 export const ZOOM_PER_PIXEL = 0.0015
 /** Idle time after a zoom gesture before the canvas re-lays out at the new zoom. */
@@ -65,6 +68,13 @@ export type DesignCommands = {
   auto: () => void
   component: () => void
   select: (id: string) => void
+  /** Tab and Shift+Tab: the next or previous sibling. */
+  step: (dir: 1 | -1) => void
+  /** Enter: edit a lone text, otherwise select the children. */
+  selectChildren: () => void
+  selectParent: () => void
+  /** A factor around the viewport center. 0 resets to 100%. */
+  zoomStep: (factor: number) => void
   boolean: (op: 'union' | 'subtract' | 'intersect' | 'exclude' | 'flatten') => void
   outline: () => void
   detach: () => void
@@ -196,4 +206,11 @@ export function weightCss(weight: DesignWeight): number {
   if (weight === 'bold') return 700
   if (weight === 'medium') return 500
   return 400
+}
+
+const MAC = isMacTerminalPlatform()
+
+/** Cmd on macOS, Ctrl elsewhere: a click with it selects the deepest shape. Ctrl-click is the context menu on a Mac. */
+export function deepSelectKey(event: { metaKey: boolean; ctrlKey: boolean }): boolean {
+  return MAC ? event.metaKey : event.ctrlKey
 }

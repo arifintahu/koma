@@ -2,12 +2,17 @@ import { describe, expect, it } from 'vitest'
 import {
   createComponentFromFrame,
   designAxisAligned,
+  designChildIds,
+  designDistances,
+  designParentIds,
   designSnapScene,
   designCanvasBox,
   designTurnSign,
   emptyDesign,
+  hitDesignDeepest,
   layoutDesign,
   makeInstance,
+  moveDesignNodes,
   nodeCanvasPoint,
   nodeCenter,
   parseDesign,
@@ -15,6 +20,7 @@ import {
   resolveInstanceTree,
   sameDesign,
   serializeDesign,
+  stepDesignSibling,
   syncLinkedComponents,
   type DesignDoc,
   type DesignHandle,
@@ -188,5 +194,43 @@ describe('smoothness helpers', () => {
     if (!doc || !instance) throw new Error('instance')
     expect(resolveInstanceTree(doc, instance)).toBe(resolveInstanceTree({ ...doc, screens: [] }, instance))
     expect(resolveInstanceTree(doc, { ...instance })).not.toBe(resolveInstanceTree(doc, instance))
+  })
+})
+
+describe('selection navigation', () => {
+  const group: DesignNode = { id: 'g', kind: 'group', x: 0, y: 0, w: 100, h: 100, children: [rect('a', { x: 0, y: 0, w: 50, h: 50 }), rect('b', { x: 50, y: 50, w: 50, h: 50 })] }
+  const screen: DesignNode = { id: 's', kind: 'frame', x: 0, y: 0, w: 300, h: 300, children: [group, rect('c', { x: 200, y: 200, w: 50, h: 50 }), rect('d', { x: 0, y: 200, w: 50, h: 50 })] }
+  const doc = docOf(screen)
+
+  it('reaches through groups on a deep click', () => {
+    expect(hitDesignDeepest(doc, 60, 60)?.id).toBe('b')
+    expect(hitDesignDeepest(doc, 290, 10)?.id).toBe('s')
+  })
+
+  it('steps through siblings down the layers list and wraps', () => {
+    expect(stepDesignSibling(doc, 'd', 1)).toBe('c')
+    expect(stepDesignSibling(doc, 'g', 1)).toBe('d')
+    expect(stepDesignSibling(doc, 'g', -1)).toBe('c')
+  })
+
+  it('selects children and parents', () => {
+    expect(designChildIds(doc, ['g'])).toEqual(['a', 'b'])
+    expect(designChildIds(doc, ['c'])).toEqual(['c'])
+    expect(designParentIds(doc, ['a', 'b'])).toEqual(['g'])
+    expect(designParentIds(doc, ['s'])).toEqual(['s'])
+  })
+
+  it('moves several layers next to a row in the order the panel lists them', () => {
+    const ids = (d: DesignDoc) => d.screens[0].children?.map((child) => child.id)
+    // Panel order is front to back: d, c, g. Dropping [d, c] above g puts them in front, d frontmost.
+    expect(ids(moveDesignNodes(doc, ['d', 'c'], 's', 'g', 'before'))).toEqual(['g', 'c', 'd'])
+    // Below g sends them behind it, keeping d above c.
+    expect(ids(moveDesignNodes(doc, ['d', 'c'], 's', 'g', 'after'))).toEqual(['c', 'd', 'g'])
+  })
+
+  it('measures from a box to the edges of the box around it', () => {
+    const inner = { x: 10, y: 20, w: 30, h: 40 }
+    const outer = { x: 0, y: 0, w: 100, h: 100 }
+    expect(designDistances(inner, outer).map((gap) => gap.label)).toEqual(['10', '60', '20', '40'])
   })
 })
