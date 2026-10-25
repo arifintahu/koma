@@ -142,8 +142,8 @@ fn process_charge(pid: u32) -> Option<Charge> {
         let status = std::fs::read_to_string(format!("/proc/{pid}/status")).ok()?;
         let stat = std::fs::read_to_string(format!("/proc/{pid}/stat")).ok()?;
         Some(Charge {
-            bytes: crate::model::procmem::charged_status_bytes(&status)?,
-            started: crate::model::procmem::proc_start_ticks(&stat)?,
+            bytes: charged_status_bytes(&status)?,
+            started: proc_start_ticks(&stat)?,
         })
     }
     #[cfg(not(any(target_os = "macos", target_os = "linux")))]
@@ -151,6 +151,41 @@ fn process_charge(pid: u32) -> Option<Charge> {
         let _ = pid;
         None
     }
+}
+
+/// Resident plus swap from `/proc/<pid>/status`. A missing `VmSwap` is zero.
+/// A missing `VmRSS` is not a sample. Headless `koma` does not link `procmem`.
+#[cfg(any(target_os = "linux", test))]
+fn charged_status_bytes(status: &str) -> Option<u64> {
+    let rss = parse_kb_field(status, "VmRSS:")?;
+    let swap = parse_kb_field(status, "VmSwap:").unwrap_or(0);
+    Some(rss.saturating_add(swap))
+}
+
+/// `starttime` from `/proc/<pid>/stat` (field 22). The comm can contain spaces
+/// and parentheses, so the count starts after the last `)`.
+#[cfg(any(target_os = "linux", test))]
+fn proc_start_ticks(stat: &str) -> Option<u64> {
+    let rest = stat.rsplit_once(')')?.1;
+    rest.split_whitespace().nth(19)?.parse().ok()
+}
+
+#[cfg(any(target_os = "linux", test))]
+fn parse_kb_field(text: &str, key: &str) -> Option<u64> {
+    for line in text.lines() {
+        let Some(rest) = line.trim_start().strip_prefix(key) else {
+            continue;
+        };
+        let Some(kb) = rest
+            .split_whitespace()
+            .next()
+            .and_then(|n| n.parse::<u64>().ok())
+        else {
+            continue;
+        };
+        return Some(kb.saturating_mul(1024));
+    }
+    None
 }
 
 #[cfg(target_os = "macos")]
@@ -437,6 +472,24 @@ mod tests {
         assert_eq!(ceiling_from(Some("0")), TERM_MEMORY_MAX_BYTES);
         assert_eq!(ceiling_from(Some("nope")), TERM_MEMORY_MAX_BYTES);
         assert_eq!(ceiling_from(Some(" 512 ")), 512 * 1024 * 1024);
+    }
+
+    #[test]
+    fn linux_status_charges_resident_plus_swap() {
+        let plain = "VmRSS:\t   1234 kB\n";
+        assert_eq!(charged_status_bytes(plain), Some(1234 * 1024));
+        let swapped = "VmRSS:\t   1000 kB\nVmSwap:\t   250 kB\n";
+        assert_eq!(charged_status_bytes(swapped), Some(1250 * 1024));
+        assert_eq!(charged_status_bytes("no rss here"), None);
+        assert_eq!(
+            proc_start_ticks("12 (koma proc) S 1 12 12 0 0 0 0 0 0 0 1 2 0 0 20 0 1 0 4242"),
+            Some(4242)
+        );
+        assert_eq!(
+            proc_start_ticks("12 (weird) name) S 1 12 12 0 0 0 0 0 0 0 1 2 0 0 20 0 1 0 99"),
+            Some(99)
+        );
+        assert_eq!(proc_start_ticks("no comm"), None);
     }
 
     #[test]
