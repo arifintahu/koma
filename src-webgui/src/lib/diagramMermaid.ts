@@ -5,6 +5,7 @@ import {
   edgeStyle,
   emptyDiagram,
   isErArrow,
+  GROUP_TITLE,
   nodeBounds,
   tableHeight,
   type DiagramArrow,
@@ -283,6 +284,10 @@ export function diagramToMermaid(doc: DiagramDoc, title?: string, notes?: { path
       if (tableIds.has(to.id)) flowTable.add(to.id)
     }
   }
+  const groupIds = new Set(nodes.filter((node) => node.kind === 'group').map((node) => node.id))
+  for (const table of tables) {
+    if (table.parent && groupIds.has(table.parent)) flowTable.add(table.id)
+  }
   const flowNodes = nodes.filter((node) => node.kind !== 'table' || flowTable.has(node.id))
   const heading = title?.replace(/[\r\n]/g, ' ').trim()
   const blocks: string[] = []
@@ -310,7 +315,26 @@ export function diagramToMermaid(doc: DiagramDoc, title?: string, notes?: { path
     for (const node of flowNodes) {
       if (node.kind === 'text') lines.push(`  %% koma-text ${alias(node.id)}`)
     }
-    for (const node of flowNodes) lines.push(`  ${shapeLine(node.kind, alias(node.id), node.text)}`)
+    const groups = new Set(flowNodes.filter((node) => node.kind === 'group').map((node) => node.id))
+    const parentOf = (node: DiagramNode) => (node.parent && groups.has(node.parent) && node.kind !== 'group' ? node.parent : undefined)
+    const kids = new Map<string, DiagramNode[]>()
+    for (const node of flowNodes) {
+      const parent = parentOf(node)
+      if (!parent) continue
+      const list = kids.get(parent) ?? []
+      list.push(node)
+      kids.set(parent, list)
+    }
+    for (const node of flowNodes) {
+      if (parentOf(node)) continue
+      if (node.kind !== 'group') {
+        lines.push(`  ${shapeLine(node.kind, alias(node.id), node.text)}`)
+        continue
+      }
+      lines.push(`  subgraph ${alias(node.id)} [${quote(node.text)}]`)
+      for (const child of kids.get(node.id) ?? []) lines.push(`    ${shapeLine(child.kind, alias(child.id), child.text)}`)
+      lines.push('  end')
+    }
     for (const edge of flowEdges) {
       const token = linkToken(edge)
       if (!token) continue
@@ -472,19 +496,85 @@ function parseEr(doc: DiagramDoc, body: string, title: string): string {
   return title
 }
 
+function fitGroups(doc: DiagramDoc): void {
+  const pad = 24
+  for (const group of doc.nodes) {
+    if (group.kind !== 'group') continue
+    const kids = doc.nodes.filter((node) => node.parent === group.id)
+    if (!kids.length) {
+      group.w = 280
+      group.h = 180
+      continue
+    }
+    let minX = Infinity
+    let minY = Infinity
+    let maxX = -Infinity
+    let maxY = -Infinity
+    for (const child of kids) {
+      minX = Math.min(minX, child.x)
+      minY = Math.min(minY, child.y)
+      maxX = Math.max(maxX, child.x + child.w)
+      maxY = Math.max(maxY, child.y + child.h)
+    }
+    group.x = minX - pad
+    group.y = minY - GROUP_TITLE - pad
+    group.w = Math.max(120, maxX - minX + pad * 2)
+    group.h = Math.max(80, maxY - minY + pad * 2 + GROUP_TITLE)
+  }
+}
+
 function parseFlow(doc: DiagramDoc, body: string, title: string): string {
   const textIds = new Set<string>()
   const known = new Set(doc.nodes.map((node) => node.id))
   // Keep flowchart shapes off the table grid when both blocks arrived together.
   const flowX = doc.nodes.some((node) => node.kind === 'table') ? 24 + 3 * (TABLE_W + TABLE_GAP_X) : 24
+  let depth = 0
+  let groupId: string | null = null
+  const nest = (id: string) => {
+    const found = doc.nodes.find((node) => node.id === id)
+    if (found && groupId && found.kind !== 'group') found.parent = groupId
+  }
+  const addGroup = (id: string, text: string) => {
+    const found = doc.nodes.find((node) => node.id === id)
+    if (found) {
+      if (found.kind !== 'table') {
+        found.kind = 'group'
+        found.text = text
+        delete found.parent
+      }
+      known.add(id)
+      return
+    }
+    known.add(id)
+    doc.nodes.push({ id, kind: 'group', x: flowX, y: 24, w: 280, h: 180, text })
+  }
   const ensure = (id: string) => {
-    if (known.has(id)) return
+    if (known.has(id)) {
+      nest(id)
+      return
+    }
     known.add(id)
     const index = doc.nodes.length
-    doc.nodes.push({ id, kind: 'rect', x: flowX, y: 24 + index * 88, w: 160, h: 48, text: id })
+    const node: DiagramNode = { id, kind: 'rect', x: flowX, y: 24 + index * 88, w: 160, h: 48, text: id }
+    if (groupId) node.parent = groupId
+    doc.nodes.push(node)
   }
   for (const raw of body.split(/\r?\n/)) {
     const line = raw.trim()
+    if (line === 'end') {
+      if (depth > 0) depth -= 1
+      if (depth === 0) groupId = null
+      continue
+    }
+    const subgraph = line.match(/^subgraph\s+([A-Za-z_][A-Za-z0-9_]*)(?:\s*\[(.*)\])?\s*$/)
+    if (subgraph?.[1]) {
+      depth += 1
+      if (depth === 1) {
+        groupId = subgraph[1]
+        addGroup(subgraph[1], labelText(subgraph[2] ?? subgraph[1]))
+      }
+      continue
+    }
     if (!line || line === 'flowchart TD' || line === 'flowchart LR') continue
     if (line.startsWith('%% koma-text ')) {
       textIds.add(line.slice('%% koma-text '.length).trim())
@@ -513,7 +603,7 @@ function parseFlow(doc: DiagramDoc, body: string, title: string): string {
     ensure(node.id)
     const found = doc.nodes.find((item) => item.id === node.id)
     // A table parsed from erDiagram keeps its rows. The flowchart only borrows the name.
-    if (!found || found.kind === 'table') continue
+    if (!found || found.kind === 'table' || found.kind === 'group') continue
     found.kind = node.kind
     found.text = node.label
   }
@@ -534,6 +624,7 @@ export function parseMermaidDiagram(mermaid: string): { doc: DiagramDoc; title: 
   for (const body of bodies) {
     if (!/^\s*erDiagram\b/m.test(body)) title = parseFlow(doc, body, title)
   }
+  fitGroups(doc)
   return { doc, title }
 }
 

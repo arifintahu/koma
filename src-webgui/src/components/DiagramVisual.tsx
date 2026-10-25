@@ -1,9 +1,10 @@
 import { useId, useState } from 'react'
-import { ChevronDown, Clipboard, MessageSquarePlus, Shapes } from 'lucide-react'
+import { ChevronDown, Clipboard, MessageSquarePlus, Shapes, Ungroup } from 'lucide-react'
 import {
   arrowHead,
   edgeRoute,
   edgeStyle,
+  GROUP_TITLE,
   nodeCenter,
   nodeStyle,
   routeMidpoint,
@@ -106,6 +107,11 @@ export function DiagramSketch({ doc }: { doc: DiagramDoc }) {
           )
         })}
       </defs>
+      {doc.nodes
+        .filter((node) => node.kind === 'group')
+        .map((node) => (
+          <DiagramShape key={node.id} node={node} />
+        ))}
       {routes.map(({ edge, points }, index) => {
         const style = edgeStyle(edge)
         const color = style.color || 'var(--color-koma-fg)'
@@ -136,9 +142,11 @@ export function DiagramSketch({ doc }: { doc: DiagramDoc }) {
           </g>
         )
       })}
-      {doc.nodes.map((node) => (
-        <DiagramShape key={node.id} node={node} />
-      ))}
+      {doc.nodes
+        .filter((node) => node.kind !== 'group')
+        .map((node) => (
+          <DiagramShape key={node.id} node={node} />
+        ))}
     </svg>
   )
 }
@@ -156,6 +164,19 @@ function DiagramShape({ node }: { node: DiagramNode }) {
   const center = nodeCenter(node)
   const rotate = node.rotation ? ` rotate(${node.rotation} ${node.w / 2} ${node.h / 2})` : ''
   const paint = shapePaint(node)
+  if (node.kind === 'group') {
+    const line = paint.stroke === 'none' ? 'var(--color-koma-border)' : paint.stroke
+    const rotate = node.rotation ? ` rotate(${node.rotation} ${node.w / 2} ${node.h / 2})` : ''
+    return (
+      <g transform={`translate(${node.x} ${node.y})${rotate}`}>
+        <rect width={node.w} height={node.h} fill={paint.fill} stroke={line} />
+        <path d={`M0 ${GROUP_TITLE} H${node.w}`} stroke={line} />
+        <text x={node.w / 2} y={GROUP_TITLE / 2} textAnchor="middle" dominantBaseline="middle" fontSize="12" fontWeight="600" fill="var(--color-koma-fg)">
+          {node.text}
+        </text>
+      </g>
+    )
+  }
   if (node.kind === 'table') {
     const line = paint.stroke === 'none' ? 'var(--color-koma-border)' : paint.stroke
     return (
@@ -220,9 +241,23 @@ export function DiagramObservationCard({ mermaid }: { mermaid: string }) {
 
 const menuItem = 'flex w-full items-center gap-2 px-2.5 py-1.5 text-left text-[12px] text-koma-fg opacity-90 hover:bg-koma-hover'
 
-export function DiagramRefMenuItems({ onAdd, onCopy }: { onAdd: () => void; onCopy: () => void }) {
+export function DiagramRefMenuItems({
+  onAdd,
+  onCopy,
+  onUngroup,
+}: {
+  onAdd: () => void
+  onCopy: () => void
+  onUngroup?: () => void
+}) {
   return (
     <>
+      {onUngroup ? (
+        <button type="button" className={menuItem} onClick={onUngroup}>
+          <Ungroup size={12} className="opacity-70" />
+          Ungroup
+        </button>
+      ) : null}
       <button type="button" className={menuItem} onClick={onAdd}>
         <MessageSquarePlus size={12} className="opacity-70" />
         Add to chat

@@ -66,6 +66,11 @@ import {
   defaultNodeSize,
   defaultTableRows,
   deleteDiagramSelection,
+  dropGroupHighlight,
+  groupHitZone,
+  movingIds,
+  reparentDragged,
+  ungroupNodes,
   edgePoints,
   DIAGRAM_PORTS,
   hitDiagram,
@@ -180,7 +185,7 @@ function placeNode(doc: DiagramDoc, kind: DiagramKind, x: number, y: number, pre
     ...size,
   }
   if (kind === 'table') node.rows = defaultTableRows()
-  return { ...doc, nodes: [...doc.nodes, node] }
+  return reparentDragged({ ...doc, nodes: [...doc.nodes, node] }, [node.id])
 }
 
 /** A palette entry from a drop. Older drags carry a bare kind. */
@@ -272,6 +277,7 @@ export function DiagramTab({ tab }: { tab: Extract<Tab, { kind: 'diagram' }> }) 
   const [connectDrag, setConnectDrag] = useState<{ fromId: string; port: number | null; row?: string } | null>(null)
   const [editCell, setEditCell] = useState<DiagramCell | null>(null)
   const [hoverRow, setHoverRow] = useState<{ id: string; index: number } | null>(null)
+  const [dropParent, setDropParent] = useState<string | null>(null)
   const [guides, setGuides] = useState<DiagramGuide[]>([])
   const [arrowsFor, setArrowsFor] = useState<string | null>(null)
   const arrowsRef = useRef<string | null>(null)
@@ -427,7 +433,7 @@ export function DiagramTab({ tab }: { tab: Extract<Tab, { kind: 'diagram' }> }) 
         fromPort: open.row ? undefined : (open.port ?? undefined),
         fromRow: open.row,
       })
-      commit({ ...placed, nodes: [...doc.nodes, centered], edges: [...doc.edges, edge] })
+      commit(reparentDragged({ ...placed, nodes: [...doc.nodes, centered], edges: [...doc.edges, edge] }, [node.id]))
       setSelection({ nodes: [node.id], edges: [] })
     }
     setPropsOpen(true)
@@ -539,9 +545,13 @@ export function DiagramTab({ tab }: { tab: Extract<Tab, { kind: 'diagram' }> }) 
           if (lines.some((line) => line.axis === 'y')) dy = rawY + aligned.dy
         }
         setGuides((prev) => (!prev.length && !lines.length ? prev : lines))
+        const moved = reparentDragged(moveDiagramNodes(drag.base, drag.ids, dx, dy), drag.ids)
         const grabbed = doc.nodes.find((node) => node.id === drag.grab.id)
-        if (grabbed && grabbed.x === drag.grab.x + dx && grabbed.y === drag.grab.y + dy) return
-        apply(drag, moveDiagramNodes(drag.base, drag.ids, dx, dy), doc)
+        const nextGrab = moved.nodes.find((node) => node.id === drag.grab.id)
+        const highlight = dropGroupHighlight(moved, drag.ids)
+        setDropParent((prev) => (prev === highlight ? prev : highlight))
+        if (grabbed && nextGrab && grabbed.x === nextGrab.x && grabbed.y === nextGrab.y && grabbed.parent === nextGrab.parent) return
+        apply(drag, moved, doc)
         return
       }
       if (drag.kind === 'resize') {
@@ -654,6 +664,7 @@ export function DiagramTab({ tab }: { tab: Extract<Tab, { kind: 'diagram' }> }) 
     const finish = () => {
       setDragCursor(null)
       setGuides([])
+      setDropParent(null)
       setMarquee(null)
       setConnectDrag(null)
       setCursor(null)
@@ -864,11 +875,15 @@ export function DiagramTab({ tab }: { tab: Extract<Tab, { kind: 'diagram' }> }) 
     if (!doc) return false
     const built = sqlToDiagram(parseSqlTables(text), viewCenter(), mintId)
     if (!built.nodes.length) return false
-    commit({
-      ...doc,
-      nodes: [...doc.nodes, ...built.nodes.map(tidyNode)],
-      edges: [...doc.edges, ...built.edges.map(tidyEdge)],
-    })
+    const next = reparentDragged(
+      {
+        ...doc,
+        nodes: [...doc.nodes, ...built.nodes.map(tidyNode)],
+        edges: [...doc.edges, ...built.edges.map(tidyEdge)],
+      },
+      built.nodes.map((node) => node.id),
+    )
+    commit(next)
     setSelection({ nodes: built.nodes.map((node) => node.id), edges: built.edges.map((edge) => edge.id) })
     setEditing(null)
     setConnectFrom(null)
@@ -1223,6 +1238,11 @@ export function DiagramTab({ tab }: { tab: Extract<Tab, { kind: 'diagram' }> }) 
       return
     }
     if (editing === hit.id) return
+    const zone = doc.nodes.find((node) => node.id === hit.id)
+    if (zone?.kind === 'group' && groupHitZone(zone, p) === 'body') {
+      dragRef.current = { kind: 'marquee', x: p.x, y: p.y, sx: e.clientX, sy: e.clientY, base: current, additive: e.shiftKey, moved: false }
+      return
+    }
     const already = current.nodes.includes(hit.id)
     if (e.shiftKey) {
       setSelection(mergeSelection(current, { nodes: [hit.id], edges: [] }, true))
@@ -1239,7 +1259,7 @@ export function DiagramTab({ tab }: { tab: Extract<Tab, { kind: 'diagram' }> }) 
       dragRef.current = { kind: 'row', tableId: grab.id, index: rowIndex, base: grab.rows, sy: e.clientY, moved: false, remembered: false }
       return
     }
-    const ids = e.shiftKey || already ? [...new Set([...selectionRef.current.nodes, hit.id])] : [hit.id]
+    const ids = movingIds(doc, e.shiftKey || already ? [...new Set([...selectionRef.current.nodes, hit.id])] : [hit.id])
     dragRef.current = {
       kind: 'move',
       ids,
@@ -1264,11 +1284,12 @@ export function DiagramTab({ tab }: { tab: Extract<Tab, { kind: 'diagram' }> }) 
       return
     }
     if (hit?.type !== 'node') return
+    const node = file.doc.nodes.find((item) => item.id === hit.id)
+    if (node?.kind === 'group' && groupHitZone(node, p) === 'body') return
     dragRef.current = null
     labelNoted.current = false
     setSelection({ nodes: [hit.id], edges: [] })
     setPropsOpen(true)
-    const node = file.doc.nodes.find((item) => item.id === hit.id)
     const rowIndex = node ? tableRowAt(node, p) : null
     const row = node && rowIndex != null && rowIndex >= 0 ? node.rows?.[rowIndex] : undefined
     if (node && row) {
@@ -1562,6 +1583,18 @@ export function DiagramTab({ tab }: { tab: Extract<Tab, { kind: 'diagram' }> }) 
           className="pointer-events-none absolute left-0 top-0"
           style={{ transform: `translate(${view.x}px, ${view.y}px) scale(${z})`, transformOrigin: '0 0' }}
         >
+          {doc.nodes
+            .filter((node) => node.kind === 'group')
+            .map((node) => (
+              <DiagramNodeView
+                key={node.id}
+                node={node}
+                highlight={connectFrom === node.id || connectTarget?.id === node.id || dropParent === node.id}
+                editing={editing === node.id ? editMode : false}
+                cell={editing === node.id ? editCell : null}
+                edit={nodeEdit}
+              />
+            ))}
           <svg className="absolute left-0 top-0 h-px w-px overflow-visible">
             {doc.edges.map((edge, index) => {
               const points = routes[index]
@@ -1613,16 +1646,18 @@ export function DiagramTab({ tab }: { tab: Extract<Tab, { kind: 'diagram' }> }) 
               </div>
             )
           })}
-          {doc.nodes.map((node) => (
-            <DiagramNodeView
-              key={node.id}
-              node={node}
-              highlight={connectFrom === node.id || connectTarget?.id === node.id}
-              editing={editing === node.id ? editMode : false}
-              cell={editing === node.id ? editCell : null}
-              edit={nodeEdit}
-            />
-          ))}
+          {doc.nodes
+            .filter((node) => node.kind !== 'group')
+            .map((node) => (
+              <DiagramNodeView
+                key={node.id}
+                node={node}
+                highlight={connectFrom === node.id || connectTarget?.id === node.id || dropParent === node.id}
+                editing={editing === node.id ? editMode : false}
+                cell={editing === node.id ? editCell : null}
+                edit={nodeEdit}
+              />
+            ))}
         </div>
         <svg className="pointer-events-none absolute inset-0 h-full w-full overflow-visible">
           {doc.nodes.map((node) => {
@@ -1931,6 +1966,18 @@ export function DiagramTab({ tab }: { tab: Extract<Tab, { kind: 'diagram' }> }) 
           onContextMenu={(e) => e.preventDefault()}
         >
           <DiagramRefMenuItems
+            onUngroup={
+              doc.nodes.some((node) => selection.nodes.includes(node.id) && node.kind === 'group')
+                ? () => {
+                    const current = currentDoc()
+                    if (!current) return
+                    const result = ungroupNodes(current, selectionRef.current.nodes)
+                    setChatMenu(null)
+                    commit(result.doc)
+                    setSelection({ nodes: result.kept, edges: [] })
+                  }
+                : undefined
+            }
             onAdd={() => {
               const picked = selectionRef.current
               setChatMenu(null)

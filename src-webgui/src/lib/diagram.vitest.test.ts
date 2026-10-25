@@ -27,14 +27,18 @@ import {
   portAnchor,
   portOffset,
   resizeNode,
+  ungroupNodes,
   rotatePoint,
   routeFractionAt,
   routePointAt,
   deleteDiagramSelection,
+  dropGroupHighlight,
   emptyDiagram,
+  groupHitZone,
   hitDiagram,
   mergeSelection,
   moveDiagramNodes,
+  reparentDragged,
   selectInRect,
   selectionDoc,
   type DiagramDoc,
@@ -406,5 +410,91 @@ describe('diagram tables', () => {
     const copy = copyDiagramShapes(doc, { nodes: ['a', 'b'], edges: [] }, () => `c${++n}`, 16, 16)
     expect(copy.nodes.map((node) => node.rows?.map((row) => row.id))).toEqual([['r1'], ['r1']])
     expect(copy.edges[0]).toMatchObject({ fromRow: 'r1', toRow: 'r1' })
+  })
+})
+
+describe('diagram groups', () => {
+  const grouped = (): DiagramDoc => ({
+    ...emptyDiagram(),
+    nodes: [
+      box('g', 0, 0, { kind: 'group', w: 400, h: 300, text: 'Box' }),
+      box('a', 40, 80, { text: 'Child', parent: 'g' }),
+    ],
+    edges: [{ id: 'e', from: 'g', to: 'a' }],
+  })
+
+  it('moving a group moves its children and resizing does not', () => {
+    const moved = moveDiagramNodes(grouped(), ['g'], 10, 20)
+    expect(moved.nodes.find((node) => node.id === 'g')).toMatchObject({ x: 10, y: 20 })
+    expect(moved.nodes.find((node) => node.id === 'a')).toMatchObject({ x: 50, y: 100, parent: 'g' })
+    const resized = {
+      ...moved,
+      nodes: moved.nodes.map((node) => (node.id === 'g' ? resizeNode(node, 'se', 40, 30, 16, false) : node)),
+    }
+    expect(resized.nodes.find((node) => node.id === 'g')?.w).toBeGreaterThan(400)
+    expect(resized.nodes.find((node) => node.id === 'a')).toMatchObject({ x: 50, y: 100, w: 100, h: 50 })
+    expect(parseDiagram(serializeDiagram(resized)).doc.nodes.find((node) => node.id === 'a')?.parent).toBe('g')
+  })
+
+  it('drops a shape into a group body and clears the parent outside it', () => {
+    const free: DiagramDoc = {
+      ...grouped(),
+      nodes: grouped().nodes.map((node) => {
+        if (node.id !== 'a') return node
+        const next = { ...node }
+        delete next.parent
+        return next
+      }),
+    }
+    const inside = reparentDragged(free, ['a'])
+    expect(inside.nodes.find((node) => node.id === 'a')?.parent).toBe('g')
+    expect(dropGroupHighlight(inside, ['a'])).toBe('g')
+    const outside = reparentDragged(
+      { ...inside, nodes: inside.nodes.map((node) => (node.id === 'a' ? { ...node, x: 800, y: 800 } : node)) },
+      ['a'],
+    )
+    expect(outside.nodes.find((node) => node.id === 'a')?.parent).toBeUndefined()
+    const carried = reparentDragged(
+      { ...inside, nodes: inside.nodes.map((node) => (node.id === 'a' ? { ...node, x: 800, y: 800 } : node)) },
+      ['g', 'a'],
+    )
+    expect(carried.nodes.find((node) => node.id === 'a')?.parent).toBe('g')
+    const group = inside.nodes[0]
+    expect(group && groupHitZone(group, { x: 10, y: 10 })).toBe('title')
+    expect(group && groupHitZone(group, { x: 10, y: 80 })).toBe('body')
+    const groupOnTop: DiagramDoc = { ...inside, nodes: [...inside.nodes].reverse() }
+    expect(hitDiagram(groupOnTop, { x: 50, y: 90 }, 1)?.id).toBe('a')
+  })
+
+  it('deleting a group deletes its children and ungroup keeps them', () => {
+    expect(deleteDiagramSelection(grouped(), { nodes: ['g'], edges: [] }).nodes).toEqual([])
+    const freed = ungroupNodes(grouped(), ['g'])
+    expect(freed.kept).toEqual(['a'])
+    expect(freed.doc.nodes.map((node) => [node.id, node.parent])).toEqual([['a', undefined]])
+    expect(freed.doc.edges).toEqual([])
+    const bogus = parseDiagram(
+      JSON.stringify({
+        snap: true,
+        grid: 16,
+        nodes: [
+          { id: 'g', kind: 'group', x: 0, y: 0, w: 120, h: 80, text: 'Box', parent: 'a' },
+          { id: 'a', kind: 'rect', x: 10, y: 40, w: 40, h: 24, text: 'a', parent: 'missing' },
+        ],
+        edges: [],
+      }),
+    ).doc
+    expect(bogus.nodes.every((node) => !node.parent)).toBe(true)
+  })
+
+  it('subgraphs round-trip through Mermaid', () => {
+    const mermaid = diagramToMermaid(grouped(), 'grouped')
+    expect(mermaid).toContain('subgraph g ["Box"]')
+    expect(mermaid).toContain('a["Child"]')
+    const parsed = parseMermaidDiagram(mermaid).doc
+    const group = parsed.nodes.find((node) => node.kind === 'group')
+    const child = parsed.nodes.find((node) => node.text === 'Child')
+    expect(group?.text).toBe('Box')
+    expect(child?.parent).toBe(group?.id)
+    expect(child?.kind).toBe('rect')
   })
 })

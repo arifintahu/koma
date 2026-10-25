@@ -1,6 +1,6 @@
 import { memo } from 'react'
 import { inlineToHtml } from '../../lib/markdownNote'
-import { TABLE_HEADER, TABLE_ROW, nodeStyle, type DiagramKey, type DiagramNode } from '../../lib/diagram'
+import { GROUP_TITLE, TABLE_HEADER, TABLE_ROW, nodeStyle, type DiagramKey, type DiagramNode } from '../../lib/diagram'
 import { DiagramShapeSvg } from './DiagramShapeSvg'
 
 export type DiagramCellField = 'name' | 'type'
@@ -48,6 +48,38 @@ export const DiagramNodeView = memo(function DiagramNodeView({
   const color = paint.textColor || 'var(--color-koma-fg)'
   if (node.kind === 'table') {
     return <TableView node={node} fill={fill} stroke={stroke} color={color} editing={editing} cell={cell} edit={edit} />
+  }
+  if (node.kind === 'group') {
+    const line = stroke === 'none' ? 'var(--color-koma-border)' : stroke
+    return (
+      <div
+        className="absolute"
+        style={{
+          left: node.x,
+          top: node.y,
+          width: node.w,
+          height: node.h,
+          transform: node.rotation ? `rotate(${node.rotation}deg)` : undefined,
+        }}
+      >
+        <svg className="absolute inset-0 h-full w-full overflow-visible">
+          <rect width={node.w} height={node.h} fill={fill} stroke={line} />
+          <path d={`M0 ${GROUP_TITLE} H${node.w}`} fill="none" stroke={line} />
+        </svg>
+        {editing ? (
+          <div className="absolute inset-x-0 top-0 flex items-center" style={{ height: GROUP_TITLE }}>
+            <LabelEditor text={node.text} mode={editing} color={color} onText={(text) => edit.text(node.id, text)} onDone={edit.done} />
+          </div>
+        ) : (
+          <span
+            className="absolute inset-x-0 top-0 z-10 truncate px-2 text-center text-[12px] font-semibold"
+            style={{ color, height: GROUP_TITLE, lineHeight: `${GROUP_TITLE}px` }}
+          >
+            {node.text || 'Group'}
+          </span>
+        )}
+      </div>
+    )
   }
   return (
     <div

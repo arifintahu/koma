@@ -6,13 +6,16 @@ import { outlineFraction, pointInShape, SHAPE_KINDS, SHAPE_SIZES, type ShapeKind
 export const DIAGRAM_GRID = 16
 export const SHAPE_MIME = 'application/x-koma-shape'
 
-/** Drawn shapes, plus database tables (header and rows). */
-export type DiagramKind = ShapeKind | 'table'
+/** Drawn shapes, database tables (header and rows), and titled groups. */
+export type DiagramKind = ShapeKind | 'table' | 'group'
 
-/** The outline a kind hits and connects with. Tables are boxes. */
+/** The outline a kind hits and connects with. Tables and groups are boxes. */
 export function outlineKind(kind: DiagramKind): ShapeKind {
-  return kind === 'table' ? 'rect' : kind
+  return kind === 'table' || kind === 'group' ? 'rect' : kind
 }
+
+/** Height of a group's title bar. A click there selects the group; the body below starts a marquee. */
+export const GROUP_TITLE = 28
 
 export type DiagramKey = 'pk' | 'fk' | 'pk,fk'
 
@@ -79,6 +82,8 @@ export type DiagramNode = {
   detail?: string
   /** Columns of a table. Only tables have them. */
   rows?: DiagramRow[]
+  /** Group this shape sits in. One level only: a group never has a parent. */
+  parent?: string
 }
 
 export type DiagramEdge = {
@@ -150,7 +155,7 @@ export type DiagramDoc = {
   edges: DiagramEdge[]
 }
 
-const KINDS: readonly DiagramKind[] = [...SHAPE_KINDS, 'table']
+const KINDS: readonly DiagramKind[] = [...SHAPE_KINDS, 'table', 'group']
 
 export function emptyDiagram(): DiagramDoc {
   return { snap: true, grid: DIAGRAM_GRID, nodes: [], edges: [] }
@@ -180,6 +185,7 @@ export function diagramFileName(raw: string): string | null {
 
 export function defaultNodeSize(kind: DiagramKind): { w: number; h: number; text: string } {
   if (kind === 'table') return { w: 200, h: tableHeight(defaultTableRows()), text: 'Table' }
+  if (kind === 'group') return { w: 280, h: 180, text: 'Group' }
   return { ...SHAPE_SIZES[kind], text: kind === 'text' ? 'text' : 'label' }
 }
 
@@ -215,6 +221,7 @@ export function copyNode(node: DiagramNode, id: string, dx: number, dy: number):
   if (node.textColor) next.textColor = node.textColor
   if (node.detail?.trim()) next.detail = node.detail
   if (node.rows) next.rows = node.rows.map((row) => ({ ...row }))
+  if (node.parent) next.parent = node.parent
   return next
 }
 
@@ -272,9 +279,24 @@ function parseNodes(value: unknown): DiagramNode[] | null {
       node.h = tableHeight(node.rows)
       delete node.rotation
     }
+    if (typeof row.parent === 'string' && row.parent && row.parent !== node.id) node.parent = row.parent
     nodes.push(node)
   }
+  bindParents(nodes)
   return nodes
+}
+
+/** A parent must be a group, and groups themselves stay unparented (one level only). */
+function bindParents(nodes: DiagramNode[]): void {
+  const byId = new Map(nodes.map((node) => [node.id, node]))
+  for (const node of nodes) {
+    if (node.kind === 'group') delete node.parent
+  }
+  for (const node of nodes) {
+    if (!node.parent) continue
+    const parent = byId.get(node.parent)
+    if (!parent || parent.kind !== 'group') delete node.parent
+  }
 }
 
 function oneOf<T extends string>(value: unknown, allowed: readonly T[]): T | undefined {
@@ -416,6 +438,7 @@ export function serializeDiagram(doc: DiagramDoc): string {
       if (n.textColor) row.textColor = n.textColor
       if (n.detail?.trim()) row.detail = n.detail
       if (n.kind === 'table') row.rows = (n.rows ?? []).map((r) => ({ ...r }))
+      if (n.parent && n.kind !== 'group') row.parent = n.parent
       return row
     }),
     edges: doc.edges.map((e) => {
@@ -617,9 +640,8 @@ export function pointInNode(node: DiagramNode, point: DiagramPoint): boolean {
 
 /** Topmost shape under the point, or a shape whose port is within 16px. */
 export function nodeAtPoint(nodes: readonly DiagramNode[], point: DiagramPoint, ignoreId?: string): DiagramNode | null {
-  for (let i = nodes.length - 1; i >= 0; i--) {
-    const node = nodes[i]
-    if (!node || node.id === ignoreId) continue
+  for (const node of frontToBack(nodes)) {
+    if (node.id === ignoreId) continue
     if (pointInNode(node, point)) return node
   }
   let best: DiagramNode | null = null
@@ -750,13 +772,28 @@ export function copyDiagramShapes(
     if (edge.bends) copy.bends = edge.bends.map((point) => ({ x: point.x + dx, y: point.y + dy }))
     edges.push(copy)
   }
+  for (const node of nodes) {
+    if (!node.parent) continue
+    const mapped = ids.get(node.parent)
+    if (mapped) node.parent = mapped
+    else delete node.parent
+  }
   return { nodes, edges }
+}
+
+/** The ids plus the children of any group among them. Moving a group moves what it holds. */
+export function movingIds(doc: DiagramDoc, ids: readonly string[]): string[] {
+  const moving = new Set(ids)
+  for (const node of doc.nodes) {
+    if (node.parent && moving.has(node.parent)) moving.add(node.id)
+  }
+  return [...moving]
 }
 
 /** Shift shapes, and the bends of lines whose both ends move, so routes keep their shape. */
 export function moveDiagramNodes(doc: DiagramDoc, ids: readonly string[], dx: number, dy: number): DiagramDoc {
   if (!dx && !dy) return doc
-  const moving = new Set(ids)
+  const moving = new Set(movingIds(doc, ids))
   return {
     ...doc,
     nodes: doc.nodes.map((node) => (moving.has(node.id) ? { ...node, x: node.x + dx, y: node.y + dy } : node)),
@@ -771,12 +808,90 @@ export function moveDiagramNodes(doc: DiagramDoc, ids: readonly string[], dx: nu
 /** Removes the selection and every line left without both ends. */
 export function deleteDiagramSelection(doc: DiagramDoc, selection: DiagramSelection): DiagramDoc {
   const nodes = new Set(selection.nodes)
+  for (const node of doc.nodes) {
+    if (node.parent && nodes.has(node.parent)) nodes.add(node.id)
+  }
   const edges = new Set(selection.edges)
   return {
     ...doc,
     nodes: doc.nodes.filter((node) => !nodes.has(node.id)),
     edges: doc.edges.filter((edge) => !edges.has(edge.id) && !nodes.has(edge.from) && !nodes.has(edge.to)),
   }
+}
+
+/** Remove the groups and keep their children. Lines that ended on a group go with it. */
+export function ungroupNodes(doc: DiagramDoc, ids: readonly string[]): { doc: DiagramDoc; kept: string[] } {
+  const groups = new Set(ids.filter((id) => doc.nodes.some((node) => node.id === id && node.kind === 'group')))
+  const kept = doc.nodes.filter((node) => node.parent && groups.has(node.parent)).map((node) => node.id)
+  if (!groups.size) return { doc, kept }
+  return {
+    kept,
+    doc: {
+      ...doc,
+      nodes: doc.nodes
+        .filter((node) => !groups.has(node.id))
+        .map((node) => {
+          if (!node.parent || !groups.has(node.parent)) return node
+          const next = { ...node }
+          delete next.parent
+          return next
+        }),
+      edges: doc.edges.filter((edge) => !groups.has(edge.from) && !groups.has(edge.to)),
+    },
+  }
+}
+
+/** `title` is the bar, `body` is the rest of the box, null when the point misses the group. */
+export function groupHitZone(node: DiagramNode, point: DiagramPoint): 'title' | 'body' | null {
+  if (node.kind !== 'group' || !pointInNode(node, point)) return null
+  const local = rotatePoint(point, nodeCenter(node), -(node.rotation ?? 0))
+  return local.y - node.y <= GROUP_TITLE ? 'title' : 'body'
+}
+
+/** Topmost group whose body contains the point, ignoring `skip` (the shapes being dragged). */
+export function groupUnder(doc: DiagramDoc, point: DiagramPoint, skip: ReadonlySet<string>): string | null {
+  for (let i = doc.nodes.length - 1; i >= 0; i--) {
+    const node = doc.nodes[i]
+    if (!node || node.kind !== 'group' || skip.has(node.id)) continue
+    if (groupHitZone(node, point) === 'body') return node.id
+  }
+  return null
+}
+
+/**
+ * Shapes whose center lands in a group's body take that parent. Dragging one out clears it.
+ * A shape moving along with its group keeps the parent it already has.
+ */
+export function reparentDragged(doc: DiagramDoc, ids: readonly string[]): DiagramDoc {
+  const moving = new Set(ids)
+  let changed = false
+  const nodes = doc.nodes.map((node) => {
+    if (!moving.has(node.id) || node.kind === 'group') return node
+    if (node.parent && moving.has(node.parent)) return node
+    const parent = groupUnder(doc, nodeCenter(node), moving)
+    if ((parent ?? undefined) === node.parent) return node
+    changed = true
+    if (!parent) {
+      const next = { ...node }
+      delete next.parent
+      return next
+    }
+    return { ...node, parent }
+  })
+  return changed ? { ...doc, nodes } : doc
+}
+
+/** The group to outline while a drag is about to drop a shape into it. */
+export function dropGroupHighlight(doc: DiagramDoc, ids: readonly string[]): string | null {
+  const moving = new Set(ids)
+  for (let i = doc.nodes.length - 1; i >= 0; i--) {
+    const node = doc.nodes[i]
+    if (!node || !moving.has(node.id) || node.kind === 'group') continue
+    if (node.parent && moving.has(node.parent)) continue
+    const parent = groupUnder(doc, nodeCenter(node), moving)
+    if (parent) return parent
+  }
+  return null
 }
 
 export function distanceToSegment(point: DiagramPoint, a: DiagramPoint, b: DiagramPoint): number {
@@ -789,11 +904,20 @@ export function distanceToSegment(point: DiagramPoint, a: DiagramPoint, b: Diagr
 
 export type DiagramHit = { type: 'node' | 'edge'; id: string }
 
+/** Children first, then groups, each in front-to-back order. Groups are drawn behind what they hold. */
+function frontToBack(nodes: readonly DiagramNode[]): DiagramNode[] {
+  const groups: DiagramNode[] = []
+  const rest: DiagramNode[] = []
+  for (const node of nodes) (node.kind === 'group' ? groups : rest).push(node)
+  rest.reverse()
+  groups.reverse()
+  return rest.concat(groups)
+}
+
 /** Topmost shape under the point, else the nearest line within the tolerance. */
 export function hitDiagram(doc: DiagramDoc, point: DiagramPoint, tolerance: number): DiagramHit | null {
-  for (let i = doc.nodes.length - 1; i >= 0; i--) {
-    const node = doc.nodes[i]
-    if (node && pointInNode(node, point)) return { type: 'node', id: node.id }
+  for (const node of frontToBack(doc.nodes)) {
+    if (pointInNode(node, point)) return { type: 'node', id: node.id }
   }
   const byId = new Map(doc.nodes.map((node) => [node.id, node]))
   let best: DiagramHit | null = null
@@ -973,6 +1097,7 @@ export function connectInDirection(
   if (node.kind === 'table' && !node.rows) node.rows = defaultTableRows()
   delete node.detail
   delete node.rotation
+  delete node.parent
   return {
     doc: { ...doc, nodes: [...doc.nodes, node], edges: [...doc.edges, line(node.id)] },
     nodeId: node.id,
