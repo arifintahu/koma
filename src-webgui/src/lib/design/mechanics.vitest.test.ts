@@ -1,0 +1,116 @@
+import { describe, expect, it } from 'vitest'
+import {
+  designAxisAligned,
+  designCanvasBox,
+  designTurnSign,
+  emptyDesign,
+  nodeCanvasPoint,
+  nodeCenter,
+  resizeDesignNode,
+  type DesignDoc,
+  type DesignHandle,
+  type DesignNode,
+} from './index'
+
+const HANDLES: DesignHandle[] = ['nw', 'n', 'ne', 'e', 'se', 's', 'sw', 'w']
+
+function docOf(...screens: DesignNode[]): DesignDoc {
+  return { ...emptyDesign(), screens }
+}
+
+function rect(id: string, extra: Partial<DesignNode> = {}): DesignNode {
+  return { id, kind: 'rect', x: 100, y: 100, w: 120, h: 60, ...extra }
+}
+
+/** The handle's opposite point in the node's own box. */
+function opposite(handle: DesignHandle, w: number, h: number): { x: number; y: number } {
+  return {
+    x: handle.includes('w') ? w : handle.includes('e') ? 0 : w / 2,
+    y: handle.includes('n') ? h : handle.includes('s') ? 0 : h / 2,
+  }
+}
+
+function canvasPoint(node: DesignNode, x: number, y: number) {
+  const point = nodeCanvasPoint(docOf(node), node.id, x, y)
+  if (!point) throw new Error('missing node')
+  return point
+}
+
+describe('resizeDesignNode', () => {
+  for (const rotation of [0, 37, 90, 180]) {
+    for (const handle of HANDLES) {
+      it(`keeps the opposite handle fixed at ${rotation}° from ${handle}`, () => {
+        const node = rect('r', rotation ? { rotation } : {})
+        const before = opposite(handle, node.w, node.h)
+        const pinned = canvasPoint(node, before.x, before.y)
+        const resized = resizeDesignNode(node, handle, 30, 20, 1, false)
+        const after = opposite(handle, resized.w, resized.h)
+        const moved = canvasPoint(resized, after.x, after.y)
+        expect(moved.x).toBeCloseTo(pinned.x, 6)
+        expect(moved.y).toBeCloseTo(pinned.y, 6)
+      })
+    }
+  }
+
+  it('grows along the node axes, not the parent axes', () => {
+    const node = rect('r', { rotation: 90 })
+    const resized = resizeDesignNode(node, 'e', 50, 0, 1, false)
+    expect(resized.w).toBe(170)
+    expect(resized.h).toBe(60)
+  })
+
+  it('grows both sides around the center with the center option', () => {
+    const node = rect('r', { rotation: 37 })
+    const centerBefore = canvasPoint(node, node.w / 2, node.h / 2)
+    const resized = resizeDesignNode(node, 'se', 10, 10, 1, false, false, { center: true })
+    expect(resized.w).toBe(140)
+    expect(resized.h).toBe(80)
+    const centerAfter = canvasPoint(resized, resized.w / 2, resized.h / 2)
+    expect(centerAfter.x).toBeCloseTo(centerBefore.x, 6)
+    expect(centerAfter.y).toBeCloseTo(centerBefore.y, 6)
+  })
+
+  it('flips when dragged past the opposite edge', () => {
+    const node = rect('r', { w: 100 })
+    const resized = resizeDesignNode(node, 'e', -150, 0, 1, false)
+    expect(resized.flipX).toBe(true)
+    expect(resized.w).toBe(50)
+    expect(designCanvasBox(docOf(resized), 'r')).toEqual({ x: 50, y: 100, w: 50, h: 60 })
+  })
+
+  it('locks the ratio from an edge handle around the cross-axis center', () => {
+    const node = rect('r', { w: 100, h: 50 })
+    const resized = resizeDesignNode(node, 'e', 100, 0, 1, false, true)
+    expect(resized.w).toBe(200)
+    expect(resized.h).toBe(100)
+    expect(resized.y).toBe(75)
+  })
+
+  it('snaps the moving edge to the grid unless the axis was object-snapped', () => {
+    const node = rect('r', { x: 0, y: 0, w: 100, h: 40 })
+    expect(resizeDesignNode(node, 'e', 13, 0, 8, true).w).toBe(112)
+    expect(resizeDesignNode(node, 'e', 13, 0, 8, true, false, { gridX: false }).w).toBe(113)
+    expect(resizeDesignNode(node, 'w', 13, 0, 8, true).x).toBe(16)
+  })
+})
+
+describe('transform helpers', () => {
+  it('finds the canvas center of a rotated node in a rotated parent', () => {
+    const child = rect('c', { x: 0, y: 0, w: 40, h: 20, rotation: 45 })
+    const parent: DesignNode = { id: 'p', kind: 'frame', x: 0, y: 0, w: 200, h: 100, rotation: 90, children: [child] }
+    const doc = docOf(parent)
+    // The parent turns its content around (100, 50); the child's own turn keeps its center put.
+    const center = nodeCenter(doc, 'c')
+    expect(center?.x).toBeCloseTo(140, 6)
+    expect(center?.y).toBeCloseTo(-30, 6)
+    expect(designAxisAligned(doc, 'c')).toBe(false)
+    expect(designAxisAligned(docOf(rect('r')), 'r')).toBe(true)
+  })
+
+  it('reverses the turn direction under a flipped ancestor', () => {
+    const child = rect('c', { x: 0, y: 0 })
+    expect(designTurnSign(docOf({ id: 'p', kind: 'frame', x: 0, y: 0, w: 300, h: 300, flipX: true, children: [child] }), 'c')).toBe(-1)
+    expect(designTurnSign(docOf({ id: 'p', kind: 'frame', x: 0, y: 0, w: 300, h: 300, flipX: true, flipY: true, children: [child] }), 'c')).toBe(1)
+    expect(designTurnSign(docOf({ ...rect('r'), flipX: true }), 'r')).toBe(1)
+  })
+})

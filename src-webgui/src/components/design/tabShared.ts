@@ -70,14 +70,14 @@ export type Drag =
   | { kind: 'move'; ids: string[]; startX: number; startY: number; origins: Record<string, { x: number; y: number }>; remembered: boolean; moved: boolean; broke: boolean; alt: boolean; scene: { moving: DesignRect; targets: DesignRect[] } | null }
   | { kind: 'resize'; id: string; handle: DesignHandle; startX: number; startY: number; node: DesignNode; remembered: boolean }
   | { kind: 'crop'; id: string; startX: number; startY: number; paint: DesignPaint; remembered: boolean }
-  | { kind: 'rotate'; id: string; startX: number; startY: number; rotation: number; node: DesignNode; remembered: boolean }
+  | { kind: 'rotate'; id: string; cx: number; cy: number; startAngle: number; sign: 1 | -1; rotation: number; node: DesignNode; remembered: boolean }
   | { kind: 'radius'; id: string; corner: RadiusCorner; startX: number; startY: number; radius: number; node: DesignNode; remembered: boolean }
   | { kind: 'pan'; lastX: number; lastY: number }
   | { kind: 'marquee'; x0: number; y0: number; x1: number; y1: number }
   | { kind: 'draw'; shape: DrawShape; cx: number; cy: number; x0: number; y0: number; x1: number; y1: number; parentId: string | null }
   | { kind: 'pen'; index: number; space: boolean }
-  | { kind: 'vertex'; id: string; index: number; startX: number; startY: number }
-  | { kind: 'handle'; id: string; segment: number; end: 'start' | 'end'; startX: number; startY: number }
+  | { kind: 'vertex'; id: string; index: number; startX: number; startY: number; remembered: boolean }
+  | { kind: 'handle'; id: string; segment: number; end: 'start' | 'end'; startX: number; startY: number; remembered: boolean }
 
 let copiedShape: { nodes: DesignNode[]; parentId: string | null; components?: DesignDoc['components']; images?: DesignDoc['images'] } | null = null
 let copiedStyle: DesignStyle | null = null

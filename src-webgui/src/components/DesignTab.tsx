@@ -14,6 +14,8 @@ import {
   autoLayoutDesign,
   canLeaveParent,
   canvasDeltaToSpace,
+  designAxisAligned,
+  designTurnSign,
   canvasToContent,
   cornerPixels,
   componentView,
@@ -55,6 +57,7 @@ import {
   nextVariantProps,
   nodeChrome,
   nodeFromPen,
+  nodeCenter,
   nodeOrigin,
   nudgeDesignNodes,
   orderDesignNode,
@@ -109,7 +112,6 @@ import {
   nodePaints,
   panImageCrop,
   resizeImageCrop,
-  scaleImageCrops,
   setNodePaints,
   isImageCropPaint,
   openVectorEndpoints,
@@ -648,19 +650,22 @@ export function DesignTab({ tab }: { tab: Extract<Tab, { kind: 'design' }> }) {
         if (!origin) return
         const next = projectDoc(stored, focus, layoutDesign(updateDesignNode(doc, drag.id, (node) => moveVectorVertex(node, drag.index, point.x - origin.x, point.y - origin.y))))
         if (serializeDesign(next) === serializeDesign(stored)) return
+        if (!drag.remembered) {
+          noteRef.current(stored)
+          drag.remembered = true
+        }
         updateRef.current(tab.root, tab.path, next)
         return
       }
       if (drag.kind === 'rotate') {
+        const stored = useKoma.getState().design?.docs?.[key]?.doc
+        if (!stored) return
+        const focus = focusRef.current
+        const doc = editingDoc(stored, focus)
         const located = locateDesign(doc, drag.id)
         if (!located || !point) return
-        const origin = nodeOrigin(doc, drag.id)
-        if (!origin) return
-        const cx = origin.x + drag.node.w / 2
-        const cy = origin.y + drag.node.h / 2
-        const start = rotationFromCenter(cx, cy, drag.node.x + drag.node.w, drag.node.y)
-        const current = rotationFromCenter(cx, cy, point.x, point.y)
-        const rotation = snapRotation(drag.rotation + (current - start), event.shiftKey)
+        const current = rotationFromCenter(drag.cx, drag.cy, point.x, point.y)
+        const rotation = snapRotation(drag.rotation + drag.sign * (current - drag.startAngle), event.shiftKey)
         const nextNode = { ...drag.node }
         if (rotation) nextNode.rotation = rotation
         else delete nextNode.rotation
@@ -674,10 +679,18 @@ export function DesignTab({ tab }: { tab: Extract<Tab, { kind: 'design' }> }) {
         return
       }
       if (drag.kind === 'handle' && point) {
+        const stored = useKoma.getState().design?.docs?.[key]?.doc
+        if (!stored) return
+        const focus = focusRef.current
+        const doc = editingDoc(stored, focus)
         const origin = nodeOrigin(doc, drag.id)
         if (!origin) return
         const next = projectDoc(stored, focus, layoutDesign(updateDesignNode(doc, drag.id, (node) => moveVectorTangent(node, drag.segment, drag.end, point.x - origin.x, point.y - origin.y, event.metaKey || event.ctrlKey, event.shiftKey))))
         if (serializeDesign(next) === serializeDesign(stored)) return
+        if (!drag.remembered) {
+          noteRef.current(stored)
+          drag.remembered = true
+        }
         updateRef.current(tab.root, tab.path, next)
         return
       }
@@ -737,7 +750,7 @@ export function DesignTab({ tab }: { tab: Extract<Tab, { kind: 'design' }> }) {
       if (drag.kind === 'resize') {
         const located = locateDesign(doc, drag.id)
         if (!located) return
-        const delta = canvasDeltaToSpace(doc, located.parentId, screenDx, screenDy)
+        const delta = canvasDeltaToSpace(doc, drag.id, screenDx, screenDy)
         if (cropEditRef.current) {
           const paint = nodePaints(drag.node, 'fill').find(isImageCropPaint)
           if (paint) {
@@ -754,27 +767,33 @@ export function DesignTab({ tab }: { tab: Extract<Tab, { kind: 'design' }> }) {
             return
           }
         }
-        let resized = resizeDesignNode(drag.node, drag.handle, delta.x, delta.y, doc.grid, doc.snap, event.shiftKey)
-        const currentBox = designCanvasBox(doc, drag.id)
-        const scene = designSnapScene(doc, [drag.id])
+        const center = event.altKey
+        let dx = delta.x
+        let dy = delta.y
+        let snapX = false
+        let snapY = false
+        setSnapMarks(null)
+        // Object snap moves the pointer first, so a Shift lock still holds the ratio afterwards.
+        // A rotated or flipped box has no canvas-aligned edges, so it skips object snap.
+        const currentBox = designAxisAligned(doc, drag.id) ? designCanvasBox(doc, drag.id) : null
+        const scene = currentBox ? designSnapScene(doc, [drag.id]) : null
         if (currentBox && scene) {
-          const proposed = {
-            x: currentBox.x + (resized.x - drag.node.x),
-            y: currentBox.y + (resized.y - drag.node.y),
-            w: resized.w,
-            h: resized.h,
+          const free = resizeDesignNode(drag.node, drag.handle, dx, dy, doc.grid, doc.snap, false, { center })
+          if (!free.flipX && !free.flipY) {
+            const proposed = { x: currentBox.x + (free.x - located.node.x), y: currentBox.y + (free.y - located.node.y), w: free.w, h: free.h }
+            const snap = designResizeSnap(proposed, scene.targets, drag.handle, 5 / zoom)
+            if (snap.snappedX) {
+              dx += drag.handle.includes('w') ? snap.box.x - proposed.x : snap.box.x + snap.box.w - (proposed.x + proposed.w)
+              snapX = true
+            }
+            if (snap.snappedY) {
+              dy += drag.handle.includes('n') ? snap.box.y - proposed.y : snap.box.y + snap.box.h - (proposed.y + proposed.h)
+              snapY = true
+            }
+            setSnapMarks(snap.guides.length || snap.measures.length ? { guides: snap.guides, measures: snap.measures } : null)
           }
-          const snap = designResizeSnap(proposed, scene.targets, drag.handle, 5 / zoom)
-          const snapped = {
-            ...resized,
-            x: resized.x + (snap.box.x - proposed.x),
-            y: resized.y + (snap.box.y - proposed.y),
-            w: snap.box.w,
-            h: snap.box.h,
-          }
-          resized = scaleImageCrops(resized, snapped)
-          setSnapMarks(snap.guides.length || snap.measures.length ? { guides: snap.guides, measures: snap.measures } : null)
         }
+        const resized = resizeDesignNode(drag.node, drag.handle, dx, dy, doc.grid, doc.snap, event.shiftKey, { center, gridX: !snapX, gridY: !snapY })
         const next = projectDoc(stored, focus, layoutDesign(updateDesignNode(doc, drag.id, () => resized)))
         if (serializeDesign(next) === serializeDesign(stored)) return
         if (!drag.remembered) {
@@ -784,7 +803,7 @@ export function DesignTab({ tab }: { tab: Extract<Tab, { kind: 'design' }> }) {
         updateRef.current(tab.root, tab.path, next)
         return
       }
-      if (Math.hypot(screenDx, screenDy) < 4) return
+      if (!drag.moved && Math.hypot(canvasPoint(event.clientX - drag.startX), canvasPoint(event.clientY - drag.startY)) < 4) return
       drag.moved = true
       let live = doc
       if (drag.alt) {
@@ -2288,7 +2307,7 @@ export function DesignTab({ tab }: { tab: Extract<Tab, { kind: 'design' }> }) {
                         onPointerDown={(event) => {
                           event.preventDefault()
                           event.stopPropagation()
-                          dragRef.current = { kind: 'handle', id: vectorEditId, segment: index, end: handle.end, startX: event.clientX, startY: event.clientY }
+                          dragRef.current = { kind: 'handle', id: vectorEditId, segment: index, end: handle.end, startX: event.clientX, startY: event.clientY, remembered: false }
                         }}
                       />,
                     ]
@@ -2317,7 +2336,7 @@ export function DesignTab({ tab }: { tab: Extract<Tab, { kind: 'design' }> }) {
                         patchSelected((node) => node.id === vectorEditId ? deleteVectorVertex(node, index) : node)
                         return
                       }
-                      dragRef.current = { kind: 'vertex', id: vectorEditId, index, startX: event.clientX, startY: event.clientY }
+                      dragRef.current = { kind: 'vertex', id: vectorEditId, index, startX: event.clientX, startY: event.clientY, remembered: false }
                     }}
                     onDoubleClick={(event) => {
                       event.preventDefault()
@@ -2365,13 +2384,19 @@ export function DesignTab({ tab }: { tab: Extract<Tab, { kind: 'design' }> }) {
               event.stopPropagation()
               setSelection([id])
               const storedNow = useKoma.getState().design?.docs?.[key]?.doc
-              const located = locateDesign(storedNow ? editingDoc(storedNow, focusRef.current) : doc, id)
+              const docNow = storedNow ? editingDoc(storedNow, focusRef.current) : doc
+              const located = locateDesign(docNow, id)
               if (!located || located.node.locked) return
+              const center = nodeCenter(docNow, id)
+              const grab = toDoc(event.clientX, event.clientY)
+              if (!center || !grab) return
               dragRef.current = {
                 kind: 'rotate',
                 id,
-                startX: event.clientX,
-                startY: event.clientY,
+                cx: center.x,
+                cy: center.y,
+                startAngle: rotationFromCenter(center.x, center.y, grab.x, grab.y),
+                sign: designTurnSign(docNow, id),
                 rotation: located.node.rotation ?? 0,
                 node: { ...located.node },
                 remembered: false,
@@ -2394,6 +2419,9 @@ export function DesignTab({ tab }: { tab: Extract<Tab, { kind: 'design' }> }) {
                 if (node.kind === 'instance') node.hMode = 'fixed'
                 else delete node.hMode
               }
+              // A hand-sized axis stops hugging: width-hug text keeps wrapping to height, a set height is fixed.
+              if (node.textHug && (handle.includes('n') || handle.includes('s'))) delete node.textHug
+              else if (node.textHug === 'width') node.textHug = 'height'
               dragRef.current = {
                 kind: 'resize',
                 id,

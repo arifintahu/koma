@@ -806,6 +806,19 @@ export function snapDesign(n: number, grid: number, enabled: boolean): number {
   return Math.round(n)
 }
 
+export type DesignResizeOptions = {
+  /** Grow both sides around the center. */
+  center?: boolean
+  /** Grid-snap the moving edge on this axis. Off when an object snap already placed it. */
+  gridX?: boolean
+  gridY?: boolean
+}
+
+/**
+ * Resize by a handle. dx/dy are in the node's own axes, after its rotation and flip.
+ * The opposite handle stays put in the parent, or the center with `center`.
+ * Dragging past the opposite edge flips the node.
+ */
 export function resizeDesignNode(
   node: DesignNode,
   handle: DesignHandle,
@@ -814,37 +827,60 @@ export function resizeDesignNode(
   grid: number,
   enabled: boolean,
   constrain = false,
+  options: DesignResizeOptions = {},
 ): DesignNode {
-  const right = node.x + node.w
-  const bottom = node.y + node.h
-  let x = node.x
-  let y = node.y
-  let w = node.w
-  let h = node.h
-  if (handle.includes('w')) {
-    x = snapDesign(node.x + dx, grid, enabled)
-    w = right - x
-  } else if (handle.includes('e')) {
-    w = snapDesign(right + dx, grid, enabled) - x
+  const center = !!options.center
+  const east = handle.includes('e')
+  const west = handle.includes('w')
+  const south = handle.includes('s')
+  const north = handle.includes('n')
+  const reach = center ? 0.5 : 1
+  let pinX: ResizePin = center ? 'mid' : west ? 'end' : 'start'
+  let pinY: ResizePin = center ? 'mid' : north ? 'end' : 'start'
+  let rawW = node.w
+  let rawH = node.h
+  if (east || west) {
+    rawW = node.w + (east ? dx : -dx) / reach
+    if (options.gridX !== false) rawW = snapResizeEdge(node, 'x', pinAt(pinX, node.w), rawW, east, reach, grid, enabled)
   }
-  if (handle.includes('n')) {
-    y = snapDesign(node.y + dy, grid, enabled)
-    h = bottom - y
-  } else if (handle.includes('s')) {
-    h = snapDesign(bottom + dy, grid, enabled) - y
+  if (south || north) {
+    rawH = node.h + (south ? dy : -dy) / reach
+    if (options.gridY !== false) rawH = snapResizeEdge(node, 'y', pinAt(pinY, node.h), rawH, south, reach, grid, enabled)
   }
   const minW = node.kind === 'line' || node.kind === 'vector' ? 1 : DESIGN_MIN_W
   const minH = node.kind === 'line' || node.kind === 'vector' ? 1 : DESIGN_MIN_H
-  w = Math.max(minW, limitSize(w, node.minW, node.maxW))
-  h = Math.max(minH, limitSize(h, node.minH, node.maxH))
-  if ((constrain || node.proportion) && node.w > 0 && node.h > 0 && handle.length === 2) {
-    const aspect = node.w / node.h
-    if (Math.abs(dx) >= Math.abs(dy)) h = Math.max(minH, w / aspect)
-    else w = Math.max(minW, h * aspect)
+  let w = Math.max(minW, limitSize(Math.abs(rawW), node.minW, node.maxW))
+  let h = Math.max(minH, limitSize(Math.abs(rawH), node.minH, node.maxH))
+  if ((constrain || node.proportion) && node.w > 0 && node.h > 0) {
+    if (handle.length === 2) {
+      const sx = w / node.w
+      const sy = h / node.h
+      const scale = Math.abs(sx - 1) >= Math.abs(sy - 1) ? sx : sy
+      w = Math.max(minW, node.w * scale)
+      h = Math.max(minH, node.h * scale)
+    } else if (east || west) {
+      h = Math.max(minH, node.h * (w / node.w))
+      pinY = 'mid'
+    } else {
+      w = Math.max(minW, node.w * (h / node.h))
+      pinX = 'mid'
+    }
   }
-  if (handle.includes('w')) x = right - w
-  if (handle.includes('n')) y = bottom - h
-  let next: DesignNode = { ...node, x, y, w, h }
+  const flipX = rawW < 0 ? !node.flipX : !!node.flipX
+  const flipY = rawH < 0 ? !node.flipY : !!node.flipY
+  const ax = pinAt(pinX, node.w)
+  const ay = pinAt(pinY, node.h)
+  const nextAx = pinAt(pinX, w)
+  const nextAy = pinAt(pinY, h)
+  const pinned = spinToParent(node, ax, ay)
+  let next: DesignNode = { ...node, w, h }
+  if (flipX) next.flipX = true
+  else delete next.flipX
+  if (flipY) next.flipY = true
+  else delete next.flipY
+  const moved = spinToParent({ ...next, x: 0, y: 0 }, nextAx, nextAy)
+  next.x = pinned.x - moved.x
+  next.y = pinned.y - moved.y
   if (node.kind === 'vector' && node.vector && node.w > 0 && node.h > 0 && (w !== node.w || h !== node.h)) {
     next.vector = scaleVector(node.vector, w / node.w, h / node.h)
   }
@@ -853,13 +889,31 @@ export function resizeDesignNode(
     next.children = applyConstraints(node, w, h)
   }
   if (node.kind === 'group' && node.children?.length && node.w > 0 && node.h > 0 && (w !== node.w || h !== node.h)) {
-    const sx = w / node.w
-    const sy = h / node.h
-    const ax = handle.includes('w') ? node.w : 0
-    const ay = handle.includes('n') ? node.h : 0
-    next.children = node.children.map((child) => scaleNodeBox(child, sx, sy, ax, ay, handle.includes('w') ? w : 0, handle.includes('n') ? h : 0))
+    next.children = node.children.map((child) => scaleNodeBox(child, w / node.w, h / node.h, ax, ay, nextAx, nextAy))
   }
   return next
+}
+
+type ResizePin = 'start' | 'mid' | 'end'
+
+function pinAt(pin: ResizePin, span: number): number {
+  return pin === 'mid' ? span / 2 : pin === 'end' ? span : 0
+}
+
+/**
+ * The resized extent once its moving edge lands on the grid, or on a whole pixel.
+ * Only an unrotated node has edges on the parent's grid, so a rotated one rounds the extent.
+ */
+function snapResizeEdge(node: DesignNode, axis: 'x' | 'y', anchor: number, raw: number, forward: boolean, reach: number, grid: number, enabled: boolean): number {
+  if (node.rotation) return Math.round(raw)
+  const span = axis === 'x' ? node.w : node.h
+  const flipped = axis === 'x' ? !!node.flipX : !!node.flipY
+  const origin = axis === 'x' ? node.x : node.y
+  const toParent = (local: number) => (flipped ? origin + span - local : origin + local)
+  const edge = forward ? anchor + raw * reach : anchor - raw * reach
+  const parent = toParent(edge)
+  const shift = (snapDesign(parent, grid, enabled) - parent) * (flipped ? -1 : 1)
+  return forward ? (edge + shift - anchor) / reach : (anchor - edge - shift) / reach
 }
 
 /** Scale a subtree about an anchor, then shift that anchor onto its new content point. */
@@ -925,6 +979,38 @@ export function nodeBoxOrigin(doc: DesignDoc, id: string): { x: number; y: numbe
     y = spun.y
   }
   return { x, y }
+}
+
+/** Canvas position of a point in the node's own box, after its and its ancestors' rotation and flip. */
+export function nodeCanvasPoint(doc: DesignDoc, id: string, localX: number, localY: number): DesignVectorPoint | null {
+  const path = pathToNode(doc, id)
+  if (!path) return null
+  let point = { x: localX, y: localY }
+  for (let i = path.length - 1; i >= 0; i--) point = spinToParent(path[i], point.x, point.y)
+  return point
+}
+
+/** Canvas center of a node. Rotation turns around this point. */
+export function nodeCenter(doc: DesignDoc, id: string): DesignVectorPoint | null {
+  const node = findDesignNode(doc, id)
+  return node ? nodeCanvasPoint(doc, id, node.w / 2, node.h / 2) : null
+}
+
+/** True when neither the node nor an ancestor is rotated or flipped, so its axes are the canvas axes. */
+export function designAxisAligned(doc: DesignDoc, id: string): boolean {
+  const path = pathToNode(doc, id)
+  return !!path?.every((node) => !node.rotation && !node.flipX && !node.flipY)
+}
+
+/** -1 when an odd number of ancestors are flipped, so a canvas turn runs the other way in the node's parent. */
+export function designTurnSign(doc: DesignDoc, id: string): 1 | -1 {
+  const path = pathToNode(doc, id)
+  let sign: 1 | -1 = 1
+  for (const node of path?.slice(0, -1) ?? []) {
+    if (node.flipX) sign = sign === 1 ? -1 : 1
+    if (node.flipY) sign = sign === 1 ? -1 : 1
+  }
+  return sign
 }
 
 /** Ancestors, then the node. */
