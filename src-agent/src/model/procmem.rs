@@ -39,6 +39,25 @@ pub fn parse_vm_rss_bytes(status: &str) -> Option<u64> {
     parse_kb_field(status, "VmRSS:")
 }
 
+/// Resident plus swap from `/proc/<pid>/status`, as bytes.
+///
+/// Swap is part of what the terminal cap charges. A missing `VmSwap` is zero.
+/// A missing `VmRSS` is not a sample.
+#[cfg(any(target_os = "linux", test))]
+pub fn charged_status_bytes(status: &str) -> Option<u64> {
+    let rss = parse_kb_field(status, "VmRSS:")?;
+    let swap = parse_kb_field(status, "VmSwap:").unwrap_or(0);
+    Some(rss.saturating_add(swap))
+}
+
+/// `starttime` from `/proc/<pid>/stat` (field 22). The comm can contain spaces
+/// and parentheses, so the field count starts after the last `)`.
+#[cfg(any(target_os = "linux", test))]
+pub fn proc_start_ticks(stat: &str) -> Option<u64> {
+    let rest = stat.rsplit_once(')')?.1;
+    rest.split_whitespace().nth(19)?.parse().ok()
+}
+
 /// `MemTotal:` kilobytes from `/proc/meminfo`, as bytes.
 #[cfg(any(target_os = "linux", test))]
 pub fn parse_mem_total_bytes(meminfo: &str) -> Option<u64> {
@@ -352,6 +371,21 @@ VmPeak:\t  99999 kB\n\
 VmRSS:\t   1234 kB\n\
 VmHWM:\t   2000 kB\n";
         assert_eq!(parse_vm_rss_bytes(status), Some(1234 * 1024));
+        assert_eq!(charged_status_bytes(status), Some(1234 * 1024));
+        let swapped = "\
+VmRSS:\t   1000 kB\n\
+VmSwap:\t   250 kB\n";
+        assert_eq!(charged_status_bytes(swapped), Some(1250 * 1024));
+        assert_eq!(charged_status_bytes("no rss here"), None);
+        assert_eq!(
+            proc_start_ticks("12 (koma proc) S 1 12 12 0 0 0 0 0 0 0 1 2 0 0 20 0 1 0 4242"),
+            Some(4242)
+        );
+        assert_eq!(
+            proc_start_ticks("12 (weird) name) S 1 12 12 0 0 0 0 0 0 0 1 2 0 0 20 0 1 0 99"),
+            Some(99)
+        );
+        assert_eq!(proc_start_ticks("no comm"), None);
         assert_eq!(proc_status_name(status), "koma");
         let info = "\
 MemFree:        100 kB\n\

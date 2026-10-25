@@ -37,6 +37,7 @@ pub mod sec;
 pub mod state;
 pub mod subagent;
 pub mod term_bundle;
+mod term_memory;
 pub mod term_preview;
 pub mod update;
 pub mod version;

@@ -76,11 +76,12 @@ test("code tokens preserve indentation, empty/unknown blocks, long Unicode lines
   try {
     await act(async()=>{await view.waitForVisualIdle()})
     const before=view.captureCharFrame()
-    expect(before).toContain("indented `literal`"); expect(before).toContain("unknown")
+    expect(before).toContain("indented `literal`")
     expect(before).toContain('return "``` literal"')
     await act(async()=>{complete();view.resize(80,40);await view.waitForVisualIdle()})
     await act(async()=>{await view.waitForVisualIdle()})
     const after=view.captureCharFrame(); frames.push(`edge cases 80×40\n${after}`)
+    expect(after).toContain("unknown")
     expect(after).toContain('return "``` literal"'); expect(after).toContain("┘")
     const contents:string[]=[]
     const collect=(node:Renderable)=>{if(node instanceof CodeRenderable) contents.push(node.content);node.getChildren().forEach(collect)}
