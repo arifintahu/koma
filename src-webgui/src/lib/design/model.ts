@@ -1314,8 +1314,7 @@ export function placeDesignNode(doc: DesignDoc, id: string, parentId: string | n
 export function layoutDesign(doc: DesignDoc, frozenId?: string): DesignDoc {
   let changed = false
   const screens = doc.screens.map((screen) => {
-    const laid = layoutNode(doc, screen, frozenId)
-    const next = bindInstanceTree(doc, laid, frozenId)
+    const next = layoutNode(doc, screen, frozenId)
     if (next !== screen) changed = true
     return next
   })
@@ -1398,10 +1397,8 @@ export function createComponentFromFrame(doc: DesignDoc, frameId: string, compon
     y: located.node.y,
     w: located.node.w,
     h: located.node.h,
-    wMode: 'fixed',
-    hMode: 'fixed',
-    maxW: Math.max(1, located.node.w),
-    maxH: Math.max(1, located.node.h),
+    wMode: 'hug',
+    hMode: 'hug',
     component: componentId,
   }
   return updateDesignNode(next, located.parentId, (parent) => ({
@@ -1458,53 +1455,33 @@ export function renameComponent(doc: DesignDoc, componentId: string, raw: string
   return { ...doc, components }
 }
 
-function instanceAssetSize(doc: DesignDoc, node: DesignNode): { w: number; h: number } | null {
-  if (node?.kind !== 'instance' || !node.component) return null
-  const component = doc.components.find((item) => item.id === node.component)
-  const variant = component ? pickVariant(component, node.variant) : null
-  const w = variant?.node?.w
-  const h = variant?.node?.h
-  if (!Number.isFinite(w) || !Number.isFinite(h) || w < 1 || h < 1) return null
-  return { w, h }
-}
-
-function bindInstanceToAsset(doc: DesignDoc, node: DesignNode): DesignNode {
-  const asset = instanceAssetSize(doc, node)
-  if (!asset) return node
-  const w = asset.w
-  const h = asset.h
-  if (node.w === w && node.h === h && node.maxW === w && node.maxH === h && node.wMode === 'fixed' && node.hMode === 'fixed') return node
-  return { ...node, w, h, maxW: w, maxH: h, wMode: 'fixed', hMode: 'fixed' }
-}
-
-/** Open-Pencil SCALE: children move/size by instance/component, they do not reflow. */
-function scaleInstanceVisual(node: DesignNode, sx: number, sy: number, root = true): DesignNode {
-  const next: DesignNode = {
-    ...node,
-    x: root ? node.x : node.x * sx,
-    y: root ? node.y : node.y * sy,
-    w: Math.max(1, node.w * sx),
-    h: Math.max(1, node.h * sy),
+/**
+ * Older files pinned every instance to its component with fixed modes and max sizes equal to its box.
+ * The parser reads that pin as hug, so those instances keep following the component.
+ */
+export function unpinInstance(node: DesignNode): DesignNode {
+  const next: DesignNode = { ...node }
+  if ((next.wMode ?? 'fixed') === 'fixed' && next.maxW != null && next.maxW === next.w) {
+    next.wMode = 'hug'
+    delete next.maxW
   }
-  if (node.fontSize) next.fontSize = Math.max(1, node.fontSize * Math.abs(sy))
-  if (node.radius != null) next.radius = node.radius * Math.min(Math.abs(sx), Math.abs(sy))
-  if (node.pad != null) next.pad = node.pad * Math.min(Math.abs(sx), Math.abs(sy))
-  if (node.gap != null) next.gap = node.gap * Math.min(Math.abs(sx), Math.abs(sy))
-  if (node.vector && (sx !== 1 || sy !== 1)) next.vector = scaleVector(node.vector, sx, sy)
-  if (node.children?.length) next.children = node.children.map((child) => scaleInstanceVisual(child, sx, sy, false))
+  if ((next.hMode ?? 'fixed') === 'fixed' && next.maxH != null && next.maxH === next.h) {
+    next.hMode = 'hug'
+    delete next.maxH
+  }
   return next
 }
 
-function bindInstanceTree(doc: DesignDoc, node: DesignNode, frozenId?: string): DesignNode {
-  let next = node.id !== frozenId && node.kind === 'instance' ? bindInstanceToAsset(doc, node) : node
-  if (!next.children?.length) return next
-  let changed = next !== node
-  const children = next.children.map((child) => {
-    const bound = bindInstanceTree(doc, child, frozenId)
-    if (bound !== child) changed = true
-    return bound
-  })
-  return changed ? { ...next, children } : next
+/** A hugging axis takes the laid-out component's size. Other axes keep the instance's own size. */
+function sizeInstance(doc: DesignDoc, node: DesignNode): DesignNode {
+  const hugW = node.wMode === 'hug'
+  const hugH = node.hMode === 'hug'
+  if (!hugW && !hugH) return node
+  const visual = resolveInstanceTree(doc, node)
+  if (!visual) return node
+  const w = hugW ? visual.w : node.w
+  const h = hugH ? visual.h : node.h
+  return w === node.w && h === node.h ? node : { ...node, w, h }
 }
 
 export function makeInstance(doc: DesignDoc, componentId: string, id: string, x: number, y: number): DesignNode | null {
@@ -1521,10 +1498,8 @@ export function makeInstance(doc: DesignDoc, componentId: string, id: string, x:
     y,
     w: Math.max(1, w),
     h: Math.max(1, h),
-    wMode: 'fixed',
-    hMode: 'fixed',
-    maxW: Math.max(1, w),
-    maxH: Math.max(1, h),
+    wMode: 'hug',
+    hMode: 'hug',
     component: componentId,
   }
 }
@@ -1538,17 +1513,9 @@ export function setInstanceVariant(doc: DesignDoc, id: string, props: Record<str
   const picked = pickVariant(component, clean)
   if (!picked) return null
   return updateDesignNode(doc, id, (node) => {
-    const assetW = Math.max(1, picked.node?.w ?? node.w)
-    const assetH = Math.max(1, picked.node?.h ?? node.h)
-    const next: DesignNode = {
-      ...node,
-      w: assetW,
-      h: assetH,
-      wMode: 'fixed',
-      hMode: 'fixed',
-      maxW: assetW,
-      maxH: assetH,
-    }
+    const next: DesignNode = { ...node }
+    if (next.wMode === 'hug') next.w = Math.max(1, picked.node?.w ?? node.w)
+    if (next.hMode === 'hug') next.h = Math.max(1, picked.node?.h ?? node.h)
     if (Object.keys(clean).length) next.variant = clean
     else delete next.variant
     return next
@@ -1570,31 +1537,33 @@ export function resetInstanceOverrides(doc: DesignDoc, id: string): DesignDoc {
 export function resolveInstanceTree(doc: DesignDoc, node: DesignNode): DesignNode | null {
   if (node.kind !== 'instance' || !node.component) return null
   const component = doc.components.find((item) => item.id === node.component)
-  if (!component) return null
+  if (!component || resolving.has(component.id)) return null
   const variant = pickVariant(component, node.variant)
   if (!variant) return null
   const overridden = applyOverrides(variant.node, { text: node.text, fill: node.fill, overrides: node.overrides })
-  const assetW = Number.isFinite(overridden.w) && overridden.w > 0 ? overridden.w : 1
-  const assetH = Number.isFinite(overridden.h) && overridden.h > 0 ? overridden.h : 1
-  const pinned: DesignNode = {
-    ...overridden,
-    x: 0,
-    y: 0,
-    w: Math.max(1, assetW),
-    h: Math.max(1, assetH),
-    wMode: 'fixed',
-    hMode: 'fixed',
-    maxW: assetW,
-    maxH: assetH,
+  const root: DesignNode = { ...overridden, x: 0, y: 0 }
+  // A fixed or filled axis lays the component out at the instance's size. A hugging axis keeps the component's own sizing.
+  if (node.wMode !== 'hug' && Number.isFinite(node.w) && node.w > 0) {
+    root.w = node.w
+    root.wMode = 'fixed'
   }
-  const laid = layoutNode(doc, pinned)
-  const boxW = Number.isFinite(node.w) && node.w > 0 ? Math.min(node.w, laid.w) : laid.w
-  const boxH = Number.isFinite(node.h) && node.h > 0 ? Math.min(node.h, laid.h) : laid.h
-  const sx = laid.w > 0 ? boxW / laid.w : 1
-  const sy = laid.h > 0 ? boxH / laid.h : 1
-  if (Math.abs(sx - 1) < 0.001 && Math.abs(sy - 1) < 0.001) return laid
-  return scaleInstanceVisual(laid, sx, sy)
+  if (node.hMode !== 'hug' && Number.isFinite(node.h) && node.h > 0) {
+    root.h = node.h
+    root.hMode = 'fixed'
+  }
+  if (!root.layout && root.children?.length && overridden.w > 0 && overridden.h > 0 && (root.w !== overridden.w || root.h !== overridden.h)) {
+    root.children = applyConstraints(overridden, root.w, root.h)
+  }
+  resolving.add(component.id)
+  try {
+    return layoutNode(doc, root)
+  } finally {
+    resolving.delete(component.id)
+  }
 }
+
+/** Components being resolved, so a component that contains its own instance stops instead of recursing. */
+const resolving = new Set<string>()
 
 export function detachInstance(doc: DesignDoc, id: string, mint: () => string): DesignDoc | null {
   const located = locateDesign(doc, id)
@@ -2883,6 +2852,7 @@ function layoutNode(doc: DesignDoc, node: DesignNode, frozenId?: string): Design
     if (changed) next = { ...bound, children }
   }
   if (next.kind === 'text') next = hugText(next)
+  if (next.kind === 'instance') next = sizeInstance(doc, next)
   if (next.kind === 'group') next = fitGroup(next)
   if (next.kind === 'frame' && next.layout === 'grid') next = placeGrid(next, frozenId)
   else if (next.kind === 'frame' && next.layout) next = placeFlow(next, frozenId)

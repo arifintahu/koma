@@ -1,12 +1,18 @@
 import { describe, expect, it } from 'vitest'
 import {
+  createComponentFromFrame,
   designAxisAligned,
   designCanvasBox,
   designTurnSign,
   emptyDesign,
+  layoutDesign,
+  makeInstance,
   nodeCanvasPoint,
   nodeCenter,
+  parseDesign,
   resizeDesignNode,
+  resolveInstanceTree,
+  serializeDesign,
   type DesignDoc,
   type DesignHandle,
   type DesignNode,
@@ -112,5 +118,36 @@ describe('transform helpers', () => {
     expect(designTurnSign(docOf({ id: 'p', kind: 'frame', x: 0, y: 0, w: 300, h: 300, flipX: true, children: [child] }), 'c')).toBe(-1)
     expect(designTurnSign(docOf({ id: 'p', kind: 'frame', x: 0, y: 0, w: 300, h: 300, flipX: true, flipY: true, children: [child] }), 'c')).toBe(1)
     expect(designTurnSign(docOf({ ...rect('r'), flipX: true }), 'r')).toBe(1)
+  })
+})
+
+describe('instances', () => {
+  function buttonDoc(): DesignDoc {
+    const button: DesignNode = {
+      id: 'b', kind: 'frame', x: 0, y: 0, w: 120, h: 40, layout: 'row', justify: 'center', align: 'center',
+      children: [{ id: 'label', kind: 'text', x: 0, y: 0, w: 60, h: 20, text: 'OK' }],
+    }
+    const doc = createComponentFromFrame(docOf(button), 'b', 'cmp', () => 'x')
+    if (!doc) throw new Error('component')
+    return doc
+  }
+
+  it('re-lays out a resized instance instead of capping or scaling it', () => {
+    const doc = buttonDoc()
+    const instance = makeInstance(doc, 'cmp', 'i', 0, 0)
+    if (!instance) throw new Error('instance')
+    const wide = resolveInstanceTree(doc, { ...instance, w: 300, wMode: 'fixed' })
+    expect(wide?.w).toBe(300)
+    expect(wide?.children?.[0]).toMatchObject({ x: 120, w: 60 })
+    const placed = layoutDesign({ ...doc, screens: [...doc.screens, { ...instance, w: 300, wMode: 'fixed' }] })
+    expect(placed.screens.at(-1)?.w).toBe(300)
+  })
+
+  it('reads the old size pin as hug so old files keep following the component', () => {
+    const doc = buttonDoc()
+    const pinned: DesignNode = { id: 'old', kind: 'instance', x: 0, y: 0, w: 120, h: 40, wMode: 'fixed', hMode: 'fixed', maxW: 120, maxH: 40, component: 'cmp' }
+    const parsed = parseDesign(serializeDesign({ ...doc, screens: [pinned] })).doc.screens[0]
+    expect(parsed).toMatchObject({ wMode: 'hug', hMode: 'hug' })
+    expect(parsed.maxW).toBeUndefined()
   })
 })
