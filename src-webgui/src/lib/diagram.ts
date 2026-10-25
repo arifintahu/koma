@@ -10,9 +10,27 @@ export type DiagramKind = ShapeKind
 export type DiagramSide = 'n' | 'e' | 's' | 'w'
 export type DiagramHandle = 'nw' | 'n' | 'ne' | 'e' | 'se' | 's' | 'sw' | 'w'
 export type DiagramDash = 'solid' | 'dashed' | 'dotted'
-export type DiagramArrow = 'none' | 'arrow' | 'open' | 'diamond' | 'diamondOpen' | 'dot' | 'circle' | 'bar'
+export type DiagramArrow =
+  | 'none'
+  | 'arrow'
+  | 'open'
+  | 'diamond'
+  | 'diamondOpen'
+  | 'dot'
+  | 'circle'
+  | 'bar'
+  // Crow's foot (information engineering) ends for entity relations, as in draw.io's ER markers.
+  | 'erOne'
+  | 'erMandOne'
+  | 'erMany'
+  | 'erOneToMany'
+  | 'erZeroToOne'
+  | 'erZeroToMany'
 export type DiagramCorner = 'sharp' | 'rounded'
-export type DiagramRoute = 'orthogonal' | 'straight'
+/** `curved` smooths the elbow route; `entity` is draw.io's entity relation style. */
+export type DiagramRoute = 'orthogonal' | 'straight' | 'curved' | 'entity'
+/** How a line crosses the lines drawn before it (draw.io jumpStyle). */
+export type DiagramJump = 'none' | 'arc' | 'gap'
 export type DiagramPoint = { x: number; y: number }
 
 export type DiagramNode = {
@@ -56,6 +74,8 @@ export type DiagramEdge = {
   corner?: DiagramCorner
   /** Omitted means an orthogonal route. */
   route?: DiagramRoute
+  /** Omitted means no jumps. */
+  jump?: DiagramJump
   fromSide?: DiagramSide
   toSide?: DiagramSide
   /** 0..15 around the shape. Omitted keeps the side-center anchor. */
@@ -75,9 +95,25 @@ const SIDES: readonly DiagramSide[] = ['n', 'e', 's', 'w']
 /** Sixteen points clockwise from the top-left: each side's corner, then 25%, 50%, 75%. */
 export const DIAGRAM_PORTS = 16
 const DASHES: readonly DiagramDash[] = ['solid', 'dashed', 'dotted']
-const ARROWS: readonly DiagramArrow[] = ['none', 'arrow', 'open', 'diamond', 'diamondOpen', 'dot', 'circle', 'bar']
+const ARROWS: readonly DiagramArrow[] = [
+  'none',
+  'arrow',
+  'open',
+  'diamond',
+  'diamondOpen',
+  'dot',
+  'circle',
+  'bar',
+  'erOne',
+  'erMandOne',
+  'erMany',
+  'erOneToMany',
+  'erZeroToOne',
+  'erZeroToMany',
+]
+const JUMPS: readonly DiagramJump[] = ['none', 'arc', 'gap']
 const CORNERS: readonly DiagramCorner[] = ['sharp', 'rounded']
-const ROUTES: readonly DiagramRoute[] = ['orthogonal', 'straight']
+const ROUTES: readonly DiagramRoute[] = ['orthogonal', 'straight', 'curved', 'entity']
 const MIN_W = 32
 const MIN_H = 24
 
@@ -240,6 +276,7 @@ function parseEdges(value: unknown): DiagramEdge[] | null {
     const end = oneOf(row.end, ARROWS)
     const corner = oneOf(row.corner, CORNERS)
     const route = oneOf(row.route, ROUTES)
+    const jump = oneOf(row.jump, JUMPS)
     const fromSide = oneOf(row.fromSide, SIDES)
     const toSide = oneOf(row.toSide, SIDES)
     const fromPort = parsePort(row.fromPort)
@@ -252,6 +289,7 @@ function parseEdges(value: unknown): DiagramEdge[] | null {
     if (end && end !== 'arrow') edge.end = end
     if (corner && corner !== 'sharp') edge.corner = corner
     if (route && route !== 'orthogonal') edge.route = route
+    if (jump && jump !== 'none') edge.jump = jump
     if (fromSide && fromPort == null) edge.fromSide = fromSide
     if (toSide && toPort == null) edge.toSide = toSide
     if (fromPort != null) edge.fromPort = fromPort
@@ -320,6 +358,7 @@ export function serializeDiagram(doc: DiagramDoc): string {
       if (e.end && e.end !== 'arrow') row.end = e.end
       if (e.corner && e.corner !== 'sharp') row.corner = e.corner
       if (e.route && e.route !== 'orthogonal') row.route = e.route
+      if (e.jump && e.jump !== 'none') row.jump = e.jump
       if (e.fromPort != null) row.fromPort = e.fromPort
       else if (e.fromSide) row.fromSide = e.fromSide
       if (e.toPort != null) row.toPort = e.toPort
@@ -342,6 +381,7 @@ export type DiagramEdgeStyle = {
   end: DiagramArrow
   corner: DiagramCorner
   route: DiagramRoute
+  jump: DiagramJump
 }
 
 /** Resolved fill and border. Text is bare unless a file says otherwise. */
@@ -372,6 +412,7 @@ export function edgeStyle(edge: DiagramEdge): DiagramEdgeStyle {
     end: edge.end ?? 'arrow',
     corner: edge.corner ?? 'sharp',
     route: edge.route ?? 'orthogonal',
+    jump: edge.jump ?? 'none',
   }
 }
 
@@ -381,6 +422,8 @@ export type ArrowHead = {
   d?: string
   circle?: { cx: number; cy: number; r: number }
   fill: boolean
+  /** Fill the circle with the canvas color so the line does not show through (ER "zero"). */
+  knockout?: boolean
 }
 
 const END_HEAD: Record<Exclude<DiagramArrow, 'none'>, ArrowHead> = {
@@ -391,6 +434,17 @@ const END_HEAD: Record<Exclude<DiagramArrow, 'none'>, ArrowHead> = {
   dot: { circle: { cx: 4.5, cy: 3, r: 2.5 }, refX: 7, refY: 3, fill: true },
   circle: { circle: { cx: 4.5, cy: 3, r: 2.5 }, refX: 7, refY: 3, fill: false },
   bar: { d: 'M7,0.5 V5.5', refX: 7, refY: 3, fill: false },
+  // Crow's feet open toward the shape at x = 7; bars and rings sit further out on the line.
+  erOne: { d: 'M4,0 L4,6', refX: 7, refY: 3, fill: false },
+  erMandOne: { d: 'M3,0 L3,6 M5,0 L5,6', refX: 7, refY: 3, fill: false },
+  erMany: { d: 'M7,0 L1,3 L7,6 M1,3 L7,3', refX: 7, refY: 3, fill: false },
+  erOneToMany: { d: 'M7,0 L1,3 L7,6 M1,3 L7,3 M0,0 L0,6', refX: 7, refY: 3, fill: false },
+  erZeroToOne: { d: 'M5,0 L5,6', circle: { cx: 0.5, cy: 3, r: 2 }, refX: 7, refY: 3, fill: false, knockout: true },
+  erZeroToMany: { d: 'M7,0 L1,3 L7,6 M1,3 L7,3', circle: { cx: -1.5, cy: 3, r: 2 }, refX: 7, refY: 3, fill: false, knockout: true },
+}
+
+export function isErArrow(kind: DiagramArrow): boolean {
+  return kind.startsWith('er')
 }
 
 function mirrorPath(d: string): string {
@@ -409,6 +463,7 @@ export function arrowHead(at: 'start' | 'end', kind: DiagramArrow): ArrowHead | 
     refX: 7 - head.refX,
     refY: head.refY,
     fill: head.fill,
+    knockout: head.knockout,
     d: head.d ? mirrorPath(head.d) : undefined,
     circle: head.circle ? { cx: 7 - head.circle.cx, cy: head.circle.cy, r: head.circle.r } : undefined,
   }
@@ -959,8 +1014,42 @@ function routeEnd(
   return { point: sideAnchor(node, resolved), side: resolved }
 }
 
+/** Stub that an entity relation line runs straight out of its shape (draw.io ENTITY_SEGMENT). */
+export const ENTITY_SEGMENT = 30
+
+/**
+ * draw.io's EntityRelation edge style: both ends leave sideways from the middle of the left
+ * or right edge, the side picked by where the other shape sits, then meet with a slant.
+ * `fromY`/`toY` let a table row choose the height.
+ */
+export function entityRoute(from: DiagramNode, to: DiagramNode, fromY?: number, toY?: number): DiagramPoint[] {
+  const a = nodeBounds(from)
+  const b = nodeBounds(to)
+  const sourceLeft = b.x + b.w < a.x
+  const targetLeft = a.x + a.w < b.x
+  const y0 = fromY ?? a.y + a.h / 2
+  const ye = toY ?? b.y + b.h / 2
+  const x0 = sourceLeft ? a.x : a.x + a.w
+  const xe = targetLeft ? b.x : b.x + b.w
+  const start = { x: x0, y: y0 }
+  const end = { x: xe, y: ye }
+  const dep = { x: x0 + (sourceLeft ? -ENTITY_SEGMENT : ENTITY_SEGMENT), y: y0 }
+  const arr = { x: xe + (targetLeft ? -ENTITY_SEGMENT : ENTITY_SEGMENT), y: ye }
+  if (sourceLeft === targetLeft) {
+    // Both ends on the same side: loop around the outermost one.
+    const x = sourceLeft ? Math.min(x0, xe) - ENTITY_SEGMENT : Math.max(x0, xe) + ENTITY_SEGMENT
+    return [start, { x, y: y0 }, { x, y: ye }, end]
+  }
+  if (dep.x < arr.x === sourceLeft) {
+    const mid = y0 + (ye - y0) / 2
+    return [start, dep, { x: dep.x, y: mid }, { x: arr.x, y: mid }, arr, end]
+  }
+  return [start, dep, arr, end]
+}
+
 export function edgeRoute(from: DiagramNode, to: DiagramNode, edge: DiagramEdge): DiagramPoint[] {
   const style = edgeStyle(edge)
+  if (style.route === 'entity') return entityRoute(from, to)
   // A straight line with bends aims each floating end at its nearest bend, not the far shape.
   const straight = style.route === 'straight'
   const first = straight ? edge.bends?.[0] : undefined
@@ -1029,17 +1118,64 @@ export function slideSegment(points: DiagramPoint[], index: number, value: numbe
   return dedupe(next)
 }
 
-export function routePath(points: DiagramPoint[], rounded: boolean): string {
+export type DiagramJumps = { style: Exclude<DiagramJump, 'none'>; size: number; crossings: DiagramPoint[][] }
+
+/**
+ * SVG path through the route. `rounded` softens corners; `curved` turns the whole route
+ * into one smooth curve through the segment middles (draw.io curved=1). Jumps break the
+ * straight parts where `crossings[segment]` lists crossing points.
+ */
+export function routePath(points: DiagramPoint[], rounded: boolean, options: { curved?: boolean; jumps?: DiagramJumps } = {}): string {
   if (points.length < 2) return ''
-  if (!rounded || points.length < 3) {
-    return points.map((point, index) => `${index ? 'L' : 'M'}${point.x} ${point.y}`).join(' ')
+  if (options.curved && points.length >= 3) {
+    let path = `M${points[0].x} ${points[0].y}`
+    for (let i = 1; i < points.length - 1; i++) {
+      const next = points[i + 1]
+      const mid = i < points.length - 2 ? { x: (points[i].x + next.x) / 2, y: (points[i].y + next.y) / 2 } : next
+      path += ` Q${points[i].x} ${points[i].y} ${mid.x} ${mid.y}`
+    }
+    return path
   }
-  const radius = 8
+  const radius = rounded && points.length >= 3 ? 8 : 0
+  const jumps = options.jumps
+  // Draws one segment's straight run from `a` to `b`, hopping over that segment's crossings.
+  const run = (a: DiagramPoint, b: DiagramPoint, segment: number) => {
+    const crossings = jumps?.crossings[segment]
+    if (!jumps || !crossings?.length) return ` L${b.x} ${b.y}`
+    const length = Math.hypot(b.x - a.x, b.y - a.y)
+    if (!length) return ` L${b.x} ${b.y}`
+    const ux = (b.x - a.x) / length
+    const uy = (b.y - a.y) / length
+    const size = jumps.size
+    let out = ''
+    const along = crossings
+      .map((point) => (point.x - a.x) * ux + (point.y - a.y) * uy)
+      .filter((d) => d > size && d < length - size)
+      .sort((p, q) => p - q)
+    let last = -Infinity
+    for (const d of along) {
+      if (d - last < size * 2) continue
+      last = d
+      const x1 = a.x + ux * (d - size)
+      const y1 = a.y + uy * (d - size)
+      const x2 = a.x + ux * (d + size)
+      const y2 = a.y + uy * (d + size)
+      out += ` L${x1} ${y1}`
+      out += jumps.style === 'arc' ? ` A${size} ${size} 0 0 1 ${x2} ${y2}` : ` M${x2} ${y2}`
+    }
+    return `${out} L${b.x} ${b.y}`
+  }
   let path = `M${points[0].x} ${points[0].y}`
+  let from = points[0]
   for (let i = 1; i < points.length - 1; i++) {
     const prev = points[i - 1]
     const current = points[i]
     const next = points[i + 1]
+    if (!radius) {
+      path += run(from, current, i - 1)
+      from = current
+      continue
+    }
     const inX = current.x - prev.x
     const inY = current.y - prev.y
     const outX = next.x - current.x
@@ -1049,10 +1185,40 @@ export function routePath(points: DiagramPoint[], rounded: boolean): string {
     const rad = Math.min(radius, inLen / 2, outLen / 2)
     const enter = { x: current.x - (inX / inLen) * rad, y: current.y - (inY / inLen) * rad }
     const leave = { x: current.x + (outX / outLen) * rad, y: current.y + (outY / outLen) * rad }
-    path += ` L${enter.x} ${enter.y} Q${current.x} ${current.y} ${leave.x} ${leave.y}`
+    path += `${run(from, enter, i - 1)} Q${current.x} ${current.y} ${leave.x} ${leave.y}`
+    from = leave
   }
   const last = points[points.length - 1]
-  return `${path} L${last.x} ${last.y}`
+  return `${path}${run(from, last, points.length - 2)}`
+}
+
+function segmentCrossing(a: DiagramPoint, b: DiagramPoint, c: DiagramPoint, d: DiagramPoint): DiagramPoint | null {
+  const rx = b.x - a.x
+  const ry = b.y - a.y
+  const sx = d.x - c.x
+  const sy = d.y - c.y
+  const den = rx * sy - ry * sx
+  if (Math.abs(den) < 1e-9) return null
+  const t = ((c.x - a.x) * sy - (c.y - a.y) * sx) / den
+  const u = ((c.x - a.x) * ry - (c.y - a.y) * rx) / den
+  // Strictly inside both segments: touching at a corner or a shared end is not a crossing.
+  if (t <= 0.001 || t >= 0.999 || u <= 0.001 || u >= 0.999) return null
+  return { x: a.x + rx * t, y: a.y + ry * t }
+}
+
+/** Where each segment of `route` crosses any of the `under` routes (lines drawn earlier). */
+export function routeCrossings(route: DiagramPoint[], under: readonly DiagramPoint[][]): DiagramPoint[][] {
+  return route.slice(1).map((end, i) => {
+    const start = route[i]
+    const hits: DiagramPoint[] = []
+    for (const other of under) {
+      for (let j = 1; j < other.length; j++) {
+        const hit = segmentCrossing(start, end, other[j - 1], other[j])
+        if (hit) hits.push(hit)
+      }
+    }
+    return hits
+  })
 }
 
 /** Point halfway along a route, measured by segment length. */

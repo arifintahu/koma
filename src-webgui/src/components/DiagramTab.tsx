@@ -50,6 +50,7 @@ import {
   dropStraightBends,
   edgeStyle,
   insertBend,
+  routeCrossings,
   routeFractionAt,
   routePointAt,
   defaultNodeSize,
@@ -193,6 +194,8 @@ function tidyEdge(edge: DiagramEdge): DiagramEdge {
   if (next.end === 'arrow') delete next.end
   if (next.corner === 'sharp') delete next.corner
   if (next.route === 'orthogonal') delete next.route
+  if (next.jump === 'none') delete next.jump
+  if (next.labelAt == null || next.labelAt === 0.5) delete next.labelAt
   if (next.stroke !== false) delete next.stroke
   if (!next.bends?.length) delete next.bends
   if (next.fromPort != null && (!Number.isInteger(next.fromPort) || next.fromPort < 0 || next.fromPort >= DIAGRAM_PORTS)) delete next.fromPort
@@ -202,6 +205,16 @@ function tidyEdge(edge: DiagramEdge): DiagramEdge {
   if (!next.text?.trim()) delete next.text
   if (!next.detail?.trim()) delete next.detail
   return next
+}
+
+/** Fields a new line copies from the last line styled in the tab (draw.io currentEdgeStyle). */
+const LINE_STYLE_KEYS = ['color', 'width', 'dash', 'start', 'end', 'corner', 'route', 'jump'] as const
+type LineStyle = Pick<DiagramEdge, (typeof LINE_STYLE_KEYS)[number]>
+
+function lineStyleOf(edge: DiagramEdge): LineStyle {
+  const style: LineStyle = {}
+  for (const key of LINE_STYLE_KEYS) if (edge[key] != null) Object.assign(style, { [key]: edge[key] })
+  return style
 }
 
 /** Drops ids that no longer exist, so undo never restores a selection of ghosts. */
@@ -250,6 +263,7 @@ export function DiagramTab({ tab }: { tab: Extract<Tab, { kind: 'diagram' }> }) 
   const [spaceDown, setSpaceDown] = useState(false)
   const [dragCursor, setDragCursor] = useState<string | null>(null)
   const spaceRef = useRef(false)
+  const lineStyleRef = useRef<LineStyle>({})
   const markerId = useId().replace(/:/g, '')
 
   const setEditing = (id: string | null, mode: 'select' | 'end' = 'select') => {
@@ -341,7 +355,7 @@ export function DiagramTab({ tab }: { tab: Extract<Tab, { kind: 'diagram' }> }) 
     const doc = currentDoc()
     if (!doc) return
     const shape = entry ? { kind: entry.kind, ...defaultNodeSize(entry.kind), ...entry.size } : undefined
-    const result = connectInDirection(doc, sourceId, direction, mintId, shape)
+    const result = connectInDirection(doc, sourceId, direction, mintId, shape, lineStyleRef.current)
     if (!result) return
     commit(result.doc)
     setSelection({ nodes: [result.nodeId], edges: [] })
@@ -367,7 +381,7 @@ export function DiagramTab({ tab }: { tab: Extract<Tab, { kind: 'diagram' }> }) 
     } else {
       // The new shape is centered on the drop point, not snapped away from it.
       const centered = { ...node, x: open.at.x - node.w / 2, y: open.at.y - node.h / 2 }
-      const edge = tidyEdge({ id: mintId('e'), from: open.sourceId, to: node.id, fromPort: open.port ?? undefined })
+      const edge = tidyEdge({ ...lineStyleRef.current, id: mintId('e'), from: open.sourceId, to: node.id, fromPort: open.port ?? undefined })
       commit({ ...placed, nodes: [...doc.nodes, centered], edges: [...doc.edges, edge] })
       setSelection({ nodes: [node.id], edges: [] })
     }
@@ -634,7 +648,7 @@ export function DiagramTab({ tab }: { tab: Extract<Tab, { kind: 'diagram' }> }) 
       noteRef.current(current)
       updateRef.current(tab.root, tab.path, {
         ...current,
-        edges: [...current.edges, tidyEdge({ id, from: drag.fromId, to: target.id, fromPort, toPort })],
+        edges: [...current.edges, tidyEdge({ ...lineStyleRef.current, id, from: drag.fromId, to: target.id, fromPort, toPort })],
       })
       actionsRef.current.setSelection({ nodes: [], edges: [id] })
       setPropsOpen(true)
@@ -1071,7 +1085,7 @@ export function DiagramTab({ tab }: { tab: Extract<Tab, { kind: 'diagram' }> }) 
         return
       }
       if (connectFrom !== node.id && !doc.edges.some((edge) => edge.from === connectFrom && edge.to === node.id)) {
-        commit({ ...doc, edges: [...doc.edges, { id: mintId('e'), from: connectFrom, to: node.id }] })
+        commit({ ...doc, edges: [...doc.edges, tidyEdge({ ...lineStyleRef.current, id: mintId('e'), from: connectFrom, to: node.id })] })
       }
       setConnectFrom(null)
       setSelection({ nodes: [node.id], edges: [] })
@@ -1134,7 +1148,10 @@ export function DiagramTab({ tab }: { tab: Extract<Tab, { kind: 'diagram' }> }) 
   const patchEdge = (id: string, patch: Partial<DiagramEdge>) => {
     const doc = currentDoc()
     if (!doc) return
-    commit({ ...doc, edges: doc.edges.map((edge) => (edge.id === id ? tidyEdge({ ...edge, ...patch }) : edge)) })
+    const edges = doc.edges.map((edge) => (edge.id === id ? tidyEdge({ ...edge, ...patch }) : edge))
+    const styled = edges.find((edge) => edge.id === id)
+    if (styled && LINE_STYLE_KEYS.some((key) => key in patch)) lineStyleRef.current = lineStyleOf(styled)
+    commit({ ...doc, edges })
   }
 
   const patchNode = (id: string, patch: Partial<DiagramNode>) => {
@@ -1260,6 +1277,11 @@ export function DiagramTab({ tab }: { tab: Extract<Tab, { kind: 'diagram' }> }) 
   const singleEdge = single?.type === 'edge' ? doc.edges.find((edge) => edge.id === single.id) : undefined
   const connectTarget =
     connectDrag && cursor ? nodeAtPoint(doc.nodes, cursor, connectDrag.fromId) : null
+  const routes = doc.edges.map((edge) => {
+    const from = byId.get(edge.from)
+    const to = byId.get(edge.to)
+    return from && to ? edgePoints(from, to, edge) : null
+  })
   const arrowsNode =
     arrowsFor && tool === 'select' && !editing && !dragging && !connectDrag && !altHeld && !marquee ? byId.get(arrowsFor) : undefined
 
@@ -1352,17 +1374,22 @@ export function DiagramTab({ tab }: { tab: Extract<Tab, { kind: 'diagram' }> }) 
           style={{ transform: `translate(${view.x}px, ${view.y}px) scale(${z})`, transformOrigin: '0 0' }}
         >
           <svg className="absolute left-0 top-0 h-px w-px overflow-visible">
-            {doc.edges.map((edge) => {
-              const from = byId.get(edge.from)
-              const to = byId.get(edge.to)
-              if (!from || !to) return null
+            {doc.edges.map((edge, index) => {
+              const points = routes[index]
+              if (!points) return null
+              // A jumping line hops over the visible lines drawn before it (draw.io's rule).
+              const crossings =
+                edge.jump && edge.jump !== 'none' && edge.route !== 'curved'
+                  ? routeCrossings(points, routes.slice(0, index).filter((route, i): route is DiagramPoint[] => !!route && doc.edges[i]?.stroke !== false))
+                  : undefined
               return (
                 <DiagramEdgeView
                   key={edge.id}
                   edge={edge}
-                  points={edgePoints(from, to, edge)}
+                  points={points}
                   selected={selectedEdges.has(edge.id)}
                   markerBase={markerId}
+                  crossings={crossings}
                 />
               )
             })}
@@ -1854,7 +1881,8 @@ function EdgeHandles({
   if (!from || !to) return null
   const route = edgePoints(from, to, edge)
   const points = route.map(screenPoint)
-  const straight = edgeStyle(edge).route === 'straight'
+  const kind = edgeStyle(edge).route
+  const straight = kind === 'straight'
   const active = dragging ? '' : 'pointer-events-auto'
   const grab = (e: ReactPointerEvent, run: () => void) => {
     if (e.button !== 0) return
@@ -1864,7 +1892,7 @@ function EdgeHandles({
   }
   return (
     <g data-diagram-ui="">
-      {points.slice(0, -1).map((point, index) => {
+      {(kind === 'entity' ? [] : points.slice(0, -1)).map((point, index) => {
         const next = points[index + 1]
         if (!next) return null
         const mid = { x: (point.x + next.x) / 2, y: (point.y + next.y) / 2 }

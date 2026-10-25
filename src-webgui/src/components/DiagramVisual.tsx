@@ -7,6 +7,7 @@ import {
   nodeCenter,
   nodeStyle,
   routeMidpoint,
+  routePath,
   type DiagramArrow,
   type DiagramDoc,
   type DiagramNode,
@@ -37,11 +38,17 @@ export function DiagramMarker({
   const strokeWidth = head.fill ? undefined : 1.2
   return (
     <marker id={id} markerWidth="8" markerHeight="8" refX={head.refX} refY={head.refY} orient="auto" overflow="visible">
+      {head.d ? <path d={head.d} fill={head.fill ? color : 'none'} stroke={stroke} strokeWidth={strokeWidth} strokeLinejoin="miter" /> : null}
       {head.circle ? (
-        <circle cx={head.circle.cx} cy={head.circle.cy} r={head.circle.r} fill={head.fill ? color : 'none'} stroke={stroke} strokeWidth={strokeWidth} />
-      ) : (
-        <path d={head.d} fill={head.fill ? color : 'none'} stroke={stroke} strokeWidth={strokeWidth} strokeLinejoin="miter" />
-      )}
+        <circle
+          cx={head.circle.cx}
+          cy={head.circle.cy}
+          r={head.circle.r}
+          fill={head.fill ? color : head.knockout ? 'var(--color-koma-bg)' : 'none'}
+          stroke={stroke}
+          strokeWidth={strokeWidth}
+        />
+      ) : null}
     </marker>
   )
 }
@@ -101,7 +108,7 @@ export function DiagramSketch({ doc }: { doc: DiagramDoc }) {
         const style = edgeStyle(edge)
         const color = style.color || 'var(--color-koma-fg)'
         const id = `${markerBase}-${index}`
-        const d = points.map((point, i) => `${i ? 'L' : 'M'}${point.x} ${point.y}`).join(' ')
+        const d = routePath(points, style.corner === 'rounded', { curved: style.route === 'curved' })
         const label = edge.text?.trim()
         const at = label ? routeMidpoint(points) : null
         const width = label ? Math.min(160, label.length * 6 + 10) : 0

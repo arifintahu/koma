@@ -4,6 +4,7 @@ import {
   edgeRoute,
   edgeStyle,
   emptyDiagram,
+  isErArrow,
   nodeBounds,
   type DiagramDoc,
   type DiagramEdge,
@@ -189,8 +190,9 @@ function linkToken(edge: DiagramEdge): string | null {
   const style = edgeStyle(edge)
   if (!style.stroke) return null
   const dashed = style.dash !== 'solid'
-  const start = style.start !== 'none'
-  const end = style.end !== 'none'
+  // Crow's feet only mean something in an erDiagram; in a flowchart they read as a plain line.
+  const start = style.start !== 'none' && !isErArrow(style.start)
+  const end = style.end !== 'none' && !isErArrow(style.end)
   if (dashed && start && end) return '<-.->'
   if (dashed && start) return '<-.-'
   if (dashed && end) return '-.->'

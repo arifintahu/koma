@@ -8,6 +8,7 @@ import {
   type DiagramArrow,
   type DiagramDoc,
   type DiagramEdge,
+  type DiagramJump,
   type DiagramNode,
   type DiagramRoute,
 } from '../../lib/diagram'
@@ -31,14 +32,24 @@ const LINE_HEADS: { value: DiagramArrow; name: string }[] = [
   { value: 'dot', name: 'Dot' },
   { value: 'circle', name: 'Circle' },
   { value: 'bar', name: 'Bar' },
+  { value: 'erOne', name: 'One' },
+  { value: 'erMandOne', name: 'Exactly one' },
+  { value: 'erMany', name: 'Many' },
+  { value: 'erOneToMany', name: 'One or many' },
+  { value: 'erZeroToOne', name: 'Zero or one' },
+  { value: 'erZeroToMany', name: 'Zero or many' },
 ]
 
 function ArrowGlyph({ side, kind }: { side: 'start' | 'end'; kind: DiagramArrow }) {
   const p = (x: number) => (side === 'end' ? x : 28 - x)
-  const reach = kind === 'none' ? 24 : kind === 'arrow' || kind === 'open' ? 16 : kind === 'diamond' || kind === 'diamondOpen' ? 14 : kind === 'bar' ? 23 : 18
+  const er = kind.startsWith('er')
+  const reach = er ? 25 : kind === 'none' ? 24 : kind === 'arrow' || kind === 'open' ? 16 : kind === 'diamond' || kind === 'diamondOpen' ? 14 : kind === 'bar' ? 23 : 18
   const shaft = `M${p(4)} 7 H${p(reach)}`
   const triangle = `M${p(15.5)} 3 L${p(24)} 7 L${p(15.5)} 11`
   const diamond = `M${p(24)} 7 L${p(19)} 3 L${p(14)} 7 L${p(19)} 11 Z`
+  const crow = `M${p(25)} 3 L${p(17)} 7 L${p(25)} 11`
+  const bar = (x: number) => <path d={`M${p(x)} 3 V11`} fill="none" stroke="currentColor" strokeWidth="1.5" />
+  const ring = (x: number) => <circle cx={p(x)} cy="7" r="2.5" fill="var(--color-koma-panel)" stroke="currentColor" strokeWidth="1.5" />
   return (
     <LineGlyph>
       <path d={shaft} fill="none" stroke="currentColor" strokeWidth="1.5" />
@@ -48,7 +59,25 @@ function ArrowGlyph({ side, kind }: { side: 'start' | 'end'; kind: DiagramArrow 
       {kind === 'diamondOpen' ? <path d={diamond} fill="none" stroke="currentColor" strokeWidth="1.5" /> : null}
       {kind === 'dot' ? <circle cx={p(21)} cy="7" r="3" fill="currentColor" /> : null}
       {kind === 'circle' ? <circle cx={p(21)} cy="7" r="3" fill="none" stroke="currentColor" strokeWidth="1.5" /> : null}
-      {kind === 'bar' ? <path d={`M${p(23)} 3 V11`} fill="none" stroke="currentColor" strokeWidth="1.5" /> : null}
+      {kind === 'bar' ? bar(23) : null}
+      {kind === 'erMany' || kind === 'erOneToMany' || kind === 'erZeroToMany' ? (
+        <path d={crow} fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinejoin="miter" />
+      ) : null}
+      {kind === 'erOne' ? bar(21) : null}
+      {kind === 'erMandOne' ? (
+        <>
+          {bar(19)}
+          {bar(22)}
+        </>
+      ) : null}
+      {kind === 'erOneToMany' ? bar(14) : null}
+      {kind === 'erZeroToOne' ? (
+        <>
+          {bar(22)}
+          {ring(15)}
+        </>
+      ) : null}
+      {kind === 'erZeroToMany' ? ring(12) : null}
     </LineGlyph>
   )
 }
@@ -64,7 +93,8 @@ function Choices<T extends string>({
   options: { value: T; label: string; icon?: ReactNode }[]
   onChange: (value: T) => void
 }) {
-  const grid = options.length > 4
+  // Icon rows wrap into a grid past four; short text rows (widths) stay on one line.
+  const grid = options.length > (options.some((option) => option.icon) ? 4 : 6)
   return (
     <div className="flex flex-col gap-1">
       <span className="text-[10px] font-semibold uppercase tracking-wider text-koma-dim">{label}</span>
@@ -396,6 +426,8 @@ function LineSettings({
           { value: '1.5', label: '1.5' },
           { value: '2', label: '2' },
           { value: '3', label: '3' },
+          { value: '4', label: '4' },
+          { value: '6', label: '6' },
         ]}
         onChange={(width) => onChange({ width: Number(width) })}
       />
@@ -414,8 +446,20 @@ function LineSettings({
         options={[
           { value: 'orthogonal' satisfies DiagramRoute, label: 'Elbow' },
           { value: 'straight', label: 'Straight' },
+          { value: 'curved', label: 'Curved' },
+          { value: 'entity', label: 'ER' },
         ]}
         onChange={(route) => onChange({ route, bends: [] })}
+      />
+      <Choices
+        label="Jumps"
+        value={style.jump}
+        options={[
+          { value: 'none' satisfies DiagramJump, label: 'None' },
+          { value: 'arc', label: 'Arc' },
+          { value: 'gap', label: 'Gap' },
+        ]}
+        onChange={(jump) => onChange({ jump })}
       />
     </div>
   )

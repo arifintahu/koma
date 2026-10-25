@@ -1,6 +1,12 @@
 import { describe, expect, it } from 'vitest'
 import {
+  arrowHead,
   arrowTarget,
+  entityRoute,
+  parseDiagram,
+  routeCrossings,
+  routePath,
+  serializeDiagram,
   connectInDirection,
   connectionEnd,
   copyDiagramShapes,
@@ -211,5 +217,48 @@ describe('diagram shapes', () => {
       ['cylinder', 'Users'],
       ['document', 'Spec'],
     ])
+  })
+})
+
+describe('diagram lines', () => {
+  it('entity relation lines leave sideways toward the other shape', () => {
+    const left = box('a', 0, 0)
+    const right = box('b', 300, 100)
+    const route = entityRoute(left, right)
+    expect(route[0]).toEqual({ x: 100, y: 25 })
+    expect(route[1]).toEqual({ x: 130, y: 25 })
+    expect(route[route.length - 1]).toEqual({ x: 300, y: 125 })
+    expect(route[route.length - 2]).toEqual({ x: 270, y: 125 })
+    // Stacked shapes: both ends leave on the same side and loop around.
+    const below = box('c', 20, 200)
+    const loop = entityRoute(left, below)
+    expect(loop.map((point) => point.x)).toEqual([100, 150, 150, 120])
+  })
+
+  it('jumps hop only real crossings', () => {
+    const across = [{ x: 0, y: 50 }, { x: 200, y: 50 }]
+    const under = [[{ x: 100, y: 0 }, { x: 100, y: 100 }], [{ x: 0, y: 50 }, { x: 0, y: 90 }]]
+    expect(routeCrossings(across, under)).toEqual([[{ x: 100, y: 50 }]])
+    const arc = routePath(across, false, { jumps: { style: 'arc', size: 6, crossings: [[{ x: 100, y: 50 }]] } })
+    expect(arc).toContain('A6 6 0 0 1 106 50')
+    const gap = routePath(across, false, { jumps: { style: 'gap', size: 6, crossings: [[{ x: 100, y: 50 }]] } })
+    expect(gap).toContain('M106 50')
+  })
+
+  it('curved lines are one smooth path through the route', () => {
+    const d = routePath([{ x: 0, y: 0 }, { x: 100, y: 0 }, { x: 100, y: 100 }, { x: 200, y: 100 }], false, { curved: true })
+    expect(d.match(/Q/g)).toHaveLength(2)
+    expect(d).not.toContain('L')
+  })
+
+  it('new line options survive a save', () => {
+    const doc: DiagramDoc = {
+      ...threeInARow(),
+      edges: [{ id: 'x', from: 'a', to: 'b', route: 'entity', jump: 'arc', start: 'erMandOne', end: 'erZeroToMany', labelAt: 0.3 }],
+    }
+    expect(parseDiagram(serializeDiagram(doc)).doc.edges).toEqual(doc.edges)
+    const start = arrowHead('start', 'erZeroToMany')
+    expect(start?.knockout).toBe(true)
+    expect(start?.circle?.cx).toBe(8.5)
   })
 })

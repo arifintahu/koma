@@ -2,6 +2,9 @@ import { memo } from 'react'
 import { edgeStyle, routePath, type DiagramDash, type DiagramEdge, type DiagramPoint } from '../../lib/diagram'
 import { DiagramMarker } from '../DiagramVisual'
 
+/** draw.io's default jump size. */
+const JUMP_SIZE = 6
+
 export function dashArray(dash: DiagramDash, width: number): string | undefined {
   if (dash === 'dashed') return `${Math.max(4, width * 4)} ${Math.max(3, width * 2.5)}`
   if (dash === 'dotted') return `${Math.max(1, width)} ${Math.max(2, width * 1.8)}`
@@ -20,11 +23,14 @@ export const DiagramEdgeView = memo(function DiagramEdgeView({
   points,
   selected,
   markerBase,
+  crossings,
 }: {
   edge: DiagramEdge
   points: DiagramPoint[]
   selected: boolean
   markerBase: string
+  /** Per segment, where this line crosses lines drawn before it. Only set when it jumps. */
+  crossings?: DiagramPoint[][]
 }) {
   const style = edgeStyle(edge)
   if (!style.stroke) return null
@@ -37,7 +43,10 @@ export const DiagramEdgeView = memo(function DiagramEdgeView({
         {style.start === 'none' ? null : <DiagramMarker id={`${id}-start`} at="start" kind={style.start} color={color} />}
       </defs>
       <path
-        d={routePath(points, style.corner === 'rounded')}
+        d={routePath(points, style.corner === 'rounded', {
+          curved: style.route === 'curved',
+          jumps: crossings && style.jump !== 'none' ? { style: style.jump, size: JUMP_SIZE, crossings } : undefined,
+        })}
         stroke={color}
         strokeWidth={style.width}
         strokeDasharray={dashArray(style.dash, style.width)}
