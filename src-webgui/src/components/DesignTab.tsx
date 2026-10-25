@@ -200,6 +200,8 @@ export function DesignTab({ tab }: { tab: Extract<Tab, { kind: 'design' }> }) {
   const panelTabId = useKoma((s) => s.design?.panelTabId)
   const active = useKoma((s) => s.ui.activeTabId === tab.id && isTabVisible(s.ui, tab.id))
   const canvasRef = useRef<HTMLDivElement>(null)
+  /** Pointer held by the canvas while a drag runs, so a release outside the window still ends it. */
+  const captureRef = useRef<number | null>(null)
   const pastRef = useRef<DesignDoc[]>([])
   const futureRef = useRef<DesignDoc[]>([])
   const nudgeOpenRef = useRef(false)
@@ -583,6 +585,14 @@ export function DesignTab({ tab }: { tab: Extract<Tab, { kind: 'design' }> }) {
         if (hover) setPenHover(hover)
       }
       if (!drag) return
+      if (captureRef.current == null && (drag.kind !== 'move' || drag.moved)) {
+        try {
+          canvasRef.current?.setPointerCapture(event.pointerId)
+          captureRef.current = event.pointerId
+        } catch {
+          // The pointer is already gone; pointerup or blur ends the drag.
+        }
+      }
       if (drag.kind === 'pan') {
         const dx = canvasPoint(event.clientX - drag.lastX)
         const dy = canvasPoint(event.clientY - drag.lastY)
@@ -867,14 +877,34 @@ export function DesignTab({ tab }: { tab: Extract<Tab, { kind: 'design' }> }) {
       }
       updateRef.current(tab.root, tab.path, next)
     }
-    const up = (event: PointerEvent) => {
+    const release = () => {
       const drag = dragRef.current
       dragRef.current = null
+      if (captureRef.current != null) {
+        try {
+          canvasRef.current?.releasePointerCapture(captureRef.current)
+        } catch {
+          // Capture already ended with the pointer.
+        }
+        captureRef.current = null
+      }
       setDragCursor(null)
       setGhost(null)
       setFlowBar(null)
       setSnapMarks(null)
       if (drag?.kind === 'pen') setPenHandle(null)
+      return drag
+    }
+    /** Losing the window ends a drag where it is and lets go of Space, since its keyup never arrives. */
+    const abandon = () => {
+      if (document.visibilityState === 'hidden' || !document.hasFocus()) {
+        release()
+        spaceRef.current = false
+        setSpaceDown(false)
+      }
+    }
+    const up = (event: PointerEvent) => {
+      const drag = release()
       if (!drag || drag.kind === 'pan' || drag.kind === 'pen') return
       const stored = useKoma.getState().design?.docs?.[key]?.doc
       if (!stored) return
@@ -940,7 +970,11 @@ export function DesignTab({ tab }: { tab: Extract<Tab, { kind: 'design' }> }) {
     window.addEventListener('pointermove', move)
     window.addEventListener('pointerup', up)
     window.addEventListener('pointercancel', up)
+    window.addEventListener('blur', abandon)
+    document.addEventListener('visibilitychange', abandon)
     return () => {
+      window.removeEventListener('blur', abandon)
+      document.removeEventListener('visibilitychange', abandon)
       window.removeEventListener('koma-design-commit', onCommit)
       window.removeEventListener('koma-design-apply-token', onApplyToken)
       window.removeEventListener('koma-design-restore', onRestore)
@@ -1125,7 +1159,7 @@ export function DesignTab({ tab }: { tab: Extract<Tab, { kind: 'design' }> }) {
         const step = event.shiftKey ? 10 : 1
         const dx = event.key === 'ArrowLeft' ? -step : event.key === 'ArrowRight' ? step : 0
         const dy = event.key === 'ArrowUp' ? -step : event.key === 'ArrowDown' ? step : 0
-        commandsRef.current?.nudge(dx, dy, event.altKey)
+        commandsRef.current?.nudge(dx, dy, event.altKey && !event.repeat)
         return
       }
       if (!meta && !event.shiftKey && !event.altKey) {
