@@ -12,6 +12,7 @@ import {
   type DiagramNode,
 } from '../lib/diagram'
 import { diagramViewForMermaid, mermaidTitle, nodeBounds } from '../lib/diagramMermaid'
+import { DiagramShapeSvg } from './diagram/DiagramShapeSvg'
 
 function dashArray(dash: string, width: number): string | undefined {
   if (dash === 'dashed') return `${Math.max(4, width * 4)} ${Math.max(3, width * 2.5)}`
@@ -144,52 +145,21 @@ function shapePaint(node: DiagramNode): { fill: string; stroke: string; strokeWi
 
 function DiagramShape({ node }: { node: DiagramNode }) {
   const center = nodeCenter(node)
-  const transform = node.rotation ? `rotate(${node.rotation} ${center.x} ${center.y})` : undefined
+  const rotate = node.rotation ? ` rotate(${node.rotation} ${node.w / 2} ${node.h / 2})` : ''
   const paint = shapePaint(node)
-  const label = (
-    <text
-      x={center.x}
-      y={center.y}
-      textAnchor="middle"
-      dominantBaseline="middle"
-      fontSize="12"
-      fill="var(--color-koma-fg)"
-    >
-      {node.text}
-    </text>
-  )
-  if (node.kind === 'text') {
-    const style = nodeStyle(node)
-    return (
-      <g transform={transform}>
-        {style.fill || style.stroke ? (
-          <rect x={node.x} y={node.y} width={node.w} height={node.h} fill={paint.fill} stroke={paint.stroke} strokeWidth={paint.strokeWidth} />
-        ) : null}
-        {label}
-      </g>
-    )
-  }
-  if (node.kind === 'ellipse') {
-    return (
-      <g transform={transform}>
-        <ellipse cx={center.x} cy={center.y} rx={node.w / 2} ry={node.h / 2} fill={paint.fill} stroke={paint.stroke} strokeWidth={paint.strokeWidth} />
-        {label}
-      </g>
-    )
-  }
-  if (node.kind === 'diamond') {
-    const points = `${center.x},${node.y} ${node.x + node.w},${center.y} ${center.x},${node.y + node.h} ${node.x},${center.y}`
-    return (
-      <g transform={transform}>
-        <polygon points={points} fill={paint.fill} stroke={paint.stroke} strokeWidth={paint.strokeWidth} />
-        {label}
-      </g>
-    )
-  }
   return (
-    <g transform={transform}>
-      <rect x={node.x} y={node.y} width={node.w} height={node.h} rx="4" fill={paint.fill} stroke={paint.stroke} strokeWidth={paint.strokeWidth} />
-      {label}
+    <g transform={`translate(${node.x} ${node.y})${rotate}`}>
+      <DiagramShapeSvg kind={node.kind} w={node.w} h={node.h} fill={paint.fill} stroke={paint.stroke} strokeWidth={paint.strokeWidth || 1} />
+      <text
+        x={center.x - node.x}
+        y={center.y - node.y}
+        textAnchor="middle"
+        dominantBaseline="middle"
+        fontSize="12"
+        fill="var(--color-koma-fg)"
+      >
+        {node.text}
+      </text>
     </g>
   )
 }

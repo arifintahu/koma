@@ -9,7 +9,9 @@ import {
   edgeRoute,
   insertBend,
   nodeCenter,
+  pointInNode,
   portAnchor,
+  portOffset,
   resizeNode,
   rotatePoint,
   routeFractionAt,
@@ -24,6 +26,8 @@ import {
   type DiagramDoc,
   type DiagramNode,
 } from './diagram'
+import { diagramToMermaid, parseMermaidDiagram } from './diagramMermaid'
+import { SHAPE_KINDS } from './diagramShapes'
 
 const box = (id: string, x: number, y: number, extra: Partial<DiagramNode> = {}): DiagramNode => ({
   id,
@@ -167,5 +171,45 @@ describe('diagram controls', () => {
     const points = [{ x: 0, y: 0 }, { x: 100, y: 0 }, { x: 100, y: 100 }]
     expect(routePointAt(points, 0.75)).toEqual({ x: 100, y: 50 })
     expect(routeFractionAt(points, { x: 104, y: 50 })).toBeCloseTo(0.75)
+  })
+})
+
+describe('diagram shapes', () => {
+  it('ports sit on each outline, not on the box', () => {
+    const hexagon = box('h', 0, 0, { kind: 'hexagon', w: 160, h: 72 })
+    // Port 0 aims at the top-left corner; the hexagon's slanted side pulls it inward.
+    const corner = portOffset(hexagon, 0)
+    expect(corner.x).toBeGreaterThan(0.05)
+    expect(corner.y).toBeGreaterThan(0.05)
+    // Side middles of a hexagon are its left and right points.
+    expect(portOffset(hexagon, 14)).toEqual({ x: 0, y: 0.5 })
+    const cylinder = box('c', 0, 0, { kind: 'cylinder', w: 80, h: 96 })
+    expect(portOffset(cylinder, 2).y).toBeLessThan(0.02)
+    expect(portOffset(box('r', 0, 0), 0)).toEqual({ x: 0, y: 0 })
+  })
+
+  it('a triangle hits inside its outline only', () => {
+    const triangle = box('t', 0, 0, { kind: 'triangle', w: 100, h: 80 })
+    expect(pointInNode(triangle, { x: 50, y: 60 })).toBe(true)
+    expect(pointInNode(triangle, { x: 5, y: 5 })).toBe(false)
+  })
+
+  it('every kind survives a trip through Mermaid', () => {
+    const doc: DiagramDoc = {
+      ...emptyDiagram(),
+      nodes: SHAPE_KINDS.map((kind, i) => box(`n${i}`, 0, i * 100, { kind, text: `${kind} "label"` })),
+      edges: [],
+    }
+    const parsed = parseMermaidDiagram(diagramToMermaid(doc, 'kinds')).doc
+    expect(parsed.nodes.map((node) => [node.id, node.kind, node.text])).toEqual(doc.nodes.map((node) => [node.id, node.kind, node.text]))
+  })
+
+  it('reads the shapes models usually write', () => {
+    const parsed = parseMermaidDiagram('```mermaid\nflowchart TD\n  a([Start])\n  b[(Users)]\n  c@{ shape: doc, label: "Spec" }\n  a --> b\n```').doc
+    expect(parsed.nodes.map((node) => [node.kind, node.text])).toEqual([
+      ['stadium', 'Start'],
+      ['cylinder', 'Users'],
+      ['document', 'Spec'],
+    ])
   })
 })

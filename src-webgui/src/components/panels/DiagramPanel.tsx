@@ -6,10 +6,12 @@ import { AddBtn, Empty, IconBtn } from './helpers'
 import { Select } from './form'
 import { useKoma } from '../../store/koma'
 import { fileKey, isMissingCodingDirError, type FileTreeEntry } from '../../store/coding'
-import { SHAPE_MIME, diagramFileName, isDiagramPath, type DiagramKind } from '../../lib/diagram'
+import { SHAPE_MIME, diagramFileName, isDiagramPath } from '../../lib/diagram'
 import { addDiagramFileToChat, copyDiagramFileMermaid } from '../../lib/diagramChat'
 import { DiagramRefMenuItems } from '../DiagramVisual'
-import { DIAGRAM_PALETTE, ShapePreview } from '../diagram/DiagramShapePreview'
+import { DIAGRAM_PALETTE, ShapePreview, type DiagramPaletteEntry } from '../diagram/DiagramShapePreview'
+
+const PALETTE_GROUPS = ['Basic', 'Flowchart'] as const
 
 const EMPTY_ROOTS: string[] = []
 
@@ -80,23 +82,23 @@ function InlineNameInput({
   )
 }
 
-function ShapeTile({ kind, label }: { kind: DiagramKind; label: string }) {
+function ShapeTile({ entry }: { entry: DiagramPaletteEntry }) {
   return (
     <div
       draggable
       onDragStart={(e) => {
-        e.dataTransfer.setData(SHAPE_MIME, kind)
-        e.dataTransfer.setData('text/plain', kind)
+        e.dataTransfer.setData(SHAPE_MIME, entry.id)
+        e.dataTransfer.setData('text/plain', entry.id)
         try {
           e.dataTransfer.effectAllowed = 'copy'
         } catch {
           /* ignore */
         }
       }}
-      className="flex cursor-grab items-center justify-center rounded p-0.5 text-koma-dim hover:bg-koma-hover hover:text-koma-fg active:cursor-grabbing"
-      title={`Drag ${label} onto the canvas`}
+      className="flex h-9 w-14 cursor-grab items-center justify-center rounded p-0.5 text-koma-dim hover:bg-koma-hover hover:text-koma-fg active:cursor-grabbing"
+      title={`Drag ${entry.label} onto the canvas`}
     >
-      <ShapePreview kind={kind} />
+      <ShapePreview entry={entry} />
     </div>
   )
 }
@@ -205,9 +207,16 @@ export function DiagramPanel() {
         </div>
       </div>
       <AccordionSection title="Shapes" open={shapesOpen} onToggle={() => setShapesOpen((v) => !v)} fill={false}>
-        <div className="flex flex-wrap items-center gap-x-2 gap-y-1.5 px-2 py-1.5">
-          {DIAGRAM_PALETTE.map((shape) => (
-            <ShapeTile key={shape.kind} {...shape} />
+        <div className="flex flex-col gap-1 px-2 py-1.5">
+          {PALETTE_GROUPS.map((group) => (
+            <div key={group} className="flex flex-col gap-0.5">
+              <span className="text-[10px] font-semibold uppercase tracking-wider text-koma-dim">{group}</span>
+              <div className="flex flex-wrap items-center gap-1">
+                {DIAGRAM_PALETTE.filter((entry) => entry.group === group).map((entry) => (
+                  <ShapeTile key={entry.id} entry={entry} />
+                ))}
+              </div>
+            </div>
           ))}
         </div>
       </AccordionSection>

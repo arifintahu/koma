@@ -1,6 +1,7 @@
 import { memo } from 'react'
 import { inlineToHtml } from '../../lib/markdownNote'
 import { nodeStyle, type DiagramNode } from '../../lib/diagram'
+import { DiagramShapeSvg } from './DiagramShapeSvg'
 
 /**
  * One shape in doc coordinates. The world layer scales it, so it never reads the zoom.
@@ -22,7 +23,6 @@ export const DiagramNodeView = memo(function DiagramNodeView({
   onEditDone: () => void
 }) {
   const paint = nodeStyle(node)
-  const boxed = node.kind === 'rect' || node.kind === 'text'
   const fill = paint.fill ? paint.fillColor || 'var(--color-koma-panel)' : 'none'
   const stroke = highlight ? 'var(--color-koma-accent)' : paint.stroke ? paint.strokeColor || 'var(--color-koma-border)' : 'none'
   return (
@@ -34,30 +34,11 @@ export const DiagramNodeView = memo(function DiagramNodeView({
         width: node.w,
         height: node.h,
         transform: node.rotation ? `rotate(${node.rotation}deg)` : undefined,
-        ...(boxed
-          ? {
-              background: fill === 'none' ? 'transparent' : fill,
-              borderRadius: node.kind === 'rect' ? 4 : 0,
-              outline: stroke === 'none' ? 'none' : `1px solid ${stroke}`,
-              outlineOffset: '-0.5px',
-            }
-          : {}),
       }}
     >
-      {node.kind === 'diamond' || node.kind === 'ellipse' ? (
-        <svg className="absolute inset-0 h-full w-full overflow-visible">
-          {node.kind === 'diamond' ? (
-            <polygon
-              points={`${node.w / 2},0 ${node.w},${node.h / 2} ${node.w / 2},${node.h} 0,${node.h / 2}`}
-              fill={fill}
-              stroke={stroke}
-              strokeWidth={stroke === 'none' ? 0 : 1}
-            />
-          ) : (
-            <ellipse cx={node.w / 2} cy={node.h / 2} rx={node.w / 2} ry={node.h / 2} fill={fill} stroke={stroke} strokeWidth={stroke === 'none' ? 0 : 1} />
-          )}
-        </svg>
-      ) : null}
+      <svg className="absolute inset-0 h-full w-full overflow-visible">
+        <DiagramShapeSvg kind={node.kind} w={node.w} h={node.h} fill={fill} stroke={stroke} />
+      </svg>
       {editing ? (
         <textarea
           autoFocus

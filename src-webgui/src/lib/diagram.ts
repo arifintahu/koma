@@ -1,10 +1,12 @@
 // Diagram documents stored as `<workspace>/.koma/<name>.diag`.
 // The canvas and the sidebar both speak this shape. Snap is per file.
 
+import { outlineFraction, pointInShape, SHAPE_KINDS, SHAPE_SIZES, type ShapeKind } from './diagramShapes'
+
 export const DIAGRAM_GRID = 16
 export const SHAPE_MIME = 'application/x-koma-shape'
 
-export type DiagramKind = 'rect' | 'ellipse' | 'diamond' | 'text'
+export type DiagramKind = ShapeKind
 export type DiagramSide = 'n' | 'e' | 's' | 'w'
 export type DiagramHandle = 'nw' | 'n' | 'ne' | 'e' | 'se' | 's' | 'sw' | 'w'
 export type DiagramDash = 'solid' | 'dashed' | 'dotted'
@@ -86,7 +88,7 @@ export type DiagramDoc = {
   edges: DiagramEdge[]
 }
 
-const KINDS: readonly DiagramKind[] = ['rect', 'ellipse', 'diamond', 'text']
+const KINDS: readonly DiagramKind[] = SHAPE_KINDS
 
 export function emptyDiagram(): DiagramDoc {
   return { snap: true, grid: DIAGRAM_GRID, nodes: [], edges: [] }
@@ -115,8 +117,11 @@ export function diagramFileName(raw: string): string | null {
 }
 
 export function defaultNodeSize(kind: DiagramKind): { w: number; h: number; text: string } {
-  if (kind === 'text') return { w: 120, h: 36, text: 'text' }
-  return { w: 160, h: 64, text: 'label' }
+  return { ...SHAPE_SIZES[kind], text: kind === 'text' ? 'text' : 'label' }
+}
+
+export function isDiagramKind(value: unknown): value is DiagramKind {
+  return typeof value === 'string' && (KINDS as readonly string[]).includes(value)
 }
 
 /** Same card, new id, shifted. Lines are not part of the copy. */
@@ -140,10 +145,6 @@ export function copyNode(node: DiagramNode, id: string, dx: number, dy: number):
   return next
 }
 
-function isKind(value: unknown): value is DiagramKind {
-  return typeof value === 'string' && (KINDS as readonly string[]).includes(value)
-}
-
 function num(value: unknown): number | null {
   return typeof value === 'number' && Number.isFinite(value) ? value : null
 }
@@ -158,7 +159,7 @@ function parseNodes(value: unknown): DiagramNode[] | null {
     const y = num(row.y)
     const w = num(row.w)
     const h = num(row.h)
-    if (typeof row.id !== 'string' || !row.id || !isKind(row.kind) || x == null || y == null || w == null || h == null) return null
+    if (typeof row.id !== 'string' || !row.id || !isDiagramKind(row.kind) || x == null || y == null || w == null || h == null) return null
     if (typeof row.text !== 'string') return null
     const node: DiagramNode = { id: row.id, kind: row.kind, x, y, w, h, text: row.text }
     const rotation = num(row.rotation)
@@ -455,22 +456,9 @@ export function portLocal(port: number): { x: number; y: number } {
   return { x: 0, y: 1 - t }
 }
 
-/** Pull a box-perimeter fraction onto the ellipse or diamond outline. Rects stay put. */
-function onOutline(kind: DiagramNode['kind'], local: { x: number; y: number }): { x: number; y: number } {
-  if (kind !== 'ellipse' && kind !== 'diamond') return local
-  const dx = local.x - 0.5
-  const dy = local.y - 0.5
-  if (dx === 0 && dy === 0) return local
-  const scale =
-    kind === 'ellipse'
-      ? 1 / Math.sqrt((dx / 0.5) ** 2 + (dy / 0.5) ** 2)
-      : 1 / (Math.abs(dx) / 0.5 + Math.abs(dy) / 0.5)
-  return { x: 0.5 + dx * scale, y: 0.5 + dy * scale }
-}
-
 /** Where a connector plus sits, as a fraction of the node box (before rotation). */
 export function portOffset(node: DiagramNode, port: number): { x: number; y: number } {
-  return onOutline(node.kind, portLocal(port))
+  return outlineFraction(node.kind, node.w, node.h, portLocal(port))
 }
 
 /** Outline point, then the node's rotation. */
@@ -494,9 +482,10 @@ export function nearestPort(node: DiagramNode, point: DiagramPoint): number {
   return best
 }
 
+/** On the shape's own outline (a triangle's empty corners do not count), rotation included. */
 export function pointInNode(node: DiagramNode, point: DiagramPoint): boolean {
   const local = rotatePoint(point, nodeCenter(node), -(node.rotation ?? 0))
-  return local.x >= node.x && local.x <= node.x + node.w && local.y >= node.y && local.y <= node.y + node.h
+  return pointInShape(node.kind, node.w, node.h, local.x - node.x, local.y - node.y)
 }
 
 /** Topmost shape under the point, or a shape whose port is within 16px. */

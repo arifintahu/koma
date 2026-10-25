@@ -114,11 +114,75 @@ function unquote(text: string): string {
   return text.replace(/\\\\/g, '\\').replace(/#quot;/g, '"')
 }
 
+/**
+ * Flowchart brackets per kind, most specific first so parsing tries `((` before `(`.
+ * Kinds without a bracket form use Mermaid's `@{ shape: … }` syntax (see SHAPE_NAMES).
+ */
+const BRACKETS: { kind: DiagramKind; open: string; close: string }[] = [
+  { kind: 'ellipse', open: '((', close: '))' },
+  { kind: 'stadium', open: '([', close: '])' },
+  { kind: 'process', open: '[[', close: ']]' },
+  { kind: 'cylinder', open: '[(', close: ')]' },
+  { kind: 'hexagon', open: '{{', close: '}}' },
+  { kind: 'parallelogram', open: '[/', close: '/]' },
+  { kind: 'trapezoid', open: '[/', close: '\\]' },
+  { kind: 'rounded', open: '(', close: ')' },
+  { kind: 'diamond', open: '{', close: '}' },
+  { kind: 'rect', open: '[', close: ']' },
+]
+
+/** Mermaid's named shapes, for kinds with no bracket form and for reading what models write. */
+const SHAPE_NAMES: Record<string, DiagramKind> = {
+  doc: 'document',
+  document: 'document',
+  tri: 'triangle',
+  triangle: 'triangle',
+  'extract': 'triangle',
+  cloud: 'cloud',
+  rect: 'rect',
+  rounded: 'rounded',
+  stadium: 'stadium',
+  'subproc': 'process',
+  cyl: 'cylinder',
+  circle: 'ellipse',
+  diam: 'diamond',
+  hex: 'hexagon',
+  'lean-r': 'parallelogram',
+  'trap-b': 'trapezoid',
+}
+
 function shapeLine(kind: DiagramKind, id: string, label: string): string {
   const text = quote(label)
-  if (kind === 'ellipse') return `${id}((${text}))`
-  if (kind === 'diamond') return `${id}{${text}}`
-  return `${id}[${text}]`
+  const bracket = BRACKETS.find((item) => item.kind === kind)
+  if (bracket) return `${id}${bracket.open}${text}${bracket.close}`
+  const name = kind === 'document' ? 'doc' : kind === 'triangle' ? 'tri' : kind === 'cloud' ? 'cloud' : null
+  return name ? `${id}@{ shape: ${name}, label: ${text} }` : `${id}[${text}]`
+}
+
+function labelText(raw: string): string {
+  const inner = raw.trim()
+  return unquote(inner.length >= 2 && inner.startsWith('"') && inner.endsWith('"') ? inner.slice(1, -1) : inner)
+}
+
+/** `id[…]`, `id((…))`, `id@{ shape: doc, label: "…" }` and friends. */
+function parseNodeLine(line: string): { id: string; kind: DiagramKind; label: string } | null {
+  const head = line.match(/^([A-Za-z_][A-Za-z0-9_]*)(.*)$/)
+  if (!head?.[1] || !head[2]) return null
+  const id = head[1]
+  const rest = head[2].trim()
+  const named = rest.match(/^@\{(.*)\}$/)
+  if (named) {
+    const body = named[1] ?? ''
+    const shape = body.match(/shape\s*:\s*([A-Za-z-]+)/)?.[1]?.toLowerCase()
+    const label = body.match(/label\s*:\s*("(?:[^"\\]|\\.)*"|[^,}]*)/)?.[1] ?? ''
+    return { id, kind: (shape && SHAPE_NAMES[shape]) || 'rect', label: labelText(label) }
+  }
+  for (const bracket of BRACKETS) {
+    if (rest.startsWith(bracket.open) && rest.endsWith(bracket.close) && rest.length >= bracket.open.length + bracket.close.length) {
+      return { id, kind: bracket.kind, label: labelText(rest.slice(bracket.open.length, rest.length - bracket.close.length)) }
+    }
+  }
+  return null
 }
 
 function linkToken(edge: DiagramEdge): string | null {
@@ -172,18 +236,7 @@ export function diagramToMermaid(doc: DiagramDoc, title?: string, notes?: { path
   return `\`\`\`mermaid\n${lines.join('\n')}\n\`\`\``
 }
 
-const NODE_LINE = /^([A-Za-z_][A-Za-z0-9_]*)(?:\(\("(.*)"\)\)|\{"(.*)"\}|\["(.*)"\])$/
 const EDGE_LINE = /^([A-Za-z_][A-Za-z0-9_]*)\s+(<-\.->|-\.->|<-.-|-\.-|<-->|<--|-->|---)(?:\|([^|\n]*)\|)?\s+([A-Za-z_][A-Za-z0-9_]*)\s*$/
-
-function kindFor(match: RegExpMatchArray): DiagramKind {
-  if (match[2] != null) return 'ellipse'
-  if (match[3] != null) return 'diamond'
-  return 'rect'
-}
-
-function labelFor(match: RegExpMatchArray): string {
-  return unquote(match[2] ?? match[3] ?? match[4] ?? '')
-}
 
 function edgeFromToken(token: string): Pick<DiagramEdge, 'dash' | 'start' | 'end'> {
   const dashed = token.includes('.')
@@ -233,13 +286,13 @@ export function parseMermaidDiagram(mermaid: string): { doc: DiagramDoc; title: 
       })
       continue
     }
-    const node = line.match(NODE_LINE)
+    const node = parseNodeLine(line)
     if (!node) continue
-    ensure(node[1])
-    const found = doc.nodes.find((item) => item.id === node[1])
+    ensure(node.id)
+    const found = doc.nodes.find((item) => item.id === node.id)
     if (!found) continue
-    found.kind = kindFor(node)
-    found.text = labelFor(node)
+    found.kind = node.kind
+    found.text = node.label
   }
   for (const node of doc.nodes) {
     if (textIds.has(node.id)) node.kind = 'text'

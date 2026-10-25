@@ -15,6 +15,7 @@ import { DiagramEdgeView, themeStroke } from './diagram/DiagramEdgeView'
 import { DiagramNodeView } from './diagram/DiagramNodeView'
 import { Properties, type DiagramPanelSelection } from './diagram/DiagramSettings'
 import { DiagramShapePicker } from './diagram/DiagramShapePicker'
+import { paletteEntry, type DiagramPaletteEntry } from './diagram/DiagramShapePreview'
 import {
   DIAGRAM_DRAG_THRESHOLD,
   DIAGRAM_HIT_TOLERANCE,
@@ -56,6 +57,7 @@ import {
   edgePoints,
   DIAGRAM_PORTS,
   hitDiagram,
+  isDiagramKind,
   mergeSelection,
   moveDiagramNodes,
   nearestPort,
@@ -153,8 +155,8 @@ function mintId(prefix: string): string {
 /** Last copied shapes and the lines between them. Shared across diagram tabs. */
 let clipboard: { nodes: DiagramNode[]; edges: DiagramEdge[] } | null = null
 
-function placeNode(doc: DiagramDoc, kind: DiagramKind, x: number, y: number): DiagramDoc {
-  const size = defaultNodeSize(kind)
+function placeNode(doc: DiagramDoc, kind: DiagramKind, x: number, y: number, preset?: { w: number; h: number }): DiagramDoc {
+  const size = { ...defaultNodeSize(kind), ...preset }
   const node: DiagramNode = {
     id: mintId('n'),
     kind,
@@ -165,8 +167,9 @@ function placeNode(doc: DiagramDoc, kind: DiagramKind, x: number, y: number): Di
   return { ...doc, nodes: [...doc.nodes, node] }
 }
 
-function isKind(value: string): value is DiagramKind {
-  return value === 'rect' || value === 'ellipse' || value === 'diamond' || value === 'text'
+/** A palette entry from a drop. Older drags carry a bare kind. */
+function droppedEntry(raw: string): Pick<DiagramPaletteEntry, 'kind' | 'size'> | null {
+  return paletteEntry(raw) ?? (isDiagramKind(raw) ? { kind: raw } : null)
 }
 
 function tidyNode(node: DiagramNode): DiagramNode {
@@ -334,11 +337,11 @@ export function DiagramTab({ tab }: { tab: Extract<Tab, { kind: 'diagram' }> }) 
   toDocRef.current = toDoc
 
   /** A hover arrow (or Alt+Shift+Arrow): connect to the shape there, or add one and connect it. */
-  const arrowConnect = (sourceId: string, direction: DiagramDirection, kind?: DiagramKind) => {
+  const arrowConnect = (sourceId: string, direction: DiagramDirection, entry?: DiagramPaletteEntry) => {
     const doc = currentDoc()
     if (!doc) return
-    const size = kind ? defaultNodeSize(kind) : undefined
-    const result = connectInDirection(doc, sourceId, direction, mintId, kind && size ? { kind, w: size.w, h: size.h } : undefined)
+    const shape = entry ? { kind: entry.kind, ...defaultNodeSize(entry.kind), ...entry.size } : undefined
+    const result = connectInDirection(doc, sourceId, direction, mintId, shape)
     if (!result) return
     commit(result.doc)
     setSelection({ nodes: [result.nodeId], edges: [] })
@@ -347,15 +350,15 @@ export function DiagramTab({ tab }: { tab: Extract<Tab, { kind: 'diagram' }> }) 
     setPicker(null)
   }
 
-  const pickShape = (open: Picker, kind: DiagramKind) => {
+  const pickShape = (open: Picker, entry: DiagramPaletteEntry) => {
     setPicker(null)
     if (open.mode === 'arrow') {
-      arrowConnect(open.sourceId, open.direction, kind)
+      arrowConnect(open.sourceId, open.direction, entry)
       return
     }
     const doc = currentDoc()
     if (!doc) return
-    const placed = placeNode(doc, kind, open.at.x, open.at.y)
+    const placed = placeNode(doc, entry.kind, open.at.x, open.at.y, entry.size)
     const node = placed.nodes[placed.nodes.length - 1]
     if (!node) return
     if (open.mode === 'canvas') {
@@ -363,8 +366,7 @@ export function DiagramTab({ tab }: { tab: Extract<Tab, { kind: 'diagram' }> }) 
       setSelection({ nodes: [node.id], edges: [] })
     } else {
       // The new shape is centered on the drop point, not snapped away from it.
-      const size = defaultNodeSize(kind)
-      const centered = { ...node, x: open.at.x - size.w / 2, y: open.at.y - size.h / 2 }
+      const centered = { ...node, x: open.at.x - node.w / 2, y: open.at.y - node.h / 2 }
       const edge = tidyEdge({ id: mintId('e'), from: open.sourceId, to: node.id, fromPort: open.port ?? undefined })
       commit({ ...placed, nodes: [...doc.nodes, centered], edges: [...doc.edges, edge] })
       setSelection({ nodes: [node.id], edges: [] })
@@ -1019,10 +1021,10 @@ export function DiagramTab({ tab }: { tab: Extract<Tab, { kind: 'diagram' }> }) 
   }, [hover])
   useEffect(() => () => window.clearTimeout(pickerTimer.current), [])
 
-  const addAt = (kind: DiagramKind, x: number, y: number) => {
+  const addAt = (kind: DiagramKind, x: number, y: number, preset?: { w: number; h: number }) => {
     const doc = currentDoc()
     if (!doc) return
-    const next = placeNode(doc, kind, x, y)
+    const next = placeNode(doc, kind, x, y, preset)
     commit(next)
     const id = next.nodes[next.nodes.length - 1]?.id
     if (id) {
@@ -1333,11 +1335,11 @@ export function DiagramTab({ tab }: { tab: Extract<Tab, { kind: 'diagram' }> }) 
           }
         }}
         onDrop={(e) => {
-          const raw = e.dataTransfer.getData(SHAPE_MIME) || e.dataTransfer.getData('text/plain')
-          if (!isKind(raw) || file.loading) return
+          const entry = droppedEntry(e.dataTransfer.getData(SHAPE_MIME) || e.dataTransfer.getData('text/plain'))
+          if (!entry || file.loading) return
           e.preventDefault()
           const p = toDoc(e)
-          if (p) addAt(raw, p.x, p.y)
+          if (p) addAt(entry.kind, p.x, p.y, entry.size)
         }}
       >
         {file.loading ? (
@@ -1656,7 +1658,7 @@ export function DiagramTab({ tab }: { tab: Extract<Tab, { kind: 'diagram' }> }) 
           x={picker.x}
           y={picker.y}
           faint={picker.mode === 'arrow'}
-          onPick={(kind) => pickShape(picker, kind)}
+          onPick={(entry) => pickShape(picker, entry)}
           onClose={closePicker}
         />
       ) : null}
