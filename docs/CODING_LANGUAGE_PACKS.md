@@ -76,12 +76,12 @@ use Tasks, independent of chat selection. Pack installations are serialized per
 host. Existing LSP installers are reused in child processes so stdout cannot
 corrupt the SSH coding protocol.
 
-Packs cover Rust, JS/TS, Python, Go, C/C++, PHP, Lua, Zig, Bash, Nix, HTML/CSS/JSON
+Packs cover Rust, JS/TS, Python, Go, C/C++, PHP, Lua, Zig, Bash, HTML/CSS/JSON
 and TOML. Standalone adapters are provisioned for Python (debugpy), Go (Delve),
 JS (js-debug), PHP (Xdebug adapter), Bash and Lua. LLVM's `lldb-dap` is detected
 from PATH. Installing an adapter does not install project dependencies. PHP still
 requires Xdebug enabled for the selected PHP runtime; Bash requires bashdb.
-Nix and data formats have no DAP adapter.
+Data formats have no DAP adapter.
 
 Runtime recipes support apt, dnf, pacman and zypper on Linux, existing Homebrew
 on macOS, and selected winget packages on Windows. Linux uses a desktop pkexec
@@ -93,7 +93,7 @@ workload and recommended SDK components. Apt PHP includes php-xdebug and pacman
 PHP includes xdebug; Linux/Homebrew Bash recipes include bashdb. These are part
 of **Include runtime / compiler**, not silent installations. Xdebug activation,
 macOS SDKs, unsupported package repositories and other PHP distributions can
-still require additional setup. Nix and unavailable native Windows runtimes use an existing
+still require additional setup. Unavailable native Windows runtimes use an existing
 executable. Unsupported recipes fail explicitly without starting installation.
 ZLS provisioning reads the selected Zig version and chooses a stable ZLS release
 with the same major/minor version. Development/unparseable Zig versions or a

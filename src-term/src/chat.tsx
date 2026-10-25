@@ -24,6 +24,7 @@ import {
   type ToolCall,
 } from "./protocol.ts"
 import { SolidScrollBar } from "./modes/bits.tsx"
+import { nextStreamPaint, STREAM_PAINT_MS, type StreamPaint } from "./stream-paint.ts"
 import { scrollbars, type Theme } from "./theme.ts"
 import { Toast, type LocalNotice } from "./toast.tsx"
 
@@ -566,9 +567,18 @@ export function MarkdownBody({
   bg?: string
   streaming?: boolean
 }) {
+  const live = Boolean(streaming)
+  const streamingRef = useRef(live)
+  streamingRef.current = live
+  // One function for the life of this body. OpenTUI rebuilds a block when this
+  // identity changes, which would throw away the in-place code widget.
+  const renderNode = useRef((token: { type?: string; lang?: string }, context: RenderNodeContext) =>
+    renderMarkdownNode(token, context, streamingRef.current),
+  ).current
+  const painted = useStreamPaint(content, live)
   return (
     <markdown
-      content={content}
+      content={painted}
       syntaxStyle={syntaxStyle}
       treeSitterClient={syntaxClient}
       fg={fg}
@@ -577,9 +587,50 @@ export function MarkdownBody({
       {...{ selectable: true }}
       streaming={streaming}
       internalBlockMode="top-level"
-      renderNode={renderMarkdownNode}
+      renderNode={renderNode}
     />
   )
+}
+
+/** Paint a live reply a few times a second. A settled string is assigned whole. */
+function useStreamPaint(text: string, streaming: boolean): string {
+  const [shown, setShown] = useState(text)
+  const state = useRef<StreamPaint>({ shown: text, paintedAt: Date.now() })
+  const latest = useRef(text)
+  latest.current = text
+  const timer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  useEffect(() => {
+    const clear = () => {
+      if (timer.current == null) return
+      clearTimeout(timer.current)
+      timer.current = null
+    }
+    if (!streaming) {
+      clear()
+      state.current = { shown: text, paintedAt: Date.now() }
+      setShown(text)
+      return
+    }
+    const decision = nextStreamPaint(state.current, text, Date.now(), true)
+    if (decision.shown !== state.current.shown) {
+      clear()
+      state.current = decision
+      setShown(decision.shown)
+      return
+    }
+    if (text === state.current.shown || timer.current != null) return
+    const wait = Math.max(0, STREAM_PAINT_MS - (Date.now() - state.current.paintedAt))
+    timer.current = setTimeout(() => {
+      timer.current = null
+      const value = latest.current
+      state.current = { shown: value, paintedAt: Date.now() }
+      setShown(value)
+    }, wait)
+  }, [text, streaming])
+  useEffect(() => () => {
+    if (timer.current != null) clearTimeout(timer.current)
+  }, [])
+  return streaming ? shown : text
 }
 
 type ListNode = {
@@ -590,7 +641,10 @@ type ListNode = {
 }
 
 /** Keep lists as real blocks, then give each marker a gutter so wrapped lines hang. */
-function renderMarkdownNode(token: { type?: string; lang?: string }, context: RenderNodeContext) {
+function renderMarkdownNode(token: { type?: string; lang?: string }, context: RenderNodeContext, streaming: boolean) {
+  // A new box around the fence is a different widget, so OpenTUI destroys and
+  // reparses the whole fence on every token. The default code widget updates in place.
+  if (token.type === "code" && streaming) return null
   if (token.type === "code") {
     const code = context.defaultRender()
     if (!code) return null
@@ -967,8 +1021,14 @@ function Composer({
   const flushToken = useRef(0)
   const [lines, setLines] = useState(Math.max(1, snap.global.input.split("\n").length))
   const [draft, setDraft] = useState(snap.global.input)
+  const [wrapped, setWrapped] = useState(1)
   const innerCap = session.awaiting_approval || compact ? 1 : Math.max(1, Math.floor(height / 2) - 2)
-  const boxHeight = Math.min(innerCap, Math.max(1, lines)) + 2
+  // Soft-wrapped rows count too, or the textarea scrolls inside a box that never grows.
+  const boxHeight = Math.min(innerCap, Math.max(1, lines, wrapped)) + 2
+  useEffect(() => {
+    const count = Math.max(1, area.current?.virtualLineCount ?? 1)
+    setWrapped((current) => current === count ? current : count)
+  }, [draft, width])
   const paletteOpen = commandSuggestions(snap.global.command_palette, snap.global.palette_sel).rows.length > 0 || (snap.global.file_palette?.length ?? 0) > 0
   const keyQueue = useRef(Promise.resolve())
   const lastPaletteKey = useRef({ code: "", at: 0 })

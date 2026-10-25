@@ -90,14 +90,6 @@ const PACKS: &[Pack] = &[
         test: "Bats (project dependency)",
     },
     Pack {
-        id: "nix",
-        label: "Nix",
-        runtime: "nix",
-        lsp: "nil",
-        adapter: "",
-        test: "nix flake check",
-    },
-    Pack {
         id: "web",
         label: "HTML / CSS / JSON",
         runtime: "node",
@@ -128,7 +120,7 @@ pub(super) fn status(root: &Path) -> Result<Value> {
         let mut candidates = Vec::new();
         if let Some(path) = &runtime { candidates.push(path.to_string_lossy().into_owned()); }
         if p.id == "python" { for name in [".venv", "venv"] { let path = root.join(name).join(if cfg!(windows) {"Scripts/python.exe"} else {"bin/python"}); if path.is_file() { candidates.push(path.to_string_lossy().into_owned()); } } }
-        Ok(json!({"id":p.id,"label":p.label,"runtime":runtime,"runtimeName":p.runtime,"selected":selected,"candidates":candidates,"lsp":lsp,"server":spec.id,"serverOptions":if p.id=="php"&&!cfg!(windows){vec!["intelephense","phpactor"]}else{vec![p.lsp]},"adapter":if p.adapter.is_empty(){None}else{available(p.adapter)},"adapterName":p.adapter,"test":p.test}))
+        Ok(json!({"id":p.id,"label":p.label,"runtime":runtime,"runtimeName":p.runtime,"selected":selected,"candidates":candidates,"lsp":lsp,"server":spec.id,"serverOptions":if p.id=="php"{vec!["intelephense","phpactor"]}else{vec![p.lsp]},"adapter":if p.adapter.is_empty(){None}else{available(p.adapter)},"adapterName":p.adapter,"test":p.test}))
     }).collect::<Result<_>>()?;
     Ok(
         json!({"packs":packs,"fingerprint":super::environment::fingerprint(&config)?,"platform":std::env::consts::OS}),
@@ -169,7 +161,7 @@ fn runtime_commands(p: &Pack) -> Result<Vec<Value>> {
                     "php-xdebug",
                 ],
                 ("apt-get", "lua") => &["lua5.4", "nodejs", "npm"],
-                ("apt-get", "zig" | "nix") => anyhow::bail!(
+                ("apt-get", "zig") => anyhow::bail!(
                     "Select an existing {} runtime; no portable apt recipe is available",
                     p.label
                 ),
@@ -305,7 +297,7 @@ pub(super) fn plan(
         commands.extend(runtime_commands(p)?);
     }
     if include_lsp {
-        let provision_lsp = matches!(server, "lua-language-server" | "zls" | "nil");
+        let provision_lsp = matches!(server, "lua-language-server" | "zls");
         commands.push(command(
             &exe,
             if provision_lsp {

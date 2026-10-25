@@ -46,6 +46,8 @@ pub fn run_term_preview(start: TermStart) -> Result<()> {
     if let Ok(exe) = std::env::current_exe() {
         cmd.env("KOMA_BIN", exe);
     }
+    // Tree-sitter wasm keeps about 10 MB per compiler thread. One thread is enough.
+    cmd.env("BUN_JSC_numberOfWasmCompilerThreads", "1");
     // Hello.version is this fingerprint. The client restarts a session daemon
     // that was built from an older binary, which would reject ReplaceInput.
     cmd.env("KOMA_DATA_DIR", crate::model::store::base_dir()?);
@@ -87,6 +89,13 @@ pub fn run_term_preview(start: TermStart) -> Result<()> {
     let mut child = cmd
         .spawn()
         .with_context(|| format!("failed to start {}", bun.display()))?;
+    let ceiling = super::term_memory::ceiling_bytes();
+    #[cfg(windows)]
+    let job = {
+        use std::os::windows::io::AsRawHandle;
+        super::term_memory::TermJob::arm(child.as_raw_handle(), ceiling)
+    };
+    let watch = super::term_memory::Watch::start(child.id(), ceiling);
 
     #[cfg(unix)]
     let _foreground = ForegroundGuard::handoff(child.id());
@@ -103,6 +112,18 @@ pub fn run_term_preview(start: TermStart) -> Result<()> {
     let status = child
         .wait()
         .context("the new terminal stopped before it could exit")?;
+    let capped = watch.finish();
+    #[cfg(windows)]
+    let capped = capped || job.map(|job| job.finish(ceiling)).unwrap_or(false);
+    if capped {
+        #[cfg(unix)]
+        super::term_memory::restore_terminal();
+        let mb = ceiling / (1024 * 1024);
+        eprintln!(
+            "koma closed the terminal because it passed {mb} MB. The session is still running."
+        );
+        std::process::exit(1);
+    }
 
     match status.code() {
         Some(0) => Ok(()),

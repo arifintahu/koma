@@ -11,7 +11,7 @@
 //!   manifest.json          # id → version/source/installed_at
 //!   <id>/
 //!     bin/<binary>         # github / go / npm layout
-//!     venv/                # pip layout (basedpyright)
+//!     venv/                # legacy pip layout (basedpyright < npm)
 //! ```
 //!
 //! Resolution order: koma-managed → PATH → missing.
@@ -118,7 +118,7 @@ pub fn print_usage() -> i32 {
          managed ids:\n\
          \x20 rust-analyzer, vtsls, basedpyright, gopls, clangd,\n\
          \x20 vscode-langservers, bash-language-server, intelephense, taplo\n\
-         \x20 (lua-language-server, zls, nil: PATH discovery only for now)"
+         \x20 (lua-language-server, zls, phpactor: provisioned by `koma coding-provision`)"
     );
     1
 }

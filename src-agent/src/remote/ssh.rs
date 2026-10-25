@@ -440,7 +440,7 @@ pub(crate) fn exec_remote(
 #[path = "ssh_test.rs"]
 mod tests;
 
-#[cfg(test)]
+#[cfg(all(test, unix))]
 mod terminal_shell_tests {
     use super::*;
 

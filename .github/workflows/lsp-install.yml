@@ -1,0 +1,60 @@
+name: lsp-install
+
+# Installs every catalogue language server with the real installers on each
+# supported OS and fails if any server ends up missing. The installers download
+# from the network (GitHub, npm, Go, Zig, PHP), so this is not part of the
+# per-PR `ci` workflow: run it by hand or on the weekly schedule.
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '0 6 * * 1'
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  install:
+    name: install --all (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.3
+
+      - name: Prepare offline terminal
+        run: python scripts/prepare-terminal.py
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@2c7215f132e9ebf062739d9130488b56d53c060c # master
+        with:
+          toolchain: stable
+
+      - name: Cache cargo build
+        uses: Swatinem/rust-cache@v2
+        with:
+          prefix-key: "v0.0.4-cache-rust"
+
+      - name: Build koma
+        run: cargo build -p agent --no-default-features
+
+      - name: Install every language server
+        shell: bash
+        run: ./target/debug/koma lsp install --all
+
+      - name: Every server resolves
+        shell: bash
+        run: |
+          ./target/debug/koma lsp status | tee status.txt
+          if grep -qw missing status.txt; then
+            echo "::error::a language server is still missing after install --all"
+            exit 1
+          fi

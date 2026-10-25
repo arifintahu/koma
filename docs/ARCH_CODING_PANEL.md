@@ -70,7 +70,7 @@ src-agent/src/
 - Diagnostics: `textDocument/publishDiagnostics` → Problems drawer + markers.
 - Runtime rows: Language Servers footer drawer (`LspRuntime` pushes).
 - Install root: `~/.koma/lsp/` (`koma lsp status|install|uninstall …`).
-- Catalogue: vtsls, vscode-langservers, bash-language-server, intelephense, taplo, …; some entries PATH-only (e.g. lua-ls, zls, nil).
+- Catalogue: vtsls, vscode-langservers, bash-language-server, intelephense, taplo, …; some entries PATH-only (e.g. lua-ls, zls).
 
 Diff editor path stays Monarch-only (syntax highlighting without host LSP).
 
