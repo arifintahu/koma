@@ -1,12 +1,12 @@
 import { memo } from 'react'
 import { inlineToHtml } from '../../lib/markdownNote'
-import { GROUP_TITLE, TABLE_HEADER, TABLE_ROW, nodeStyle, type DiagramKey, type DiagramNode } from '../../lib/diagram'
+import { GROUP_TITLE, TABLE_HEADER, TABLE_INDENT, TABLE_ROW, nodeStyle, tableLines, type DiagramKey, type DiagramNode } from '../../lib/diagram'
 import { DiagramShapeSvg } from './DiagramShapeSvg'
 
 export type DiagramCellField = 'name' | 'type'
 export type DiagramCell = { rowId: string; field: DiagramCellField }
-/** What a key press in a table cell asks for. */
-export type DiagramCellMove = 'next' | 'prev' | 'add' | 'delete' | 'done'
+/** What a key press in a table cell asks for. Indent and outdent nest fields in document tables. */
+export type DiagramCellMove = 'next' | 'prev' | 'add' | 'delete' | 'done' | 'indent' | 'outdent'
 
 export type DiagramNodeEdit = {
   text: (id: string, text: string) => void
@@ -168,7 +168,8 @@ function TableView({
   cell: DiagramCell | null
   edit: DiagramNodeEdit
 }) {
-  const rows = node.rows ?? []
+  const lines = tableLines(node)
+  const document = node.dialect === 'document'
   const line = stroke === 'none' ? 'transparent' : stroke
   return (
     <div
@@ -183,25 +184,53 @@ function TableView({
         color,
       }}
     >
-      <div className="flex items-center justify-center px-2 font-semibold" style={{ height: TABLE_HEADER, borderBottom: `1px solid ${line}` }}>
+      <div className="relative flex items-center justify-center px-2 font-semibold" style={{ height: TABLE_HEADER, borderBottom: `1px solid ${line}` }}>
         {editing && !cell ? (
           <LabelEditor text={node.text} mode={editing} color={color} onText={(text) => edit.text(node.id, text)} onDone={edit.done} />
         ) : (
           <span className="truncate">{node.text || ' '}</span>
         )}
+        {document ? (
+          <span className="absolute right-2 text-[10px] font-normal opacity-50" title="Document collection">
+            {'{ }'}
+          </span>
+        ) : null}
       </div>
-      {rows.length ? (
-        rows.map((row) => {
+      {lines.length ? (
+        lines.map(({ row, depth }) => {
           const editingField = editing && cell?.rowId === row.id ? cell.field : null
+          const nest = !!row.children?.length
           return (
-            <div key={row.id} className="flex items-center" style={{ height: TABLE_ROW }}>
+            <div
+              key={row.id}
+              className="relative flex items-center"
+              style={{
+                height: TABLE_ROW,
+                // Nested fields sit on a faintly deeper tint, one step per level: a table in the table.
+                background: depth ? `color-mix(in srgb, currentColor ${Math.min(depth, 4) * 4}%, transparent)` : undefined,
+              }}
+            >
+              {depth ? (
+                <span
+                  className="pointer-events-none absolute bottom-0 top-0 w-px opacity-40"
+                  style={{ left: TABLE_KEY_WIDTH + (depth - 1) * TABLE_INDENT + TABLE_INDENT / 2, background: line === 'transparent' ? 'currentColor' : line }}
+                />
+              ) : null}
               <span className="flex-none text-center text-[10px] font-semibold opacity-70" style={{ width: TABLE_KEY_WIDTH }}>
                 {keyLabel(row.key)}
               </span>
+              {document ? (
+                <span className="flex flex-none items-center justify-center opacity-60" style={{ marginLeft: depth * TABLE_INDENT, width: TABLE_INDENT }}>
+                  {nest ? (row.collapsed ? '▸' : '▾') : ''}
+                </span>
+              ) : null}
               {editingField === 'name' ? (
                 <CellEditor value={row.name} cell={{ rowId: row.id, field: 'name' }} node={node} edit={edit} className="min-w-0 flex-1" />
               ) : (
-                <span className={`min-w-0 flex-1 truncate ${row.key?.includes('pk') ? 'underline' : ''}`}>{row.name || ' '}</span>
+                <span className={`min-w-0 flex-1 truncate ${row.key?.includes('pk') ? 'underline' : ''}`}>
+                  {row.name || ' '}
+                  {row.optional ? <span className="opacity-50">?</span> : null}
+                </span>
               )}
               {editingField === 'type' ? (
                 <CellEditor value={row.type ?? ''} cell={{ rowId: row.id, field: 'type' }} node={node} edit={edit} className="w-2/5 text-right" />
@@ -248,7 +277,11 @@ function CellEditor({
       onChange={(e) => edit.cellText(node.id, cell, e.target.value)}
       onKeyDown={(e) => {
         const move: DiagramCellMove | null =
-          e.key === 'Tab'
+          e.altKey && e.key === 'ArrowRight'
+            ? 'indent'
+            : e.altKey && e.key === 'ArrowLeft'
+              ? 'outdent'
+              : e.key === 'Tab'
             ? e.shiftKey
               ? 'prev'
               : 'next'

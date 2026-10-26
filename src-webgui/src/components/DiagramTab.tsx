@@ -46,7 +46,18 @@ import {
   NO_SELECTION,
   TABLE_HEADER,
   TABLE_ROW,
-  moveTableRow,
+  TABLE_INDENT,
+  addChildRow,
+  indentRow,
+  insertRowAfter,
+  isNestType,
+  moveRowWithinSiblings,
+  outdentRow,
+  removeRow,
+  tableLineRow,
+  tableLines,
+  toggleCollapsed,
+  updateRow,
   nextKey,
   rowAnchor,
   rowCenterY,
@@ -64,7 +75,9 @@ import {
   routeFractionAt,
   routePointAt,
   defaultNodeSize,
+  defaultCollectionRows,
   defaultTableRows,
+  tableHeight,
   deleteDiagramSelection,
   dropGroupHighlight,
   groupHitZone,
@@ -128,7 +141,7 @@ type Drag =
   /** `port` null leaves the source end floating, as a drag from a hover arrow does. */
   | { kind: 'connect'; fromId: string; port: number | null; row?: string }
   /** Dragging a row of a selected table up or down reorders it. */
-  | { kind: 'row'; tableId: string; index: number; base: DiagramRow[]; sy: number; moved: boolean; remembered: boolean }
+  | { kind: 'row'; tableId: string; rowId: string; base: DiagramRow[]; sy: number; moved: boolean; remembered: boolean }
   | { kind: 'arrow'; sourceId: string; direction: DiagramDirection; sx: number; sy: number }
   | { kind: 'bend'; edgeId: string; index: number; remembered: boolean }
   | { kind: 'label'; edgeId: string; remembered: boolean }
@@ -175,7 +188,14 @@ function mintId(prefix: string): string {
 /** Last copied shapes and the lines between them. Shared across diagram tabs. */
 let clipboard: { nodes: DiagramNode[]; edges: DiagramEdge[] } | null = null
 
-function placeNode(doc: DiagramDoc, kind: DiagramKind, x: number, y: number, preset?: { w: number; h: number }): DiagramDoc {
+function placeNode(
+  doc: DiagramDoc,
+  kind: DiagramKind,
+  x: number,
+  y: number,
+  preset?: { w: number; h: number },
+  dialect?: 'document',
+): DiagramDoc {
   const size = { ...defaultNodeSize(kind), ...preset }
   const node: DiagramNode = {
     id: mintId('n'),
@@ -184,12 +204,18 @@ function placeNode(doc: DiagramDoc, kind: DiagramKind, x: number, y: number, pre
     y: snap(y - size.h / 2, doc.grid, doc.snap),
     ...size,
   }
-  if (kind === 'table') node.rows = defaultTableRows()
+  if (kind === 'table' && dialect === 'document') {
+    node.dialect = dialect
+    node.text = 'collection'
+    node.w = 220
+    node.rows = defaultCollectionRows()
+    node.h = tableHeight(node.rows)
+  } else if (kind === 'table') node.rows = defaultTableRows()
   return reparentDragged({ ...doc, nodes: [...doc.nodes, node] }, [node.id])
 }
 
 /** A palette entry from a drop. Older drags carry a bare kind. */
-function droppedEntry(raw: string): Pick<DiagramPaletteEntry, 'kind' | 'size'> | null {
+function droppedEntry(raw: string): Pick<DiagramPaletteEntry, 'kind' | 'size' | 'dialect'> | null {
   return paletteEntry(raw) ?? (isDiagramKind(raw) ? { kind: raw } : null)
 }
 
@@ -202,6 +228,7 @@ function tidyNode(node: DiagramNode): DiagramNode {
   if (!next.strokeColor) delete next.strokeColor
   if (!next.rotation) delete next.rotation
   if (!next.detail?.trim()) delete next.detail
+  if (!next.dialect) delete next.dialect
   return next
 }
 
@@ -414,7 +441,7 @@ export function DiagramTab({ tab }: { tab: Extract<Tab, { kind: 'diagram' }> }) 
     }
     const doc = currentDoc()
     if (!doc) return
-    const placed = placeNode(doc, entry.kind, open.at.x, open.at.y, entry.size)
+    const placed = placeNode(doc, entry.kind, open.at.x, open.at.y, entry.size, entry.dialect)
     const node = placed.nodes[placed.nodes.length - 1]
     if (!node) return
     if (open.mode === 'canvas') {
@@ -594,9 +621,17 @@ export function DiagramTab({ tab }: { tab: Extract<Tab, { kind: 'diagram' }> }) 
         setDragCursor('ns-resize')
         const table = doc.nodes.find((node) => node.id === drag.tableId)
         if (!table) return
-        const target = Math.max(0, Math.min(drag.base.length - 1, Math.floor((point.y - table.y - TABLE_HEADER) / TABLE_ROW)))
-        const rows = moveTableRow(drag.base, drag.index, target)
-        if (rows.every((row, i) => table.rows?.[i]?.id === row.id)) return
+        // A row moves among its own siblings: the target is the sibling under the pointer.
+        const lines = tableLines({ ...table, rows: drag.base })
+        const own = lines.find((line) => line.row.id === drag.rowId)
+        const at = Math.floor((point.y - table.y - TABLE_HEADER) / TABLE_ROW)
+        const siblings = lines.filter((line) => line.parentId === own?.parentId).map((line) => line.row.id)
+        const under = lines[Math.max(0, Math.min(lines.length - 1, at))]
+        const target = under ? siblings.indexOf(under.row.id) : -1
+        if (!own || target < 0) return
+        const rows = moveRowWithinSiblings(drag.base, drag.rowId, target)
+        const visible = tableLines({ ...table, rows }).map((line) => line.row.id)
+        if (visible.every((id, i) => tableLines(table)[i]?.row.id === id)) return
         apply(drag, updateTableRows(doc, drag.tableId, rows), doc)
         return
       }
@@ -707,7 +742,7 @@ export function DiagramTab({ tab }: { tab: Extract<Tab, { kind: 'diagram' }> }) 
       }
       // A table row takes the line on that row; elsewhere a near port pins it or the end floats.
       const rowIndex = tableRowAt(target, point)
-      const toRow = rowIndex != null && rowIndex >= 0 ? target.rows?.[rowIndex]?.id : undefined
+      const toRow = tableLineRow(target, rowIndex)?.id
       const fromRow = drag.row
       const fromPort = fromRow ? undefined : (drag.port ?? undefined)
       const toPort = toRow ? undefined : connectionEnd(target, point, DIAGRAM_PORT_SNAP / viewRef.current.zoom).port
@@ -1169,10 +1204,10 @@ export function DiagramTab({ tab }: { tab: Extract<Tab, { kind: 'diagram' }> }) 
   }, [hover])
   useEffect(() => () => window.clearTimeout(pickerTimer.current), [])
 
-  const addAt = (kind: DiagramKind, x: number, y: number, preset?: { w: number; h: number }) => {
+  const addAt = (kind: DiagramKind, x: number, y: number, preset?: { w: number; h: number }, dialect?: 'document') => {
     const doc = currentDoc()
     if (!doc) return
-    const next = placeNode(doc, kind, x, y, preset)
+    const next = placeNode(doc, kind, x, y, preset, dialect)
     commit(next)
     const id = next.nodes[next.nodes.length - 1]?.id
     if (id) {
@@ -1254,9 +1289,17 @@ export function DiagramTab({ tab }: { tab: Extract<Tab, { kind: 'diagram' }> }) 
     if (!grab) return
     // Rows of an already selected table drag to reorder; the header (or a first click) moves the table.
     const lone = already && !e.shiftKey && current.nodes.length === 1 && !current.edges.length
-    const rowIndex = lone ? tableRowAt(grab, p) : null
-    if (rowIndex != null && rowIndex >= 0 && grab.rows) {
-      dragRef.current = { kind: 'row', tableId: grab.id, index: rowIndex, base: grab.rows, sy: e.clientY, moved: false, remembered: false }
+    const line = grab.kind === 'table' ? tableLines(grab)[tableRowAt(grab, p) ?? -1] : undefined
+    if (line && grab.dialect === 'document' && line.row.children?.length) {
+      // The chevron in front of a nest's name folds or unfolds it.
+      const chevron = grab.x + TABLE_KEY_WIDTH + line.depth * TABLE_INDENT
+      if (p.x >= chevron && p.x <= chevron + TABLE_INDENT) {
+        commit(updateTableRows(doc, grab.id, toggleCollapsed(grab.rows ?? [], line.row.id)))
+        return
+      }
+    }
+    if (lone && line && grab.rows) {
+      dragRef.current = { kind: 'row', tableId: grab.id, rowId: line.row.id, base: grab.rows, sy: e.clientY, moved: false, remembered: false }
       return
     }
     const ids = movingIds(doc, e.shiftKey || already ? [...new Set([...selectionRef.current.nodes, hit.id])] : [hit.id])
@@ -1290,13 +1333,12 @@ export function DiagramTab({ tab }: { tab: Extract<Tab, { kind: 'diagram' }> }) 
     labelNoted.current = false
     setSelection({ nodes: [hit.id], edges: [] })
     setPropsOpen(true)
-    const rowIndex = node ? tableRowAt(node, p) : null
-    const row = node && rowIndex != null && rowIndex >= 0 ? node.rows?.[rowIndex] : undefined
+    const row = node ? tableLineRow(node, tableRowAt(node, p)) : undefined
     if (node && row) {
       // A table cell: the key column cycles PK/FK, the right part edits the type, the rest the name.
       const x = p.x - node.x
       if (x < TABLE_KEY_WIDTH) {
-        commit(updateTableRows(file.doc, node.id, (node.rows ?? []).map((item) => (item.id === row.id ? { ...item, key: nextKey(item.key) } : item))))
+        commit(updateTableRows(file.doc, node.id, updateRow(node.rows ?? [], row.id, (item) => ({ ...item, key: nextKey(item.key) }))))
         return
       }
       setEditing(node.id, 'select', { rowId: row.id, field: x > node.w * 0.6 ? 'type' : 'name' })
@@ -1317,6 +1359,13 @@ export function DiagramTab({ tab }: { tab: Extract<Tab, { kind: 'diagram' }> }) 
   const patchNode = (id: string, patch: Partial<DiagramNode>) => {
     const doc = currentDoc()
     if (!doc) return
+    if (patch.rows) {
+      // Rows (a dialect switch flattens them) also set the table's height and its lines' rows.
+      const { rows, ...rest } = patch
+      const restyled = { ...doc, nodes: doc.nodes.map((node) => (node.id === id ? tidyNode({ ...node, ...rest }) : node)) }
+      commit(updateTableRows(restyled, id, rows))
+      return
+    }
     commit({ ...doc, nodes: doc.nodes.map((node) => (node.id === id ? tidyNode({ ...node, ...patch }) : node)) })
   }
 
@@ -1348,15 +1397,17 @@ export function DiagramTab({ tab }: { tab: Extract<Tab, { kind: 'diagram' }> }) 
     })
   const editCellText = (id: string, cell: DiagramCell, text: string) =>
     editRows(id, (rows) =>
-      rows.map((row) => (row.id !== cell.rowId ? row : cell.field === 'name' ? { ...row, name: text } : { ...row, type: text.trim() ? text : undefined })),
+      updateRow(rows, cell.rowId, (row) => (cell.field === 'name' ? { ...row, name: text } : { ...row, type: text.trim() ? text : undefined })),
     )
   // Tab and Enter swap one cell editor for the next; the old one's blur must not end editing.
   const cellMoving = useRef(false)
   const moveCell = (id: string, cell: DiagramCell, move: DiagramCellMove) => {
     const table = currentDoc()?.nodes.find((node) => node.id === id)
-    const rows = table?.rows ?? []
-    const index = rows.findIndex((row) => row.id === cell.rowId)
-    if (!table || index < 0 || move === 'done') {
+    // Tab walks the rows as drawn, nested fields included.
+    const lines = table ? tableLines(table) : []
+    const index = lines.findIndex((line) => line.row.id === cell.rowId)
+    const row = lines[index]?.row
+    if (!table || !row || move === 'done') {
       labelNoted.current = false
       setEditing(null)
       return
@@ -1365,24 +1416,30 @@ export function DiagramTab({ tab }: { tab: Extract<Tab, { kind: 'diagram' }> }) 
     window.setTimeout(() => {
       cellMoving.current = false
     })
+    const document = table.dialect === 'document'
     if (move === 'next' && cell.field === 'name') {
       setEditing(id, 'select', { rowId: cell.rowId, field: 'type' })
-    } else if (move === 'next' && rows[index + 1]) {
-      setEditing(id, 'select', { rowId: rows[index + 1].id, field: 'name' })
+    } else if (move === 'next' && lines[index + 1]) {
+      setEditing(id, 'select', { rowId: (lines[index + 1] as { row: DiagramRow }).row.id, field: 'name' })
     } else if (move === 'prev' && cell.field === 'type') {
       setEditing(id, 'select', { rowId: cell.rowId, field: 'name' })
     } else if (move === 'prev') {
-      if (rows[index - 1]) setEditing(id, 'select', { rowId: rows[index - 1].id, field: 'type' })
+      if (lines[index - 1]) setEditing(id, 'select', { rowId: (lines[index - 1] as { row: DiagramRow }).row.id, field: 'type' })
+    } else if (move === 'indent' || move === 'outdent') {
+      if (document) editRows(id, (rows) => (move === 'indent' ? indentRow(rows, cell.rowId) : outdentRow(rows, cell.rowId)))
+      setEditing(id, 'end', cell)
     } else if (move === 'delete') {
-      editRows(id, (list) => list.filter((row) => row.id !== cell.rowId))
-      const previous = rows[index - 1] ?? rows[index + 1]
-      if (previous) setEditing(id, 'end', { rowId: previous.id, field: 'name' })
+      editRows(id, (rows) => removeRow(rows, cell.rowId))
+      const previous = lines[index - 1] ?? lines[index + 1]
+      if (previous) setEditing(id, 'end', { rowId: previous.row.id, field: 'name' })
       else setEditing(null)
     } else {
-      // Enter, or Tab past the last cell: a new row below, ready for its name.
-      const row: DiagramRow = { id: mintId('r'), name: '' }
-      editRows(id, (list) => [...list.slice(0, index + 1), row, ...list.slice(index + 1)])
-      setEditing(id, 'select', { rowId: row.id, field: 'name' })
+      // Enter, or Tab past the last cell: a new row below, ready for its name. On a nest
+      // in a document table the new field goes inside it, as its first field.
+      const fresh: DiagramRow = { id: mintId('r'), name: '' }
+      const inside = document && isNestType(row.type)
+      editRows(id, (rows) => (inside ? addChildRow(rows, row.id, fresh) : insertRowAfter(rows, row.id, fresh)))
+      setEditing(id, 'select', { rowId: fresh.id, field: 'name' })
     }
   }
 
@@ -1491,7 +1548,7 @@ export function DiagramTab({ tab }: { tab: Extract<Tab, { kind: 'diagram' }> }) 
     return from && to ? edgePoints(from, to, edge) : null
   })
   const hoverRowNode = hoverRow ? byId.get(hoverRow.id) : undefined
-  const hoverRowId = hoverRowNode && hoverRow ? hoverRowNode.rows?.[hoverRow.index]?.id : undefined
+  const hoverRowId = hoverRowNode && hoverRow ? tableLineRow(hoverRowNode, hoverRow.index)?.id : undefined
   const arrowsNode =
     arrowsFor && tool === 'select' && !editing && !dragging && !connectDrag && !altHeld && !marquee ? byId.get(arrowsFor) : undefined
 
@@ -1571,7 +1628,7 @@ export function DiagramTab({ tab }: { tab: Extract<Tab, { kind: 'diagram' }> }) 
           if (!entry || file.loading) return
           e.preventDefault()
           const p = toDoc(e)
-          if (p) addAt(entry.kind, p.x, p.y, entry.size)
+          if (p) addAt(entry.kind, p.x, p.y, entry.size, entry.dialect)
         }}
       >
         {file.loading ? (
@@ -1737,7 +1794,7 @@ export function DiagramTab({ tab }: { tab: Extract<Tab, { kind: 'diagram' }> }) 
             )
             const rowEnd =
               connectTarget && targetRow != null && targetRow >= 0
-                ? rowAnchor(connectTarget, connectTarget.rows?.[targetRow]?.id ?? '', nodeCenter(from))
+                ? rowAnchor(connectTarget, tableLineRow(connectTarget, targetRow)?.id ?? '', nodeCenter(from))
                 : null
             const end = screenPoint(
               rowEnd ??

@@ -10,7 +10,9 @@ import {
   routeMidpoint,
   routePath,
   TABLE_HEADER,
+  TABLE_INDENT,
   TABLE_ROW,
+  tableLines,
   type DiagramArrow,
   type DiagramDoc,
   type DiagramNode,
@@ -186,9 +188,9 @@ function DiagramShape({ node }: { node: DiagramNode }) {
         <text x={node.w / 2} y={TABLE_HEADER / 2} textAnchor="middle" dominantBaseline="middle" fontSize="12" fontWeight="600" fill="var(--color-koma-fg)">
           {node.text}
         </text>
-        {(node.rows ?? []).map((row, i) => (
-          <text key={row.id} x={8} y={TABLE_HEADER + i * TABLE_ROW + TABLE_ROW / 2} dominantBaseline="middle" fontSize="11" fill="var(--color-koma-fg)">
-            {`${row.key ? `${row.key.toUpperCase()} ` : ''}${row.name}${row.type ? ` ${row.type}` : ''}`}
+        {tableLines(node).map(({ row, depth }, i) => (
+          <text key={row.id} x={8 + depth * TABLE_INDENT} y={TABLE_HEADER + i * TABLE_ROW + TABLE_ROW / 2} dominantBaseline="middle" fontSize="11" fill="var(--color-koma-fg)">
+            {`${row.key ? `${row.key.toUpperCase()} ` : ''}${row.children?.length ? (row.collapsed ? '▸ ' : '▾ ') : ''}${row.name}${row.optional ? '?' : ''}${row.type ? ` ${row.type}` : ''}`}
           </text>
         ))}
       </g>

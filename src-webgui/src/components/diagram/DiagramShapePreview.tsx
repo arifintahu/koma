@@ -10,6 +10,8 @@ export type DiagramPaletteEntry = {
   group: 'Basic' | 'Flowchart' | 'Containers' | 'Database'
   /** Size override for presets such as the circle. */
   size?: { w: number; h: number }
+  /** Tables only: a document collection instead of a SQL table. */
+  dialect?: 'document'
 }
 
 /** Shapes offered by the sidebar palette and by the canvas shape picker, in order. */
@@ -31,6 +33,7 @@ export const DIAGRAM_PALETTE: DiagramPaletteEntry[] = [
   { id: 'cloud', kind: 'cloud', label: 'Cloud', group: 'Flowchart' },
   { id: 'group', kind: 'group', label: 'Group', group: 'Containers' },
   { id: 'table', kind: 'table', label: 'Table', group: 'Database' },
+  { id: 'collection', kind: 'table', label: 'Collection (document)', group: 'Database', dialect: 'document' },
 ]
 
 export function paletteEntry(id: string): DiagramPaletteEntry | undefined {
@@ -48,6 +51,17 @@ export function ShapePreview({ entry }: { entry: DiagramPaletteEntry }) {
         <rect x="0.75" y="0.75" width="38.5" height="28.5" fill="var(--color-koma-bg)" stroke="currentColor" strokeWidth="1.25" />
         <path d="M0.75 8 H39.25" fill="none" stroke="currentColor" strokeWidth="1" />
         <rect x="8" y="13" width="16" height="10" fill="none" stroke="currentColor" strokeWidth="1" />
+      </svg>
+    )
+  }
+  if (entry.kind === 'table' && entry.dialect === 'document') {
+    return (
+      <svg viewBox="0 0 40 30" width={40} height={30} className="m-auto block" aria-hidden="true">
+        <rect x="0.75" y="0.75" width="38.5" height="28.5" rx="2" fill="var(--color-koma-bg)" stroke="currentColor" strokeWidth="1.25" />
+        <path d="M0.75 8.5 H39.25" fill="none" stroke="currentColor" strokeWidth="1" />
+        <text x="33" y="6.6" fontSize="5" textAnchor="middle" fill="currentColor">{'{}'}</text>
+        <path d="M5 13.5 H24 M5 18.5 H14 M9 23 H28" fill="none" stroke="currentColor" strokeWidth="1" opacity="0.6" />
+        <path d="M7 19.5 V25" fill="none" stroke="currentColor" strokeWidth="0.75" opacity="0.6" />
       </svg>
     )
   }

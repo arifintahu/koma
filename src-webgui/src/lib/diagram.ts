@@ -336,6 +336,25 @@ export function defaultNodeSize(kind: DiagramKind): { w: number; h: number; text
   return { ...SHAPE_SIZES[kind], text: kind === 'text' ? 'text' : 'label' }
 }
 
+/** A new document collection: an `_id` key, a nested object and an array, to show the shape. */
+export function defaultCollectionRows(): DiagramRow[] {
+  return [
+    { id: 'r1', name: '_id', type: 'objectId', key: 'pk' },
+    { id: 'r2', name: 'name', type: 'string' },
+    {
+      id: 'r3',
+      name: 'address',
+      type: 'object',
+      children: [
+        { id: 'r4', name: 'city', type: 'string' },
+        { id: 'r5', name: 'zip', type: 'string', optional: true },
+      ],
+    },
+    { id: 'r6', name: 'tags', type: 'array<string>' },
+    { id: 'r7', name: 'createdAt', type: 'date' },
+  ]
+}
+
 /** A new table starts with an id key and two columns, like draw.io's table template. */
 export function defaultTableRows(): DiagramRow[] {
   return [
