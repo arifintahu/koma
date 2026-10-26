@@ -32,10 +32,12 @@ import {
   SquaresSubtract,
   SquaresUnite,
   Combine,
+  ChevronDown,
   WrapText,
   X,
 } from 'lucide-react'
 import { KomaSelect } from '../KomaSelect'
+import { MenuItem, Popover } from '../panels/Popover'
 import { FontFamilyPicker } from './FontFamilyPicker'
 import { TEXT_COLOR_DEFAULT } from './tabShared'
 import { DesignModeContext } from './DesignTokenMenu'
@@ -167,6 +169,8 @@ export function NodeSettings({
   const [propValue, setPropValue] = useState('')
   const node = nodes[0]
   const multi = nodes.length > 1
+  // Two or more shapes combine; one group (or boolean) takes an operation or changes it.
+  const showBoolean = !!onBoolean && (multi || (nodes.length === 1 && nodes[0].kind === 'group'))
   const allFrames = nodes.every((item) => item.kind === 'frame')
   const allText = nodes.every((item) => item.kind === 'text')
   const showRadius = nodes.every((item) => item.kind === 'rect' || item.kind === 'frame')
@@ -481,28 +485,35 @@ export function NodeSettings({
           />
         </label>
       )}
-      {onAlign ? (
+      {onAlign || showBoolean ? (
         <div className="flex flex-wrap items-center gap-1">
-          <div className="flex gap-0.5">
-            <AlignButton label="Align left" onClick={() => onAlign('horizontal', 'min')}><AlignStartVertical size={14} /></AlignButton>
-            <AlignButton label="Align center" onClick={() => onAlign('horizontal', 'center')}><AlignCenterVertical size={14} /></AlignButton>
-            <AlignButton label="Align right" onClick={() => onAlign('horizontal', 'max')}><AlignEndVertical size={14} /></AlignButton>
-          </div>
-          <div className="flex gap-0.5">
-            <AlignButton label="Align top" onClick={() => onAlign('vertical', 'min')}><AlignStartHorizontal size={14} /></AlignButton>
-            <AlignButton label="Align middle" onClick={() => onAlign('vertical', 'center')}><AlignCenterHorizontal size={14} /></AlignButton>
-            <AlignButton label="Align bottom" onClick={() => onAlign('vertical', 'max')}><AlignEndHorizontal size={14} /></AlignButton>
-          </div>
-          {nodes.length >= 3 && hasParent ? (
-            <div className="flex gap-0.5">
-              <AlignButton label="Distribute horizontal" onClick={() => onAlign('horizontal', 'spread')}><AlignHorizontalSpaceBetween size={14} /></AlignButton>
-              <AlignButton label="Distribute vertical" onClick={() => onAlign('vertical', 'spread')}><AlignVerticalSpaceBetween size={14} /></AlignButton>
+          {onAlign ? (
+            <>
+              <div className="flex gap-0.5">
+                <AlignButton label="Align left" onClick={() => onAlign('horizontal', 'min')}><AlignStartVertical size={14} /></AlignButton>
+                <AlignButton label="Align center" onClick={() => onAlign('horizontal', 'center')}><AlignCenterVertical size={14} /></AlignButton>
+                <AlignButton label="Align right" onClick={() => onAlign('horizontal', 'max')}><AlignEndVertical size={14} /></AlignButton>
+              </div>
+              <div className="flex gap-0.5">
+                <AlignButton label="Align top" onClick={() => onAlign('vertical', 'min')}><AlignStartHorizontal size={14} /></AlignButton>
+                <AlignButton label="Align middle" onClick={() => onAlign('vertical', 'center')}><AlignCenterHorizontal size={14} /></AlignButton>
+                <AlignButton label="Align bottom" onClick={() => onAlign('vertical', 'max')}><AlignEndHorizontal size={14} /></AlignButton>
+              </div>
+              {nodes.length >= 3 && hasParent ? (
+                <div className="flex gap-0.5">
+                  <AlignButton label="Distribute horizontal" onClick={() => onAlign('horizontal', 'spread')}><AlignHorizontalSpaceBetween size={14} /></AlignButton>
+                  <AlignButton label="Distribute vertical" onClick={() => onAlign('vertical', 'spread')}><AlignVerticalSpaceBetween size={14} /></AlignButton>
+                </div>
+              ) : null}
+            </>
+          ) : null}
+          {/* Combining shapes takes the free space at the end of the row, as in Figma. */}
+          {showBoolean && onBoolean ? (
+            <div className="ml-auto">
+              <BooleanMenu doc={doc} nodes={nodes} onBoolean={onBoolean} />
             </div>
           ) : null}
         </div>
-      ) : null}
-      {onBoolean && (nodes.length >= 2 || (nodes.length === 1 && nodes[0].kind === 'group')) ? (
-        <BooleanRow doc={doc} nodes={nodes} onBoolean={onBoolean} />
       ) : null}
       <Section title="Layer">
         <div className="flex items-center gap-1">
@@ -1585,41 +1596,67 @@ function TextMorePage({
   )
 }
 
-const BOOLEAN_OPS: { op: DesignBooleanOp; label: string; shortcut: string; icon: ReactNode }[] = [
+const BOOLEAN_MENU: { op: DesignBooleanOp | 'flatten'; label: string; shortcut: string; icon: ReactNode }[] = [
   { op: 'union', label: 'Union', shortcut: '⌥⇧U', icon: <SquaresUnite size={14} /> },
   { op: 'subtract', label: 'Subtract', shortcut: '⌥⇧S', icon: <SquaresSubtract size={14} /> },
   { op: 'intersect', label: 'Intersect', shortcut: '⌥⇧I', icon: <SquaresIntersect size={14} /> },
   { op: 'exclude', label: 'Exclude', shortcut: '⌥⇧E', icon: <SquaresExclude size={14} /> },
+  { op: 'flatten', label: 'Flatten', shortcut: '⌥⇧F', icon: <Combine size={14} /> },
 ]
 
 /**
- * Combine shapes, like Penpot's boolean row. A selected boolean shows its operation as pressed;
- * pressing that operation again turns it back into a group. Flatten bakes the result into a path.
+ * Combine shapes from one button, like Figma. The button shows the operation of a selected
+ * boolean (or the last one used) and opens the list. Choosing the operation a boolean already
+ * has turns it back into a group; Flatten bakes the result into a path.
  */
-function BooleanRow({ doc, nodes, onBoolean }: { doc: DesignDoc; nodes: DesignNode[]; onBoolean: (op: DesignBooleanOp | 'flatten') => void }) {
+function BooleanMenu({ doc, nodes, onBoolean }: { doc: DesignDoc; nodes: DesignNode[]; onBoolean: (op: DesignBooleanOp | 'flatten') => void }) {
+  const [open, setOpen] = useState(false)
+  const [last, setLast] = useState<DesignBooleanOp>('union')
+  const trigger = useRef<HTMLButtonElement>(null)
   const eligible = booleanEligible(doc, nodes.map((node) => node.id))
   const only = nodes.length === 1 ? nodes[0] : null
-  const current = only && isBooleanNode(only) ? only.booleanOp : null
+  const current = only && isBooleanNode(only) ? only.booleanOp ?? null : null
+  const shown = BOOLEAN_MENU.find((item) => item.op === (current ?? last)) ?? BOOLEAN_MENU[0]
   const blocked = eligible.ok ? '' : eligible.reason
   // A lone plain group can take an operation but has nothing to flatten yet.
   const canFlatten = eligible.ok && (nodes.length >= 2 || !!current)
   return (
-    <div className="flex items-center gap-0.5" role="group" aria-label="Boolean operations">
-      {BOOLEAN_OPS.map(({ op, label, shortcut, icon }) => (
-        <AlignButton
-          key={op}
-          label={blocked || (current === op ? `${label} (${shortcut}). Press again to ungroup` : `${label} (${shortcut})`)}
-          pressed={current === op}
-          disabled={!eligible.ok}
-          onClick={() => onBoolean(op)}
-        >
-          {icon}
-        </AlignButton>
-      ))}
-      <span className="mx-0.5 h-4 w-px flex-none bg-koma-border" />
-      <AlignButton label={blocked || 'Flatten (⌥⇧F)'} disabled={!canFlatten} onClick={() => onBoolean('flatten')}>
-        <Combine size={14} />
-      </AlignButton>
-    </div>
+    <>
+      <button
+        ref={trigger}
+        type="button"
+        title={blocked || 'Combine shapes'}
+        aria-label="Boolean operations"
+        aria-haspopup="menu"
+        aria-expanded={open}
+        disabled={!eligible.ok}
+        onClick={() => setOpen((value) => !value)}
+        className={`flex h-7 flex-none items-center gap-0.5 rounded px-1.5 disabled:opacity-35 disabled:hover:bg-transparent ${
+          current || open ? 'bg-koma-hover text-koma-fg' : 'text-koma-dim hover:bg-koma-hover hover:text-koma-fg'
+        }`}
+      >
+        {shown.icon}
+        <ChevronDown size={11} />
+      </button>
+      <Popover anchor={trigger} open={open} onClose={() => setOpen(false)} width={196}>
+        {BOOLEAN_MENU.map((item) => (
+          <MenuItem
+            key={item.op}
+            active={item.op === current}
+            disabled={item.op === 'flatten' ? !canFlatten : !eligible.ok}
+            title={item.op === current ? 'Press again to ungroup' : undefined}
+            onPick={() => {
+              if (item.op !== 'flatten') setLast(item.op)
+              setOpen(false)
+              onBoolean(item.op)
+            }}
+          >
+            <span className="flex w-4 flex-none items-center justify-center">{item.icon}</span>
+            {item.label}
+            <span className="ml-auto text-[10px] opacity-60">{item.shortcut}</span>
+          </MenuItem>
+        ))}
+      </Popover>
+    </>
   )
 }
