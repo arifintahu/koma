@@ -9,6 +9,7 @@ import {
   MousePointer2,
   PenTool,
   Plus,
+  Route,
   Spline,
   Trash2,
   Unlink,
@@ -18,6 +19,7 @@ import type { HandleMode } from '../../lib/design/vectorEdit'
 export type PathBarAction =
   | 'draw'
   | 'move'
+  | 'bend'
   | 'add'
   | 'delete'
   | 'merge'
@@ -35,13 +37,14 @@ export type PathBarAction =
  * vector is being edited. Every button names its shortcut.
  */
 export function DesignPathBar({
-  drawing,
+  mode,
   snap,
   handleMode,
   nodes,
   onAction,
 }: {
-  drawing: boolean
+  /** Draw adds points with the pen, move picks and drags nodes, bend curves whatever you drag. */
+  mode: 'draw' | 'move' | 'bend'
   snap: boolean
   /** The handle mode shared by the selected nodes, or null when mixed or none selected. */
   handleMode: HandleMode | null
@@ -73,8 +76,9 @@ export function DesignPathBar({
       onPointerDown={(event) => event.stopPropagation()}
       onDoubleClick={(event) => event.stopPropagation()}
     >
-      {button('Draw nodes (P)', 'draw', <PenTool size={14} />, { on: drawing })}
-      {button('Move nodes (M)', 'move', <MousePointer2 size={14} />, { on: !drawing })}
+      {button('Draw nodes (P)', 'draw', <PenTool size={14} />, { on: mode === 'draw' })}
+      {button('Move nodes (M)', 'move', <MousePointer2 size={14} />, { on: mode === 'move' })}
+      {button('Bend: drag a line to curve it, click a node to round or sharpen it (B)', 'bend', <Spline size={14} />, { on: mode === 'bend' })}
       {divider}
       {button('Add node (Shift+=)', 'add', <Plus size={14} />, { disabled: none })}
       {button('Delete node (Del)', 'delete', <Trash2 size={14} />, { disabled: none })}
@@ -84,7 +88,7 @@ export function DesignPathBar({
       {button('Separate nodes (K)', 'separate', <Unlink size={14} />, { disabled: none })}
       {divider}
       {button('Make corner (X)', 'corner', <CornerRightDown size={14} />, { disabled: none })}
-      {button('Make curve (C)', 'curve', <Spline size={14} />, { disabled: none })}
+      {button('Make curve (C)', 'curve', <Route size={14} />, { disabled: none })}
       <div className="flex items-center rounded border border-koma-border" role="group" aria-label="Handle type">
         {(['mirror', 'aligned', 'independent'] as const).map((mode) => (
           <button

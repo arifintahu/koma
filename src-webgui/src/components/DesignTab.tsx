@@ -349,12 +349,17 @@ export function DesignTab({ tab }: { tab: Extract<Tab, { kind: 'design' }> }) {
   const [vectorSel, setVectorSelState] = useState<number[]>([])
   const vectorSelRef = useRef<number[]>([])
   const [vectorSnap, setVectorSnap] = useState(true)
+  /** Figma's bend tool: while on, dragging a segment curves it and clicking a node toggles its curve. */
+  const [vectorBend, setVectorBend] = useState(false)
+  const vectorBendRef = useRef(false)
+  vectorBendRef.current = vectorBend
   const vectorSnapRef = useRef(true)
   vectorSnapRef.current = vectorSnap
   const [vectorMarquee, setVectorMarquee] = useState<{ x: number; y: number; w: number; h: number } | null>(null)
   useEffect(() => {
     vectorSelRef.current = []
     setVectorSelState([])
+    setVectorBend(false)
   }, [vectorEditId])
   const [textRange, setTextRange] = useState<{ id: string; start: number; end: number } | null>(null)
   const [palette, setPalette] = useState(false)
@@ -739,6 +744,9 @@ export function DesignTab({ tab }: { tab: Extract<Tab, { kind: 'design' }> }) {
       // A click types on one growing line; a dragged box keeps its width and wraps.
       if (drag.shape === 'text') node = { ...node, text: '', textHug: tiny ? 'width' : 'height' }
       let next = doc
+      // A shape drawn into an auto-layout frame stays where it was drawn instead of
+      // joining the flow and jumping to the frame's start.
+      if (drag.parentId && findDesignNode(doc, drag.parentId)?.layout) node = { ...node, absolute: true }
       if (drag.parentId) next = insertDesignNode(doc, drag.parentId, node)
       else if (focusRef.current && node.kind !== 'frame' && node.kind !== 'group') {
         const screen = createNode('frame', mintId('f'), node.x, node.y)
@@ -1644,7 +1652,7 @@ export function DesignTab({ tab }: { tab: Extract<Tab, { kind: 'design' }> }) {
         commitVector((vector) => ({ vector: deleteVertices(vector, [index], false), select: [] }))
         return
       }
-      if (meta) {
+      if (meta || vectorBendRef.current) {
         dragRef.current = { kind: 'vcurve', id: ctx.id, index, start, base: ctx.node, moved: false, remembered: false }
         return
       }
@@ -1689,7 +1697,7 @@ export function DesignTab({ tab }: { tab: Extract<Tab, { kind: 'design' }> }) {
         base: ctx.node,
         moved: false,
         remembered: false,
-        bend: event.metaKey || event.ctrlKey,
+        bend: event.metaKey || event.ctrlKey || vectorBendRef.current,
       }
     },
     /** A press on empty canvas while editing: a node marquee, or leave edit mode for another object. */
@@ -1819,10 +1827,12 @@ export function DesignTab({ tab }: { tab: Extract<Tab, { kind: 'design' }> }) {
   const vectorAction = (action: PathBarAction): boolean => {
     const ids = vectorSelRef.current
     if (action === 'draw') {
+      setVectorBend(false)
       chooseTool('pen')
       return true
     }
-    if (action === 'move') {
+    if (action === 'move' || action === 'bend') {
+      setVectorBend(action === 'bend')
       setTool('select')
       return true
     }
@@ -1929,6 +1939,7 @@ export function DesignTab({ tab }: { tab: Extract<Tab, { kind: 'design' }> }) {
     if (lower === 'c') return run('curve')
     if (lower === 'p') return run('draw')
     if (lower === 'm') return run('move')
+    if (lower === 'b') return run('bend')
     return false
   }
   const vectorKeyRef = useRef(vectorKey)
@@ -2904,7 +2915,7 @@ export function DesignTab({ tab }: { tab: Extract<Tab, { kind: 'design' }> }) {
             const modes = vector ? [...new Set(vectorSel.map((i) => handleModeOf(vector, i)))] : []
             return (
               <DesignPathBar
-                drawing={tool === 'pen'}
+                mode={tool === 'pen' ? 'draw' : vectorBend ? 'bend' : 'move'}
                 snap={vectorSnap}
                 handleMode={modes.length === 1 ? (modes[0] as HandleMode) : null}
                 nodes={vectorSel.length}
