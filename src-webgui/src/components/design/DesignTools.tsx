@@ -19,7 +19,7 @@ export function ToolFlyout({
 }) {
   const [open, setOpen] = useState(false)
   return (
-    <div className="relative flex items-center" onPointerLeave={() => setOpen(false)}>
+    <div className="relative flex flex-none items-center" onPointerLeave={() => setOpen(false)}>
       <ToolButton
         label={label}
         selected={selected}
@@ -45,20 +45,24 @@ export function ToolFlyout({
         <ChevronUp size={12} strokeWidth={2.25} />
       </button>
       {open ? (
-        <div className="absolute bottom-8 left-0 z-40 min-w-36 rounded border border-koma-border bg-koma-panel py-1 shadow-lg">
-          {items.map((item) => (
-            <button
-              key={item.label}
-              type="button"
-              className="flex h-7 w-full items-center px-2 text-left text-[12px] text-koma-fg hover:bg-koma-hover"
-              onClick={() => {
-                item.run()
-                setOpen(false)
-              }}
-            >
-              {item.label}
-            </button>
-          ))}
+        // The transparent bottom padding bridges the gap to the button, so moving up into
+        // the menu never leaves the hover area and closes it.
+        <div className="absolute bottom-full left-0 z-40 pb-1">
+          <div className="min-w-36 rounded border border-koma-border bg-koma-panel py-1 shadow-lg">
+            {items.map((item) => (
+              <button
+                key={item.label}
+                type="button"
+                className="flex h-7 w-full items-center px-2 text-left text-[12px] text-koma-fg hover:bg-koma-hover"
+                onClick={() => {
+                  item.run()
+                  setOpen(false)
+                }}
+              >
+                {item.label}
+              </button>
+            ))}
+          </div>
         </div>
       ) : null}
     </div>

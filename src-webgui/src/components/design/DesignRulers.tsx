@@ -167,7 +167,7 @@ export function ToolButton({ label, selected, onClick, children }: { label: stri
       aria-label={label}
       aria-pressed={selected}
       onClick={onClick}
-      className={`flex h-6 w-6 items-center justify-center rounded ${selected ? 'bg-koma-accent/20 text-koma-accent ring-1 ring-inset ring-koma-accent' : 'text-koma-dim hover:bg-koma-hover hover:text-koma-fg'}`}
+      className={`flex h-6 w-6 flex-none items-center justify-center rounded ${selected ? 'bg-koma-accent/20 text-koma-accent ring-1 ring-inset ring-koma-accent' : 'text-koma-dim hover:bg-koma-hover hover:text-koma-fg'}`}
     >
       {children}
     </button>
