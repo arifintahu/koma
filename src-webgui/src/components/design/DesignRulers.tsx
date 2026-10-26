@@ -1,6 +1,6 @@
 import type { ReactNode } from 'react'
 import { MessageSquarePlus } from 'lucide-react'
-import { isBooleanNode, locateDesign, designLayerName, stackDesign, type DesignDoc } from '../../lib/design'
+import { booleanEligible, isBooleanNode, locateDesign, designLayerName, stackDesign, type DesignDoc } from '../../lib/design'
 import type { DesignMenuItem } from '../DesignMenu'
 import { SELECTION } from './tabShared'
 
@@ -121,8 +121,10 @@ export function designMenuItems(doc: DesignDoc, selection: string[], x: number, 
   const sameParent = rows.length > 0 && rows.every((row) => row && row.parentId === rows[0]?.parentId)
   const canUngroup = rows.some((row) => row?.node.kind === 'group')
   const oneBoolean = rows.length === 1 && isBooleanNode(rows[0]?.node)
-  const canCombine = selection.length >= 2 || oneBoolean
-  const canFlatten = oneBoolean || selection.length >= 2
+  // The same rules as the sidebar row: text and lines block it, and one plain group can take an
+  // operation but has nothing to flatten yet.
+  const canCombine = booleanEligible(doc, selection).ok
+  const canFlatten = canCombine && (oneBoolean || selection.length >= 2)
   const stack = stackDesign(doc, x, y).slice(0, 12)
   return [
     { id: 'chat', label: 'Add to chat', disabled: !canChat, icon: <MessageSquarePlus size={12} /> },

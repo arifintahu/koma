@@ -2235,8 +2235,12 @@ export function DesignTab({ tab }: { tab: Extract<Tab, { kind: 'design' }> }) {
       const open = viewDoc()
       const ids = selectionRef.current
       if (!open || !ids.length) return
-      const next = applyDesignBoolean(open.doc, ids, op, () => mintId('b'))
-      if (next) commit(next)
+      // Combining several shapes mints a new group, which should end up selected.
+      let made: string | null = null
+      const next = applyDesignBoolean(open.doc, ids, op, () => (made = mintId('b')))
+      if (!next) return
+      commit(next)
+      if (made) setSelection([made])
     },
     outline: () => {
       const open = viewDoc()
@@ -3450,6 +3454,7 @@ export function DesignTab({ tab }: { tab: Extract<Tab, { kind: 'design' }> }) {
                 if (next) commitStored(next)
               } : undefined}
               onAddToChat={!multi && chatQuery ? sendChat : undefined}
+              onBoolean={(op) => commandsRef.current?.boolean(op)}
               onAlign={selectedNodes.length && (multi || everyParent) ? (axis, edge) => {
                 const stored = useKoma.getState().design?.docs?.[key]?.doc
                 if (!stored) return

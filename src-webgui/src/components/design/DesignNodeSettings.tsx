@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState, type ReactNode } from 'react'
 import {
   ChevronRight,
   AlignCenterHorizontal,
@@ -27,6 +27,11 @@ import {
   TextAlignCenter,
   TextAlignEnd,
   TextAlignStart,
+  SquaresExclude,
+  SquaresIntersect,
+  SquaresSubtract,
+  SquaresUnite,
+  Combine,
   WrapText,
   X,
 } from 'lucide-react'
@@ -60,6 +65,9 @@ import {
   sharedValue,
   solidPaint,
   textStyle,
+  booleanEligible,
+  isBooleanNode,
+  type DesignBooleanOp,
   type DesignAlign,
   type DesignAlignAxis,
   type DesignAlignEdge,
@@ -110,6 +118,7 @@ export function NodeSettings({
   onDetachInstance,
   onAddToChat,
   onAlign,
+  onBoolean,
   onPatch,
   onType,
   onTypeFocus,
@@ -140,6 +149,8 @@ export function NodeSettings({
   onDetachInstance?: () => void
   onAddToChat?: () => void
   onAlign?: (axis: DesignAlignAxis, edge: DesignAlignEdge) => void
+  /** Combine the selection, or change the boolean group that is selected. */
+  onBoolean?: (op: DesignBooleanOp | 'flatten') => void
   onPatch: (fn: (node: DesignNode) => DesignNode) => void
   onType: (fn: (node: DesignNode) => DesignNode) => void
   onTypeFocus: () => void
@@ -489,6 +500,9 @@ export function NodeSettings({
             </div>
           ) : null}
         </div>
+      ) : null}
+      {onBoolean && (nodes.length >= 2 || (nodes.length === 1 && nodes[0].kind === 'group')) ? (
+        <BooleanRow doc={doc} nodes={nodes} onBoolean={onBoolean} />
       ) : null}
       <Section title="Layer">
         <div className="flex items-center gap-1">
@@ -1567,6 +1581,45 @@ function TextMorePage({
           <Plus size={14} />
         </AlignButton>
       ) : null}
+    </div>
+  )
+}
+
+const BOOLEAN_OPS: { op: DesignBooleanOp; label: string; shortcut: string; icon: ReactNode }[] = [
+  { op: 'union', label: 'Union', shortcut: '⌥⇧U', icon: <SquaresUnite size={14} /> },
+  { op: 'subtract', label: 'Subtract', shortcut: '⌥⇧S', icon: <SquaresSubtract size={14} /> },
+  { op: 'intersect', label: 'Intersect', shortcut: '⌥⇧I', icon: <SquaresIntersect size={14} /> },
+  { op: 'exclude', label: 'Exclude', shortcut: '⌥⇧E', icon: <SquaresExclude size={14} /> },
+]
+
+/**
+ * Combine shapes, like Penpot's boolean row. A selected boolean shows its operation as pressed;
+ * pressing that operation again turns it back into a group. Flatten bakes the result into a path.
+ */
+function BooleanRow({ doc, nodes, onBoolean }: { doc: DesignDoc; nodes: DesignNode[]; onBoolean: (op: DesignBooleanOp | 'flatten') => void }) {
+  const eligible = booleanEligible(doc, nodes.map((node) => node.id))
+  const only = nodes.length === 1 ? nodes[0] : null
+  const current = only && isBooleanNode(only) ? only.booleanOp : null
+  const blocked = eligible.ok ? '' : eligible.reason
+  // A lone plain group can take an operation but has nothing to flatten yet.
+  const canFlatten = eligible.ok && (nodes.length >= 2 || !!current)
+  return (
+    <div className="flex items-center gap-0.5" role="group" aria-label="Boolean operations">
+      {BOOLEAN_OPS.map(({ op, label, shortcut, icon }) => (
+        <AlignButton
+          key={op}
+          label={blocked || (current === op ? `${label} (${shortcut}). Press again to ungroup` : `${label} (${shortcut})`)}
+          pressed={current === op}
+          disabled={!eligible.ok}
+          onClick={() => onBoolean(op)}
+        >
+          {icon}
+        </AlignButton>
+      ))}
+      <span className="mx-0.5 h-4 w-px flex-none bg-koma-border" />
+      <AlignButton label={blocked || 'Flatten (⌥⇧F)'} disabled={!canFlatten} onClick={() => onBoolean('flatten')}>
+        <Combine size={14} />
+      </AlignButton>
     </div>
   )
 }
