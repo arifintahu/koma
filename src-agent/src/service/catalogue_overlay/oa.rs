@@ -433,6 +433,9 @@ mod tests {
                         Err(e) => panic!("accept: {e}"),
                     }
                 };
+                // Windows and macOS hand the listener's non-blocking mode to accepted
+                // sockets, so reads would fail with WouldBlock before the request lands.
+                stream.set_nonblocking(false).unwrap();
                 stream
                     .set_read_timeout(Some(Duration::from_secs(2)))
                     .unwrap();
