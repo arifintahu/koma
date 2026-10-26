@@ -1,5 +1,25 @@
 import { describe, expect, it } from 'vitest'
 import {
+  bendSegment,
+  closestOnSegment,
+  closestSegment,
+  deleteVertices,
+  duplicateVertices,
+  fixAngle,
+  flipVertices,
+  joinVertices,
+  mergeOnDrop,
+  mergeVertices,
+  moveVertices,
+  nodeType,
+  separateVertices,
+  setNodeType,
+  snapToPoints,
+  splitSegment,
+  verticesInRect,
+} from './vectorEdit'
+import type { DesignVector } from './types'
+import {
   createComponentFromFrame,
   designAxisAligned,
   designChildIds,
@@ -232,5 +252,97 @@ describe('selection navigation', () => {
     const inner = { x: 10, y: 20, w: 30, h: 40 }
     const outer = { x: 0, y: 0, w: 100, h: 100 }
     expect(designDistances(inner, outer).map((gap) => gap.label)).toEqual(['10', '60', '20', '40'])
+  })
+})
+
+describe('path editing', () => {
+  const zero = { x: 0, y: 0 }
+  const square = (): DesignVector => ({
+    vertices: [{ x: 0, y: 0 }, { x: 100, y: 0 }, { x: 100, y: 100 }, { x: 0, y: 100 }],
+    segments: [0, 1, 2, 3].map((i) => ({ start: i, end: (i + 1) % 4, tangentStart: zero, tangentEnd: zero })),
+    regions: [{ winding: 'nonzero', loops: [[0, 1, 2, 3]] }],
+  })
+  const open = (): DesignVector => ({
+    vertices: [{ x: 0, y: 0 }, { x: 50, y: 0 }, { x: 100, y: 0 }],
+    segments: [
+      { start: 0, end: 1, tangentStart: zero, tangentEnd: zero },
+      { start: 1, end: 2, tangentStart: zero, tangentEnd: zero },
+    ],
+    regions: [],
+  })
+
+  it('deleting a corner of a closed shape heals it and keeps it filled', () => {
+    const next = deleteVertices(square(), [1], true)
+    expect(next.vertices).toHaveLength(3)
+    expect(next.segments).toHaveLength(3)
+    expect(next.regions[0]?.loops[0]).toHaveLength(3)
+    // Shift+Delete removes the segments too, which opens the shape.
+    const cut = deleteVertices(square(), [1], false)
+    expect(cut.segments).toHaveLength(2)
+    expect(cut.regions).toEqual([])
+  })
+
+  it('splitting a segment keeps the fill loop whole', () => {
+    const { vector, vertex } = splitSegment(square(), 0, 0.5)
+    expect(vector.vertices[vertex]).toEqual({ x: 50, y: 0 })
+    expect(vector.regions[0]?.loops[0]).toHaveLength(5)
+  })
+
+  it('join, merge and separate rewire the network', () => {
+    const joined = joinVertices(open(), 0, 2)
+    expect(joined.segments).toHaveLength(3)
+    const merged = mergeVertices(open(), [1, 2])
+    expect(merged.vertices).toHaveLength(2)
+    expect(merged.vertices[1]).toEqual({ x: 75, y: 0 })
+    expect(merged.segments).toHaveLength(1)
+    const split = separateVertices(open(), [1])
+    expect(split.vertices).toHaveLength(4)
+    expect(new Set(split.segments.flatMap((s) => [s.start, s.end])).size).toBe(4)
+  })
+
+  it('make curve and make corner round-trip a node', () => {
+    const curved = setNodeType(open(), [1], 'mirror')
+    expect(nodeType(curved, 1)).toBe('mirror')
+    expect(curved.segments[0].tangentEnd.x).toBeCloseTo(-50 / 3)
+    expect(nodeType(setNodeType(curved, [1], 'corner'), 1)).toBe('corner')
+  })
+
+  it('bending a straight segment pulls its middle to the pointer', () => {
+    const vector = open()
+    const bent = bendSegment(vector, 0, vector.segments[0], 0.5, { x: 25, y: 30 })
+    const hit = closestOnSegment(bent, 0, { x: 25, y: 30 })
+    expect(hit?.distance).toBeLessThan(0.5)
+  })
+
+  it('a click near the outline finds the segment and its parameter', () => {
+    const hit = closestSegment(square(), { x: 103, y: 40 }, 6)
+    expect(hit?.index).toBe(1)
+    expect(hit?.t).toBeCloseTo(0.4, 1)
+  })
+
+  it('Shift fixes angles to 45° steps and points snap per axis', () => {
+    const fixed = fixAngle({ x: 0, y: 0 }, { x: 100, y: 20 })
+    expect(fixed.y).toBeCloseTo(0)
+    expect(fixed.x).toBeCloseTo(Math.hypot(100, 20))
+    expect(snapToPoints({ x: 52, y: 97 }, [{ x: 50, y: 0 }, { x: 0, y: 100 }], 4)).toEqual({ x: 50, y: 100 })
+  })
+
+  it('a vertex dropped onto another merges into it', () => {
+    const moved = moveVertices(open(), [2], -48, 1)
+    const merged = mergeOnDrop(moved, [2], 4)
+    expect(merged.vertices).toHaveLength(2)
+  })
+
+  it('flip mirrors the selection around its own center', () => {
+    const flipped = flipVertices(square(), [0, 1], 'horizontal')
+    expect(flipped.vertices[0]).toEqual({ x: 100, y: 0 })
+    expect(flipped.vertices[1]).toEqual({ x: 0, y: 0 })
+    expect(verticesInRect(square(), { x: -1, y: -1, w: 102, h: 10 })).toEqual([0, 1])
+  })
+
+  it('duplicating copies the segments between copied vertices', () => {
+    const { vector, ids } = duplicateVertices(open(), [0, 1], 10, 10)
+    expect(ids).toEqual([3, 4])
+    expect(vector.segments).toHaveLength(3)
   })
 })
