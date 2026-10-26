@@ -1,5 +1,5 @@
 import { useState, type ReactNode } from 'react'
-import { ChevronUp, Frame, Square } from 'lucide-react'
+import { ChevronUp, Circle, Frame, Hexagon, Minus, Square, Star, Triangle, type LucideIcon } from 'lucide-react'
 import { FRAME_PRESETS, type FramePreset } from '../../lib/design'
 import { ToolButton } from './DesignRulers'
 import type { Tool } from './tabShared'
@@ -15,7 +15,7 @@ export function ToolFlyout({
   selected: boolean
   onClick: () => void
   children: ReactNode
-  items: { label: string; run: () => void }[]
+  items: { label: string; icon?: LucideIcon; run: () => void }[]
 }) {
   const [open, setOpen] = useState(false)
   return (
@@ -53,12 +53,13 @@ export function ToolFlyout({
               <button
                 key={item.label}
                 type="button"
-                className="flex h-7 w-full items-center px-2 text-left text-[12px] text-koma-fg hover:bg-koma-hover"
+                className="flex h-7 w-full items-center gap-2 px-2 text-left text-[12px] text-koma-fg hover:bg-koma-hover"
                 onClick={() => {
                   item.run()
                   setOpen(false)
                 }}
               >
+                {item.icon ? <item.icon size={13} strokeWidth={2} className="flex-none text-koma-dim" /> : null}
                 {item.label}
               </button>
             ))}
@@ -94,10 +95,35 @@ export function FrameToolFlyout({
   )
 }
 
+type ShapeTool = 'rect' | 'ellipse' | 'triangle' | 'polygon' | 'star' | 'line'
+
+const SHAPE_TOOLS: { tool: ShapeTool; label: string; icon: LucideIcon }[] = [
+  { tool: 'rect', label: 'Rectangle (R)', icon: Square },
+  { tool: 'ellipse', label: 'Ellipse (O)', icon: Circle },
+  { tool: 'triangle', label: 'Triangle', icon: Triangle },
+  { tool: 'polygon', label: 'Polygon', icon: Hexagon },
+  { tool: 'star', label: 'Star', icon: Star },
+  { tool: 'line', label: 'Line (L)', icon: Minus },
+]
+
+/** One button for every basic shape. It shows and reuses the shape picked last. */
 export function ShapeToolFlyout({ tool, onTool }: { tool: Tool; onTool: (tool: Tool) => void }) {
+  const active = SHAPE_TOOLS.find((item) => item.tool === tool)
+  const [last, setLast] = useState<ShapeTool>('rect')
+  const current = active?.tool ?? last
+  const shown = SHAPE_TOOLS.find((item) => item.tool === current) ?? SHAPE_TOOLS[0]
+  const pick = (next: ShapeTool) => {
+    setLast(next)
+    onTool(next)
+  }
   return (
-    <ToolButton label="Rectangle (R)" selected={tool === 'rect' || tool === 'ellipse' || tool === 'line' || tool === 'polygon' || tool === 'star'} onClick={() => onTool('rect')}>
-      <Square size={15} strokeWidth={2.25} />
-    </ToolButton>
+    <ToolFlyout
+      label={shown.label}
+      selected={!!active}
+      onClick={() => pick(current)}
+      items={SHAPE_TOOLS.map((item) => ({ label: item.label, icon: item.icon, run: () => pick(item.tool) }))}
+    >
+      <shown.icon size={15} strokeWidth={2.25} />
+    </ToolFlyout>
   )
 }

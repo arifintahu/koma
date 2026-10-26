@@ -1,5 +1,30 @@
 import { useEffect, useRef, type RefObject } from 'react'
+import { PenTool } from 'lucide-react'
 import { canvasPoint } from '../../lib/uiScale'
+
+/** What the miniature looks like. The pen has no size, so it shows a nib and a hint instead. */
+export type CursorGhostShape = 'frame' | 'rect' | 'ellipse' | 'triangle' | 'polygon' | 'star' | 'line' | 'pen'
+
+/** Outline of a shape miniature in a w×h box, as an SVG path. */
+function ghostPath(shape: CursorGhostShape, w: number, h: number): string {
+  const poly = (points: [number, number][]) => `M${points.map(([x, y]) => `${x} ${y}`).join(' L')} Z`
+  const regular = (count: number, inner?: number) => {
+    const points: [number, number][] = []
+    const steps = inner ? count * 2 : count
+    for (let i = 0; i < steps; i++) {
+      const radius = inner && i % 2 ? inner : 1
+      const angle = -Math.PI / 2 + (i * 2 * Math.PI) / steps
+      points.push([w / 2 + (Math.cos(angle) * radius * w) / 2, h / 2 + (Math.sin(angle) * radius * h) / 2])
+    }
+    return poly(points)
+  }
+  if (shape === 'ellipse') return `M0 ${h / 2} A${w / 2} ${h / 2} 0 1 0 ${w} ${h / 2} A${w / 2} ${h / 2} 0 1 0 0 ${h / 2} Z`
+  if (shape === 'triangle') return regular(3)
+  if (shape === 'polygon') return regular(6)
+  if (shape === 'star') return regular(5, 0.38)
+  if (shape === 'line') return `M0 ${h / 2} H${w}`
+  return `M0 0 H${w} V${h} H0 Z`
+}
 
 /** Longest side of the miniature that rides with the cursor. */
 const GHOST_MAX = 96
@@ -12,20 +37,22 @@ const TILT_MAX = 8
 const CLICK_SLOP = 4
 
 /**
- * A downscaled frame that follows the cursor while the frame tool is armed, so it is
+ * A downscaled shape that follows the cursor while a drawing tool is armed, so it is
  * obvious that the next click on the canvas places one. It trails the cursor on a spring
  * and tilts toward the motion, then settles upright. A click shows it growing into the
  * real frame at the click point; a drag hides it, since the drag draws the frame itself.
  * Everything runs on the DOM directly, once per animation frame, without React renders.
  */
-export function DesignFrameGhost({
+export function DesignCursorGhost({
   canvasRef,
+  shape,
   width,
   height,
   label,
   zoom,
 }: {
   canvasRef: RefObject<HTMLDivElement | null>
+  shape: CursorGhostShape
   width: number
   height: number
   label: string
@@ -36,8 +63,9 @@ export function DesignFrameGhost({
   const zoomRef = useRef(zoom)
   zoomRef.current = zoom
   const scale = GHOST_MAX / Math.max(width, height, 1)
-  const miniW = Math.max(12, Math.round(width * scale))
-  const miniH = Math.max(12, Math.round(height * scale))
+  const pen = shape === 'pen'
+  const miniW = pen ? 16 : Math.max(12, Math.round(width * scale))
+  const miniH = pen ? 16 : shape === 'line' ? 12 : Math.max(12, Math.round(height * scale))
 
   useEffect(() => {
     const canvas = canvasRef.current
@@ -103,7 +131,8 @@ export function DesignFrameGhost({
       if (!state.pressed) return
       state.pressed = false
       const point = local(event)
-      if (Math.hypot(point.x - state.down.x, point.y - state.down.y) > CLICK_SLOP || still) return
+      // The pen places a point, not a shape, so there is nothing to grow into.
+      if (pen || Math.hypot(point.x - state.down.x, point.y - state.down.y) > CLICK_SLOP || still) return
       // Grow a copy of the miniature into the real frame where the click placed it.
       const drop = ghost.cloneNode(true) as HTMLDivElement
       drop.style.transform = ''
@@ -134,7 +163,7 @@ export function DesignFrameGhost({
       canvas.removeEventListener('pointerdown', onDown, true)
       window.removeEventListener('pointerup', onUp, true)
     }
-  }, [canvasRef, width, height, miniW, miniH])
+  }, [canvasRef, width, height, miniW, miniH, pen])
 
   return (
     <div
@@ -143,10 +172,20 @@ export function DesignFrameGhost({
       className="pointer-events-none absolute left-0 top-0 z-30 flex flex-col items-start gap-1 transition-opacity duration-100"
       style={{ transformOrigin: '0 0', opacity: 0 }}
     >
-      <div
-        className="rounded-[2px] border border-dashed border-koma-accent bg-koma-accent/10 shadow-sm"
-        style={{ width: miniW, height: miniH }}
-      />
+      {pen ? (
+        <PenTool size={miniW} strokeWidth={2} className="text-koma-accent" />
+      ) : (
+        <svg width={miniW} height={miniH} viewBox={`-1 -1 ${miniW + 2} ${miniH + 2}`} className="overflow-visible">
+          <path
+            d={ghostPath(shape, miniW, miniH)}
+            fill={shape === 'line' ? 'none' : 'color-mix(in srgb, var(--color-koma-accent) 10%, transparent)'}
+            stroke="var(--color-koma-accent)"
+            strokeWidth={1}
+            strokeDasharray="3 2"
+            strokeLinejoin="round"
+          />
+        </svg>
+      )}
       <span className="whitespace-nowrap rounded bg-koma-panel px-1 text-[10px] leading-4 text-koma-fg shadow-sm">{label}</span>
     </div>
   )

@@ -156,7 +156,7 @@ import {
   type DesignWeight,
 } from '../lib/design'
 import type { FramePreset } from '../lib/design/presets'
-import { DesignFrameGhost } from './design/DesignFrameGhost'
+import { DesignCursorGhost, type CursorGhostShape } from './design/DesignCursorGhost'
 import { designPngBase64 } from '../lib/designRender'
 import { fileKey } from '../store/coding'
 import { isTabVisible } from '../store/editorGroups'
@@ -208,6 +208,33 @@ import { DesignSelectionChrome } from './design/DesignSelectionChrome'
 import { FrameToolFlyout, ShapeToolFlyout } from './design/DesignTools'
 import { NodeSettings } from './design/DesignNodeSettings'
 import { PenOverlay } from './design/DesignPropertyFields'
+
+/** The cursor miniature for a drawing tool, sized like the shape a click would place. */
+function cursorGhostFor(
+  tool: Tool,
+  preset: FramePreset | null,
+): { shape: CursorGhostShape; width: number; height: number; label: string } | null {
+  const sized = (shape: CursorGhostShape, name: string, w: number, h: number) => ({
+    shape,
+    width: w,
+    height: h,
+    label: shape === 'line' ? `${name} ${w}` : `${name} ${w}×${h}`,
+  })
+  if (tool === 'frame' || tool === 'section') {
+    if (preset) return sized('frame', preset.name, preset.width, preset.height)
+    const frame = createNode('frame', 'ghost', 0, 0)
+    return sized('frame', tool === 'section' ? 'Section' : 'Frame', frame.w, frame.h)
+  }
+  if (tool === 'rect' || tool === 'ellipse' || tool === 'line') {
+    const node = createNode(tool, 'ghost', 0, 0)
+    return sized(tool, node.name ?? tool, node.w, node.h)
+  }
+  if (tool === 'triangle') return sized('triangle', 'Triangle', 100, 100)
+  if (tool === 'polygon') return sized('polygon', 'Polygon', 100, 100)
+  if (tool === 'star') return sized('star', 'Star', 100, 100)
+  if (tool === 'pen') return { shape: 'pen', width: 16, height: 16, label: 'Click to add points, drag for curves' }
+  return null
+}
 
 export function DesignTab({ tab }: { tab: Extract<Tab, { kind: 'design' }> }) {
   const key = fileKey(tab.root, tab.path)
@@ -1343,7 +1370,7 @@ export function DesignTab({ tab }: { tab: Extract<Tab, { kind: 'design' }> }) {
       }
       if (event.key === 'Escape') {
         setEditing(null)
-        if (toolRef.current === 'frame' || toolRef.current === 'section') {
+        if (toolRef.current !== 'select' && toolRef.current !== 'pen' && toolRef.current !== 'pan') {
           setTool('select')
           return
         }
@@ -1950,11 +1977,16 @@ export function DesignTab({ tab }: { tab: Extract<Tab, { kind: 'design' }> }) {
       beginPen(point)
       return
     }
-    if (tool === 'polygon' || tool === 'star') {
+    if (tool === 'polygon' || tool === 'star' || tool === 'triangle') {
       event.preventDefault()
       const stored = useKoma.getState().design?.docs?.[key]?.doc
       if (!stored) return
-      const node = tool === 'star' ? createStarNode(mintId('s'), point.x, point.y) : createPolygonNode(mintId('p'), point.x, point.y)
+      const node =
+        tool === 'star'
+          ? createStarNode(mintId('s'), point.x, point.y)
+          : tool === 'triangle'
+            ? { ...createPolygonNode(mintId('p'), point.x, point.y, 100, 3), name: 'Triangle' }
+            : createPolygonNode(mintId('p'), point.x, point.y)
       commit(insertDesignNode(editingDoc(stored, focusRef.current), null, node))
       setSelection([node.id])
       setTool('select')
@@ -2424,11 +2456,12 @@ export function DesignTab({ tab }: { tab: Extract<Tab, { kind: 'design' }> }) {
           style={{ backgroundColor: '#e6e8ed', ...canvasBackdrop(doc.snap, grid, view) }}
         >
           <DesignRulers panX={view.panX} panY={view.panY} zoom={view.zoom} bounds={selection.length ? designSelectionCanvasBox(doc, selection) : null} />
-          {(tool === 'frame' || tool === 'section') && !spaceDown ? (() => {
-            const size = framePreset ? { w: framePreset.width, h: framePreset.height } : createNode('frame', 'ghost', 0, 0)
-            const name = framePreset?.name ?? (tool === 'section' ? 'Section' : 'Frame')
-            return <DesignFrameGhost canvasRef={canvasRef} width={size.w} height={size.h} label={`${name} ${size.w}×${size.h}`} zoom={view.zoom} />
-          })() : null}
+          {(() => {
+            // The armed tool rides on the cursor until the click that places it. The pen shows
+            // only before its first point; after that its own preview takes over.
+            const ghost = !spaceDown && !(tool === 'pen' && pen) ? cursorGhostFor(tool, framePreset) : null
+            return ghost ? <DesignCursorGhost key={ghost.shape} canvasRef={canvasRef} {...ghost} zoom={view.zoom} /> : null
+          })()}
           {/* Translate only on the outer layer; CSS `zoom` on the inner layer
               re-layouts/paints at screen resolution so text and shapes stay sharp
               (unlike `transform: scale()`, which upscales a low-res raster). */}

@@ -42,7 +42,7 @@ export const HANDLES: { id: DesignHandle; x: string; y: string; cursor: string }
   { id: 'w', x: '0%', y: '50%', cursor: 'ew-resize' },
 ]
 
-export type Tool = 'select' | 'frame' | 'section' | 'rect' | 'ellipse' | 'line' | 'pen' | 'text' | 'pan' | 'polygon' | 'star'
+export type Tool = 'select' | 'frame' | 'section' | 'rect' | 'ellipse' | 'line' | 'pen' | 'text' | 'pan' | 'polygon' | 'star' | 'triangle'
 export type DrawShape = 'frame' | 'rect' | 'ellipse' | 'line' | 'text'
 export type View = { panX: number; panY: number; zoom: number }
 export type Ghost =
