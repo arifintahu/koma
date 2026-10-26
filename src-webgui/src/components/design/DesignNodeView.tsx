@@ -1,7 +1,6 @@
-import type { PointerEvent as ReactPointerEvent } from 'react'
+import { memo, type PointerEvent as ReactPointerEvent } from 'react'
 import {
   cornerPixels,
-  designLayerName,
   nodeChrome,
   designImageSize,
   firstVisiblePaint,
@@ -38,11 +37,38 @@ import {
   paintCss,
   weightCss,
 } from './tabShared'
+import { DesignTextEditor } from './DesignTextEditor'
 
-export function DesignNodeView({
+export type DesignNodeHandlers = {
+  /** `exact` selects this id as is, skipping the hit test at the pointer. */
+  onSelect: (id: string, event: ReactPointerEvent<HTMLDivElement>, exact?: boolean) => void
+  onEnterContainer: (id: string, event: ReactPointerEvent<HTMLDivElement>) => void
+  onEdit: (id: string) => void
+  onOpenFill: (id: string) => void
+  onText: (id: string, text: string) => void
+  onTextRange: (id: string, start: number, end: number) => void
+  onTextBlur: () => void
+  onMenu: (id: string, clientX: number, clientY: number) => void
+}
+
+/** Handlers that never change identity and call whatever the ref holds now, so memoized nodes keep their props. */
+export function stableNodeHandlers(ref: { current: DesignNodeHandlers | null }): DesignNodeHandlers {
+  return {
+    onSelect: (id, event, exact) => ref.current?.onSelect(id, event, exact),
+    onEnterContainer: (id, event) => ref.current?.onEnterContainer(id, event),
+    onEdit: (id) => ref.current?.onEdit(id),
+    onOpenFill: (id) => ref.current?.onOpenFill(id),
+    onText: (id, text) => ref.current?.onText(id, text),
+    onTextRange: (id, start, end) => ref.current?.onTextRange(id, start, end),
+    onTextBlur: () => ref.current?.onTextBlur(),
+    onMenu: (id, clientX, clientY) => ref.current?.onMenu(id, clientX, clientY),
+  }
+}
+
+/** Re-renders only when its node or paint context changes. Unchanged siblings keep their object identity. */
+export const DesignNodeView = memo(function DesignNodeView({
   doc,
   node,
-  selectedIds,
   editing,
   dragCursor,
   locked = false,
@@ -59,14 +85,11 @@ export function DesignNodeView({
   onEnterContainer,
   clipPath,
   maskStyle,
-  zoom = 1,
 }: {
   doc: DesignDoc
   node: DesignNode
-  selectedIds: string[]
   editing: string | null
   dragCursor: string | null
-  zoom?: number
   locked?: boolean
   enteredContainerId?: string | null
   overrideTargetId?: string | null
@@ -88,9 +111,7 @@ export function DesignNodeView({
   const boxH = visual?.h ?? node.h
   const chrome = nodeChrome(visual ?? node)
   const style = textStyle(visual && node.kind !== 'instance' ? visual : node)
-  const selected = selectedIds.includes(node.id)
   const overrideMark = overrideTargetId === node.id
-  const container = node.kind === 'frame' || node.kind === 'group'
   const bareFill = node.fill === 'none' || chrome.fill === 'none'
   const bareStroke = (node.kind === 'frame' || node.kind === 'group') && (!node.stroke || node.stroke === 'none')
   const strokeOff = chrome.stroke === 'none' || ((node.kind === 'rect' || node.kind === 'ellipse') && node.stroke == null)
@@ -123,7 +144,6 @@ export function DesignNodeView({
   const opaqueUntilEnter = node.kind === 'group' || node.kind === 'instance'
   const enteredHere = enteredContainerId === node.id
   const lockChildren = locked || !!node.locked || (opaqueUntilEnter && !enteredHere)
-  const childIds = lockChildren ? [] : selectedIds
   const hitHere = !locked
   const textColor = paintCss(doc, style.color, TEXT_COLOR_DEFAULT)
   const textTypeStyle = {
@@ -157,7 +177,8 @@ export function DesignNodeView({
         maskRepeat: maskStyle?.maskRepeat,
         WebkitMaskRepeat: maskStyle?.WebkitMaskRepeat,
         maskMode: maskStyle?.maskMode,
-        cursor: !hitHere || node.locked || dragCursor ? undefined : cropEdit ? 'move' : 'grab',
+        // Shapes keep the arrow, like Penpot; the grab hand is for panning.
+        cursor: cropEdit && hitHere && !node.locked && !dragCursor ? 'move' : undefined,
       }}
       onPointerDown={hitHere ? (event) => onSelect(node.id, event) : undefined}
       onContextMenu={hitHere ? (event) => {
@@ -183,22 +204,6 @@ export function DesignNodeView({
         }
       }}
     >
-      {container ? (
-        <span
-          className={`absolute left-0 truncate text-[11px] ${selected ? 'text-koma-fg' : 'text-koma-dim'} ${hitHere && !locked && !node.locked ? 'pointer-events-auto cursor-grab' : 'pointer-events-none'}`}
-          style={{ top: -16, maxWidth: Math.max(boxW, 80) }}
-          onPointerDown={
-            hitHere && !locked && !node.locked
-              ? (event) => {
-                  event.stopPropagation()
-                  onSelect(node.id, event)
-                }
-              : undefined
-          }
-        >
-          {designLayerName(node)}
-        </span>
-      ) : null}
       {cropEdit && cropRect && cropUrl ? (
         <span
           aria-hidden
@@ -222,9 +227,7 @@ export function DesignNodeView({
           border: undefined,
           borderRadius: radius,
           overflow: clips ? 'hidden' : undefined,
-          boxShadow: painted.effects?.filter((item) => item.visible !== false && (item.kind === 'drop-shadow' || item.kind === 'inner-shadow')).map((item) => `${item.kind === 'inner-shadow' ? 'inset ' : ''}${item.x ?? 0}px ${item.y ?? 4}px ${item.blur ?? 8}px ${item.spread ?? 0}px ${item.color && item.color !== 'none' ? item.color : 'rgba(0,0,0,0.25)'}`).join(', ') || undefined,
-          filter: painted.effects?.some((item) => item.visible !== false && item.kind === 'layer-blur') ? `blur(${painted.effects.find((item) => item.kind === 'layer-blur')?.blur ?? 4}px)` : undefined,
-          backdropFilter: painted.effects?.some((item) => item.visible !== false && item.kind === 'background-blur') ? `blur(${painted.effects.find((item) => item.kind === 'background-blur')?.blur ?? 8}px)` : undefined,
+          ...effectStyle(doc, painted.effects, node.kind === 'text' || node.kind === 'line' || node.kind === 'vector'),
           mixBlendMode: painted.blend && painted.blend !== 'normal' && painted.blend !== 'pass-through' ? painted.blend : undefined,
         }}
       >
@@ -263,52 +266,45 @@ export function DesignNodeView({
             ))}
           </svg>
         ) : null}
-        {node.kind === 'text' && editing === node.id ? (
-          <textarea
-            autoFocus
-            value={node.text ?? ''}
-            onChange={(event) => onText(node.id, event.target.value)}
-            onSelect={(event) => onTextRange?.(node.id, event.currentTarget.selectionStart, event.currentTarget.selectionEnd)}
-            onKeyUp={(event) => onTextRange?.(node.id, event.currentTarget.selectionStart, event.currentTarget.selectionEnd)}
-            onMouseUp={(event) => onTextRange?.(node.id, event.currentTarget.selectionStart, event.currentTarget.selectionEnd)}
-            onBlur={onTextBlur}
-            onPointerDown={(event) => event.stopPropagation()}
-            onKeyDown={(event) => {
-              if (event.key === 'Escape') {
-                event.preventDefault()
-                onTextBlur()
-              }
-            }}
-            className="z-10 h-full w-full resize-none border-0 bg-transparent px-1 shadow-none outline-none"
-            style={{ ...textTypeStyle, textAlign: style.align }}
-          />
-        ) : node.kind === 'text' ? (
+        {node.kind === 'text' ? (
           <div
-            className="flex h-full w-full px-1"
+            className="flex h-full w-full"
             style={{
               ...textTypeStyle,
-              justifyContent: style.align === 'center' ? 'center' : style.align === 'right' ? 'flex-end' : style.align === 'justify' ? 'stretch' : 'flex-start',
+              justifyContent: style.align === 'center' ? 'center' : style.align === 'right' ? 'flex-end' : 'flex-start',
               textAlign: style.align,
               alignItems: style.vertical === 'top' ? 'flex-start' : style.vertical === 'bottom' ? 'flex-end' : 'center',
             }}
           >
-            <span className="whitespace-pre-wrap">
-              {splitTextByRuns(node.text || 'Text', node.runs).map((part, index) => (
-                <span
-                  key={`${part.text}-${index}`}
-                  style={{
-                    fontSize: part.run?.fontSize,
-                    fontWeight: part.run?.weight ? weightCss(part.run.weight) : undefined,
-                    fontStyle: part.run?.italic ? 'italic' : undefined,
-                    textDecoration: [part.run?.underline ? 'underline' : '', part.run?.strike ? 'line-through' : ''].filter(Boolean).join(' ') || undefined,
-                    fontFamily: part.run?.fontFamily || undefined,
-                    color: part.run?.color ? paintCss(doc, part.run.color, 'inherit') : undefined,
-                  }}
-                >
-                  {part.text}
-                </span>
-              ))}
-            </span>
+            {editing === node.id ? (
+              <DesignTextEditor
+                doc={doc}
+                text={node.text ?? ''}
+                runs={node.runs}
+                style={{ flex: style.align === 'justify' ? 1 : undefined }}
+                onText={(text) => onText(node.id, text)}
+                onTextRange={onTextRange ? (start, end) => onTextRange(node.id, start, end) : undefined}
+                onDone={onTextBlur}
+              />
+            ) : (
+              <span className="whitespace-pre-wrap" style={{ flex: style.align === 'justify' ? 1 : undefined }}>
+                {splitTextByRuns(node.text || 'Text', node.runs).map((part, index) => (
+                  <span
+                    key={`${part.text}-${index}`}
+                    style={{
+                      fontSize: part.run?.fontSize,
+                      fontWeight: part.run?.weight ? weightCss(part.run.weight) : undefined,
+                      fontStyle: part.run?.italic ? 'italic' : undefined,
+                      textDecoration: [part.run?.underline ? 'underline' : '', part.run?.strike ? 'line-through' : ''].filter(Boolean).join(' ') || undefined,
+                      fontFamily: part.run?.fontFamily || undefined,
+                      color: part.run?.color ? paintCss(doc, part.run.color, 'inherit') : undefined,
+                    }}
+                  >
+                    {part.text}
+                  </span>
+                ))}
+              </span>
+            )}
           </div>
         ) : node.kind === 'instance' && !visual ? (
           <span className="pointer-events-none absolute left-2 top-1 truncate text-[11px] text-koma-dim">Missing component</span>
@@ -318,11 +314,18 @@ export function DesignNodeView({
             {node.layoutGrids.map((grid, index) => {
               const color = grid.color || 'rgba(255,0,0,0.18)'
               if (grid.kind === 'square') {
-                const size = grid.size ?? 8
-                const lines = []
-                for (let x = grid.offset ?? 0; x < boxW; x += size) lines.push(<line key={`v${index}-${x}`} x1={x} y1={0} x2={x} y2={boxH} stroke={color} strokeWidth={1} />)
-                for (let y = grid.offset ?? 0; y < boxH; y += size) lines.push(<line key={`h${index}-${y}`} x1={0} y1={y} x2={boxW} y2={y} stroke={color} strokeWidth={1} />)
-                return lines
+                // One pattern tile instead of a line per cell, so a fine grid on a big frame stays cheap.
+                const size = Math.max(1, grid.size ?? 8)
+                const offset = grid.offset ?? 0
+                const pattern = `grid-${node.id.replace(/[^\w-]/g, '_')}-${index}`
+                return [
+                  <defs key={`d${index}`}>
+                    <pattern id={pattern} width={size} height={size} x={offset} y={offset} patternUnits="userSpaceOnUse">
+                      <path d={`M ${size} 0 L 0 0 0 ${size}`} fill="none" stroke={color} strokeWidth={1} />
+                    </pattern>
+                  </defs>,
+                  <rect key={`r${index}`} width={boxW} height={boxH} fill={`url(#${pattern})`} />,
+                ]
               }
               return layoutGridBands(grid, boxW, boxH).map((band, at) => (
                 <rect key={`${grid.kind}${index}-${at}`} x={band.x} y={band.y} width={band.w} height={band.h} fill={color} />
@@ -337,10 +340,8 @@ export function DesignNodeView({
             key={child.id}
             doc={doc}
             node={child}
-            selectedIds={childIds}
             editing={editing}
             dragCursor={dragCursor}
-            zoom={zoom}
             locked={lockChildren}
             enteredContainerId={enteredContainerId}
             overrideTargetId={overrideTargetId}
@@ -360,6 +361,25 @@ export function DesignNodeView({
       </div>
     </div>
   )
+})
+
+/**
+ * Effects as CSS. A box shadow follows the box, so text, lines and vectors take drop-shadow
+ * filters that follow their glyphs or path. Several blurs of one kind all apply.
+ */
+function effectStyle(doc: DesignDoc, effects: DesignNode['effects'], followsShape: boolean): { boxShadow?: string; filter?: string; backdropFilter?: string } {
+  const on = (effects ?? []).filter((item) => item.visible !== false)
+  const color = (item: { color?: string }) => paintCss(doc, item.color && item.color !== 'none' ? item.color : '', 'rgba(0,0,0,0.25)')
+  const shadows = on.filter((item) => item.kind === 'drop-shadow' || (item.kind === 'inner-shadow' && !followsShape))
+  const blurs = on.filter((item) => item.kind === 'layer-blur').map((item) => `blur(${item.blur ?? 4}px)`)
+  const drops = followsShape ? shadows.map((item) => `drop-shadow(${item.x ?? 0}px ${item.y ?? 4}px ${item.blur ?? 8}px ${color(item)})`) : []
+  const boxShadow = followsShape ? '' : shadows.map((item) => `${item.kind === 'inner-shadow' ? 'inset ' : ''}${item.x ?? 0}px ${item.y ?? 4}px ${item.blur ?? 8}px ${item.spread ?? 0}px ${color(item)}`).join(', ')
+  const backdrop = on.filter((item) => item.kind === 'background-blur').map((item) => `blur(${item.blur ?? 8}px)`).join(' ')
+  return {
+    boxShadow: boxShadow || undefined,
+    filter: [...drops, ...blurs].join(' ') || undefined,
+    backdropFilter: backdrop || undefined,
+  }
 }
 
 function StrokeShape({

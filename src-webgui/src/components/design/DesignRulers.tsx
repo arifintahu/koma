@@ -15,7 +15,8 @@ export function canvasBackdrop(snap: boolean, grid: number, view: View): { backg
       backgroundPosition: `${view.panX}px ${view.panY}px`,
     }
   }
-  if (!snap) return {}
+  // Dots closer than 4px merge into a grey wash, so a zoomed-out grid is left off.
+  if (!snap || grid * view.zoom < 4) return {}
   return {
     backgroundImage: 'radial-gradient(circle, var(--color-koma-border) 1px, transparent 1px)',
     backgroundSize: `${grid * view.zoom}px ${grid * view.zoom}px`,
@@ -27,7 +28,7 @@ const RULER_SIZE = 16
 const RULER_BADGE_EXCLUSION = 28
 
 export function DesignRulers({ panX, panY, zoom, bounds }: { panX: number; panY: number; zoom: number; bounds: { x: number; y: number; w: number; h: number } | null }) {
-  const step = zoom >= 32 ? 10 : zoom >= 8 ? 50 : zoom >= 2 ? 100 : 200
+  const step = zoom >= 32 ? 10 : zoom >= 8 ? 50 : zoom >= 2 ? 100 : zoom >= 0.25 ? 200 : zoom >= 0.1 ? 500 : zoom >= 0.05 ? 1000 : 2500
   const ticks = (span: number, origin: number, edge?: number, edge2?: number) => {
     const start = Math.floor(-origin / zoom / step) * step - step
     const items: { at: number; label: number }[] = []

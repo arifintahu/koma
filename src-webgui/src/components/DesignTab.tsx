@@ -1,10 +1,11 @@
 import { canvasPoint } from '../lib/uiScale'
-import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react'
+import { CODING_AUTOSAVE_MS } from '../lib/coding-autosave'
+import { useEffect, useMemo, useRef, useState, useSyncExternalStore, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react'
 import { ChevronRight, Frame, Hand, Minus, MousePointer2, PenTool, Plus, Type, PanelRightClose, PanelRightOpen, X } from 'lucide-react'
 import { KomaSelect } from './KomaSelect'
 import { TokenEditor } from './panels/DesignPanel'
 import { DesignMenu, type DesignMenuItem } from './DesignMenu'
-import { getDesignUi, publishDesignUi, type DesignLayerOp } from '../lib/designUi'
+import { getDesignHover, getDesignUi, publishDesignUi, setDesignHover, subscribeDesignHover, type DesignLayerOp } from '../lib/designUi'
 import { isTerminalInputTarget } from '../lib/terminalInput'
 import {
   COMPONENT_MIME,
@@ -15,6 +16,9 @@ import {
   canLeaveParent,
   canvasDeltaToSpace,
   designAxisAligned,
+  designChildIds,
+  designDistances,
+  designParentIds,
   designTurnSign,
   canvasToContent,
   cornerPixels,
@@ -53,10 +57,14 @@ import {
   effectiveInstanceChild,
   mergeDesignOverride,
   pickVariant,
-  moveDesignNode,
+  moveDesignNodes,
+  stepDesignSibling,
   nextVariantProps,
   nodeChrome,
   nodeFromPen,
+  hitDesignDeepest,
+  nodeBoxOrigin,
+  nodeCanvasPoint,
   nodeCenter,
   nodeOrigin,
   nudgeDesignNodes,
@@ -76,9 +84,10 @@ import {
   hitDesignInScope,
   resolveDesignSelectHit,
   validateDesignEnteredContainer,
+  selectDesignHit,
   selectDesignRect,
   sharedValue,
-  serializeDesign,
+  sameDesign,
   setDesignLocked,
   setDesignMode,
   setDesignVisible,
@@ -161,6 +170,8 @@ import {
   setCopiedShape,
   setCopiedStyle,
   editingDoc,
+  paintOnlyDoc,
+  deepSelectKey,
   instanceAxes,
   lineBox,
   lineEnds,
@@ -168,7 +179,13 @@ import {
   projectDoc,
   shapeCorners,
   UNDO_CAP,
+  clearDesignHistory,
+  designHistory,
+  type DesignHistoryEntry,
+  ZOOM_KEY_STEP,
   ZOOM_MAX,
+  ZOOM_PER_PIXEL,
+  ZOOM_SETTLE_MS,
   ZOOM_MIN,
   type DesignCommands,
   DESIGN_PATCH_DEBOUNCE_MS,
@@ -184,7 +201,7 @@ import {
   type View,
 } from './design/tabShared'
 import { canvasBackdrop, DesignRulers, designMenuItems, ToolButton } from './design/DesignRulers'
-import { DesignNodeView } from './design/DesignNodeView'
+import { DesignNodeView, stableNodeHandlers, type DesignNodeHandlers } from './design/DesignNodeView'
 import { DesignSelectionChrome } from './design/DesignSelectionChrome'
 import { FrameToolFlyout, ShapeToolFlyout } from './design/DesignTools'
 import { NodeSettings } from './design/DesignNodeSettings'
@@ -200,8 +217,14 @@ export function DesignTab({ tab }: { tab: Extract<Tab, { kind: 'design' }> }) {
   const panelTabId = useKoma((s) => s.design?.panelTabId)
   const active = useKoma((s) => s.ui.activeTabId === tab.id && isTabVisible(s.ui, tab.id))
   const canvasRef = useRef<HTMLDivElement>(null)
-  const pastRef = useRef<DesignDoc[]>([])
-  const futureRef = useRef<DesignDoc[]>([])
+  const nodeHandlersRef = useRef<DesignNodeHandlers | null>(null)
+  const nodeHandlers = useMemo(() => stableNodeHandlers(nodeHandlersRef), [])
+  const paintDocRef = useRef<DesignDoc | null>(null)
+  /** Pointer held by the canvas while a drag runs, so a release outside the window still ends it. */
+  const captureRef = useRef<number | null>(null)
+  const historyRef = useRef(designHistory(key))
+  const pastRef = useRef(historyRef.current.past)
+  const futureRef = useRef(historyRef.current.future)
   const nudgeOpenRef = useRef(false)
   const nudgeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const dragRef = useRef<Drag | null>(null)
@@ -215,6 +238,12 @@ export function DesignTab({ tab }: { tab: Extract<Tab, { kind: 'design' }> }) {
   const updateRef = useRef(updateDesign)
   updateRef.current = updateDesign
   const [view, setView] = useState<View>(viewRef.current)
+  /** Zoom the node layer is laid out at. A gesture scales that layout with a transform and settles here when it pauses. */
+  const [layerZoom, setLayerZoom] = useState(viewRef.current.zoom)
+  const settleRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const hoverId = useSyncExternalStore(subscribeDesignHover, getDesignHover)
+  const hoverFrameRef = useRef<{ frame: number; clientX: number; clientY: number; deep: boolean }>({ frame: 0, clientX: 0, clientY: 0, deep: false })
+  const [altDown, setAltDown] = useState(false)
   const [tool, setTool] = useState<Tool>('select')
   const [selection, setSelection] = useState<string[]>([])
   const [editing, setEditing] = useState<string | null>(null)
@@ -229,6 +258,7 @@ export function DesignTab({ tab }: { tab: Extract<Tab, { kind: 'design' }> }) {
   const [penHandle, setPenHandle] = useState<number | null>(null)
   const [menu, setMenu] = useState<{ x: number; y: number; canvasX: number; canvasY: number } | null>(null)
   const commandsRef = useRef<DesignCommands | null>(null)
+  const pasteTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const stepOutRef = useRef<() => void>(() => {})
   const layerOpsRef = useRef<(action: DesignLayerOp) => void>(() => {})
   const penApplyRef = useRef<(draft: PenDraft, closed?: boolean) => void>(() => {})
@@ -260,8 +290,13 @@ export function DesignTab({ tab }: { tab: Extract<Tab, { kind: 'design' }> }) {
   enteredContainerRef.current = enteredContainerId
 
   useEffect(() => {
-    pastRef.current = []
-    futureRef.current = []
+    // History outlives the tab. A document that was reloaded underneath it starts fresh.
+    const history = designHistory(key)
+    const current = useKoma.getState().design?.docs?.[key]?.doc ?? null
+    if (history.head && current !== history.head) clearDesignHistory(history)
+    historyRef.current = history
+    pastRef.current = history.past
+    futureRef.current = history.future
     setSelection([])
     setEnteredContainerId(null)
     setEditing(null)
@@ -276,11 +311,34 @@ export function DesignTab({ tab }: { tab: Extract<Tab, { kind: 'design' }> }) {
       patchDebounceRef.current = null
     }
     pendingTypePatchRef.current = null
-    const next = { panX: 40, panY: 40, zoom: 1 }
+    const next = useKoma.getState().design?.fileUi?.[key]?.view ?? { panX: 40, panY: 40, zoom: 1 }
     viewRef.current = next
     setView(next)
+    setLayerZoom(next.zoom)
     setRev((value) => value + 1)
+    return () => setDesignFileUi(tab.root, tab.path, { view: viewRef.current })
   }, [key])
+
+  useEffect(() => {
+    historyRef.current.head = file?.doc ?? null
+  }, [file?.doc])
+
+  // Autosave follows the coding autosave setting, and waits for a drag to end.
+  const autosave = useKoma((s) => !!s.settingsValues?.codingAutosave)
+  useEffect(() => {
+    if (!autosave || !file?.dirty || file.saving || file.loading || file.error) return
+    let timer: ReturnType<typeof setTimeout>
+    const attempt = () => {
+      if (dragRef.current) {
+        timer = setTimeout(attempt, CODING_AUTOSAVE_MS)
+        return
+      }
+      const current = useKoma.getState().design?.docs?.[key]
+      if (current?.dirty && !current.saving && !current.loading && !current.error) saveDesign(tab.root, tab.path)
+    }
+    timer = setTimeout(attempt, CODING_AUTOSAVE_MS)
+    return () => clearTimeout(timer)
+  }, [autosave, file?.dirty, file?.doc, file?.error, file?.loading, file?.saving, key, saveDesign, tab.path, tab.root])
 
   useEffect(() => {
     const onFocus = (event: Event) => {
@@ -375,9 +433,9 @@ export function DesignTab({ tab }: { tab: Extract<Tab, { kind: 'design' }> }) {
 
   const note = (doc: DesignDoc) => {
     closeNudge()
-    pastRef.current.push(doc)
+    pastRef.current.push({ doc, selection: selectionRef.current })
     if (pastRef.current.length > UNDO_CAP) pastRef.current.shift()
-    futureRef.current = []
+    futureRef.current.length = 0
     setRev((value) => value + 1)
   }
   const noteRef = useRef(note)
@@ -386,8 +444,8 @@ export function DesignTab({ tab }: { tab: Extract<Tab, { kind: 'design' }> }) {
   const commit = (view: DesignDoc) => {
     const stored = useKoma.getState().design?.docs?.[key]?.doc
     if (!stored) return
-    const next = projectDoc(stored, focusRef.current, layoutDesign(view))
-    if (serializeDesign(stored) === serializeDesign(next)) return
+    const next = projectDoc(stored, focusRef.current, view)
+    if (sameDesign(stored, next)) return
     note(stored)
     updateDesign(tab.root, tab.path, next)
   }
@@ -428,11 +486,32 @@ export function DesignTab({ tab }: { tab: Extract<Tab, { kind: 'design' }> }) {
     }
   }
 
+  const importImagesRef = useRef(importImages)
+  importImagesRef.current = importImages
+
+  // Images pasted from the system clipboard, such as a screenshot, land in the middle of the view.
+  useEffect(() => {
+    if (!active) return
+    const onPaste = (event: ClipboardEvent) => {
+      const target = event.target as HTMLElement | null
+      if (isTerminalInputTarget(event.target) || target?.closest?.('input, textarea, [contenteditable="true"], [contenteditable="plaintext-only"]')) return
+      const files = [...(event.clipboardData?.files ?? [])].filter((item) => (item.type || mimeForName(item.name))?.startsWith('image/'))
+      if (!files.length) return
+      event.preventDefault()
+      if (pasteTimerRef.current) clearTimeout(pasteTimerRef.current)
+      pasteTimerRef.current = null
+      const view = viewportBox()
+      void importImagesRef.current(files, view ? { x: view.x + view.w / 2, y: view.y + view.h / 2 } : undefined)
+    }
+    window.addEventListener('paste', onPaste)
+    return () => window.removeEventListener('paste', onPaste)
+  }, [active])
+
   const commitStored = (next: DesignDoc, noteOnce = false) => {
     const stored = useKoma.getState().design?.docs?.[key]?.doc
     if (!stored) return
     const laid = layoutDesign(next)
-    if (serializeDesign(stored) === serializeDesign(laid)) return
+    if (sameDesign(stored, laid)) return
     if (noteOnce) {
       if (!labelNoted.current) {
         note(stored)
@@ -444,26 +523,23 @@ export function DesignTab({ tab }: { tab: Extract<Tab, { kind: 'design' }> }) {
   const commitRef = useRef(commit)
   commitRef.current = commit
 
-  const undo = () => {
+  /** Swap the document for a history entry and bring back the selection it had. */
+  const travel = (from: DesignHistoryEntry[], to: DesignHistoryEntry[]) => {
     closeNudge()
-    const prev = pastRef.current.pop()
-    if (!prev) return
+    const entry = from.pop()
+    if (!entry) return
     const current = useKoma.getState().design?.docs?.[key]?.doc
-    if (current) futureRef.current.push(current)
+    if (current) to.push({ doc: current, selection: selectionRef.current })
     setRev((value) => value + 1)
     setEditing(null)
-    updateDesign(tab.root, tab.path, prev)
+    updateDesign(tab.root, tab.path, entry.doc)
+    const view = editingDoc(entry.doc, focusRef.current)
+    const selection = entry.selection.filter((id) => locateDesign(view, id))
+    selectionRef.current = selection
+    setSelection(selection)
   }
-  const redo = () => {
-    closeNudge()
-    const next = futureRef.current.pop()
-    if (!next) return
-    const current = useKoma.getState().design?.docs?.[key]?.doc
-    if (current) pastRef.current.push(current)
-    setRev((value) => value + 1)
-    setEditing(null)
-    updateDesign(tab.root, tab.path, next)
-  }
+  const undo = () => travel(pastRef.current, futureRef.current)
+  const redo = () => travel(futureRef.current, pastRef.current)
   const undoRef = useRef(undo)
   const redoRef = useRef(redo)
   undoRef.current = undo
@@ -474,16 +550,29 @@ export function DesignTab({ tab }: { tab: Extract<Tab, { kind: 'design' }> }) {
     if (!saved) return
     const parsed = parseDesign(saved)
     if (parsed.error) return
-    pastRef.current = []
-    futureRef.current = []
+    clearDesignHistory(historyRef.current)
     setRev((value) => value + 1)
     setEditing(null)
     updateDesign(tab.root, tab.path, parsed.doc)
   }
 
-  const applyView = (next: View) => {
+  /**
+   * A gesture step only moves the cheap transform. CSS zoom re-lays out every node,
+   * so the layer catches up once the gesture pauses.
+   */
+  const applyView = (next: View, gesture = false) => {
     viewRef.current = next
     setView(next)
+    if (settleRef.current) clearTimeout(settleRef.current)
+    settleRef.current = null
+    if (!gesture) {
+      setLayerZoom(next.zoom)
+      return
+    }
+    settleRef.current = setTimeout(() => {
+      settleRef.current = null
+      setLayerZoom(viewRef.current.zoom)
+    }, ZOOM_SETTLE_MS)
   }
 
   const toDoc = (clientX: number, clientY: number) => {
@@ -494,6 +583,14 @@ export function DesignTab({ tab }: { tab: Extract<Tab, { kind: 'design' }> }) {
       x: (canvasPoint(clientX - rect.left) - current.panX) / current.zoom,
       y: (canvasPoint(clientY - rect.top) - current.panY) / current.zoom,
     }
+  }
+
+  /** The visible canvas in document coordinates, so snapping ignores what is off screen. */
+  const viewportBox = (): DesignRect | undefined => {
+    const rect = canvasRef.current?.getBoundingClientRect()
+    if (!rect) return undefined
+    const current = viewRef.current
+    return { x: -current.panX / current.zoom, y: -current.panY / current.zoom, w: canvasPoint(rect.width) / current.zoom, h: canvasPoint(rect.height) / current.zoom }
   }
 
   const zoomTo = (ids: string[] | null) => {
@@ -510,7 +607,7 @@ export function DesignTab({ tab }: { tab: Extract<Tab, { kind: 'design' }> }) {
     if (framed) applyView(framed)
   }
 
-  const zoomAt = (clientX: number, clientY: number, nextZoom: number) => {
+  const zoomAt = (clientX: number, clientY: number, nextZoom: number, gesture = false) => {
     const rect = canvasRef.current?.getBoundingClientRect()
     if (!rect) return
     const current = viewRef.current
@@ -519,7 +616,7 @@ export function DesignTab({ tab }: { tab: Extract<Tab, { kind: 'design' }> }) {
     const cy = canvasPoint(clientY - rect.top)
     const docX = (cx - current.panX) / current.zoom
     const docY = (cy - current.panY) / current.zoom
-    applyView({ zoom, panX: cx - docX * zoom, panY: cy - docY * zoom })
+    applyView({ zoom, panX: cx - docX * zoom, panY: cy - docY * zoom }, gesture)
   }
 
   useEffect(() => {
@@ -535,8 +632,7 @@ export function DesignTab({ tab }: { tab: Extract<Tab, { kind: 'design' }> }) {
     const onRestore = (event: Event) => {
       const detail = (event as CustomEvent<{ root: string; path: string }>).detail
       if (!detail || detail.root !== tab.root || detail.path !== tab.path) return
-      pastRef.current = []
-      futureRef.current = []
+      clearDesignHistory(historyRef.current)
       setEditing(null)
       setRev((value) => value + 1)
     }
@@ -559,6 +655,8 @@ export function DesignTab({ tab }: { tab: Extract<Tab, { kind: 'design' }> }) {
       if (!local) return
       node = { ...node, x: snapDesign(local.x, doc.grid, doc.snap), y: snapDesign(local.y, doc.grid, doc.snap) }
       if (toolRef.current === 'section') node = { ...node, section: true, name: 'Section' }
+      // A click types on one growing line; a dragged box keeps its width and wraps.
+      if (drag.shape === 'text') node = { ...node, text: '', textHug: tiny ? 'width' : 'height' }
       let next = doc
       if (drag.parentId) next = insertDesignNode(doc, drag.parentId, node)
       else if (focusRef.current && node.kind !== 'frame' && node.kind !== 'group') {
@@ -568,13 +666,18 @@ export function DesignTab({ tab }: { tab: Extract<Tab, { kind: 'design' }> }) {
         screen.children = [node]
         next = insertDesignNode(doc, null, screen)
       } else next = insertDesignNode(doc, null, node)
-      const laid = projectDoc(stored, focusRef.current, layoutDesign(next))
-      if (serializeDesign(laid) === serializeDesign(stored)) return
+      const laid = projectDoc(stored, focusRef.current, next)
+      if (sameDesign(laid, stored)) return
       noteRef.current(stored)
       updateRef.current(tab.root, tab.path, laid)
       setSelection([node.id])
       setPropsOpen(true)
       setTool('select')
+      if (drag.shape === 'text') {
+        // Typing folds into the creation's undo step.
+        labelNoted.current = true
+        setEditing(node.id)
+      }
     }
     const move = (event: PointerEvent) => {
       const drag = dragRef.current
@@ -583,6 +686,15 @@ export function DesignTab({ tab }: { tab: Extract<Tab, { kind: 'design' }> }) {
         if (hover) setPenHover(hover)
       }
       if (!drag) return
+      setDesignHover(null)
+      if (captureRef.current == null && (drag.kind !== 'move' || drag.moved)) {
+        try {
+          canvasRef.current?.setPointerCapture(event.pointerId)
+          captureRef.current = event.pointerId
+        } catch {
+          // The pointer is already gone; pointerup or blur ends the drag.
+        }
+      }
       if (drag.kind === 'pan') {
         const dx = canvasPoint(event.clientX - drag.lastX)
         const dy = canvasPoint(event.clientY - drag.lastY)
@@ -648,8 +760,8 @@ export function DesignTab({ tab }: { tab: Extract<Tab, { kind: 'design' }> }) {
         const doc = editingDoc(stored, focus)
         const origin = nodeOrigin(doc, drag.id)
         if (!origin) return
-        const next = projectDoc(stored, focus, layoutDesign(updateDesignNode(doc, drag.id, (node) => moveVectorVertex(node, drag.index, point.x - origin.x, point.y - origin.y))))
-        if (serializeDesign(next) === serializeDesign(stored)) return
+        const next = projectDoc(stored, focus, updateDesignNode(doc, drag.id, (node) => moveVectorVertex(node, drag.index, point.x - origin.x, point.y - origin.y)))
+        if (sameDesign(next, stored)) return
         if (!drag.remembered) {
           noteRef.current(stored)
           drag.remembered = true
@@ -669,8 +781,8 @@ export function DesignTab({ tab }: { tab: Extract<Tab, { kind: 'design' }> }) {
         const nextNode = { ...drag.node }
         if (rotation) nextNode.rotation = rotation
         else delete nextNode.rotation
-        const next = projectDoc(stored, focus, layoutDesign(updateDesignNode(doc, drag.id, () => nextNode)))
-        if (serializeDesign(next) === serializeDesign(stored)) return
+        const next = projectDoc(stored, focus, updateDesignNode(doc, drag.id, () => nextNode))
+        if (sameDesign(next, stored)) return
         if (!drag.remembered) {
           noteRef.current(stored)
           drag.remembered = true
@@ -685,8 +797,8 @@ export function DesignTab({ tab }: { tab: Extract<Tab, { kind: 'design' }> }) {
         const doc = editingDoc(stored, focus)
         const origin = nodeOrigin(doc, drag.id)
         if (!origin) return
-        const next = projectDoc(stored, focus, layoutDesign(updateDesignNode(doc, drag.id, (node) => moveVectorTangent(node, drag.segment, drag.end, point.x - origin.x, point.y - origin.y, event.metaKey || event.ctrlKey, event.shiftKey))))
-        if (serializeDesign(next) === serializeDesign(stored)) return
+        const next = projectDoc(stored, focus, updateDesignNode(doc, drag.id, (node) => moveVectorTangent(node, drag.segment, drag.end, point.x - origin.x, point.y - origin.y, event.metaKey || event.ctrlKey, event.shiftKey)))
+        if (sameDesign(next, stored)) return
         if (!drag.remembered) {
           noteRef.current(stored)
           drag.remembered = true
@@ -706,11 +818,11 @@ export function DesignTab({ tab }: { tab: Extract<Tab, { kind: 'design' }> }) {
         if (!located) return
         const delta = canvasDeltaToSpace(doc, located.parentId, screenDx, screenDy)
         const nextPaint = panImageCrop(drag.paint, delta.x, delta.y)
-        const next = projectDoc(stored, focus, layoutDesign(updateDesignNode(doc, drag.id, (node) => {
+        const next = projectDoc(stored, focus, updateDesignNode(doc, drag.id, (node) => {
           const paints = nodePaints(node, 'fill')
           return setNodePaints(node, 'fill', paints.map((paint) => (isImageCropPaint(paint) && paint.hash === drag.paint.hash ? nextPaint : paint)))
-        })))
-        if (serializeDesign(next) === serializeDesign(stored)) return
+        }))
+        if (sameDesign(next, stored)) return
         if (!drag.remembered) {
           noteRef.current(stored)
           drag.remembered = true
@@ -738,8 +850,8 @@ export function DesignTab({ tab }: { tab: Extract<Tab, { kind: 'design' }> }) {
         const uniform = typeof drag.node.radius === 'number' ? drag.node.radius : 0
         if (radius === uniform) delete nextNode[cornerKey]
         else nextNode[cornerKey] = radius
-        const next = projectDoc(stored, focus, layoutDesign(updateDesignNode(doc, drag.id, () => nextNode)))
-        if (serializeDesign(next) === serializeDesign(stored)) return
+        const next = projectDoc(stored, focus, updateDesignNode(doc, drag.id, () => nextNode))
+        if (sameDesign(next, stored)) return
         if (!drag.remembered) {
           noteRef.current(stored)
           drag.remembered = true
@@ -755,10 +867,10 @@ export function DesignTab({ tab }: { tab: Extract<Tab, { kind: 'design' }> }) {
           const paint = nodePaints(drag.node, 'fill').find(isImageCropPaint)
           if (paint) {
             const nextPaint = resizeImageCrop(paint, drag.handle, delta.x, delta.y, event.shiftKey)
-            const next = projectDoc(stored, focus, layoutDesign(updateDesignNode(doc, drag.id, (node) => (
+            const next = projectDoc(stored, focus, updateDesignNode(doc, drag.id, (node) => (
               setNodePaints(node, 'fill', nodePaints(node, 'fill').map((item) => (isImageCropPaint(item) && item.hash === paint.hash ? nextPaint : item)))
-            ))))
-            if (serializeDesign(next) === serializeDesign(stored)) return
+            )))
+            if (sameDesign(next, stored)) return
             if (!drag.remembered) {
               noteRef.current(stored)
               drag.remembered = true
@@ -775,8 +887,9 @@ export function DesignTab({ tab }: { tab: Extract<Tab, { kind: 'design' }> }) {
         setSnapMarks(null)
         // Object snap moves the pointer first, so a Shift lock still holds the ratio afterwards.
         // A rotated or flipped box has no canvas-aligned edges, so it skips object snap.
-        const currentBox = designAxisAligned(doc, drag.id) ? designCanvasBox(doc, drag.id) : null
-        const scene = currentBox ? designSnapScene(doc, [drag.id]) : null
+        // Cmd or Ctrl held during the drag turns object snapping off.
+        const currentBox = !(event.metaKey || event.ctrlKey) && designAxisAligned(doc, drag.id) ? designCanvasBox(doc, drag.id) : null
+        const scene = currentBox ? designSnapScene(doc, [drag.id], viewportBox()) : null
         if (currentBox && scene) {
           const free = resizeDesignNode(drag.node, drag.handle, dx, dy, doc.grid, doc.snap, false, { center })
           if (!free.flipX && !free.flipY) {
@@ -794,8 +907,8 @@ export function DesignTab({ tab }: { tab: Extract<Tab, { kind: 'design' }> }) {
           }
         }
         const resized = resizeDesignNode(drag.node, drag.handle, dx, dy, doc.grid, doc.snap, event.shiftKey, { center, gridX: !snapX, gridY: !snapY })
-        const next = projectDoc(stored, focus, layoutDesign(updateDesignNode(doc, drag.id, () => resized)))
-        if (serializeDesign(next) === serializeDesign(stored)) return
+        const next = projectDoc(stored, focus, updateDesignNode(doc, drag.id, () => resized))
+        if (sameDesign(next, stored)) return
         if (!drag.remembered) {
           noteRef.current(stored)
           drag.remembered = true
@@ -841,8 +954,8 @@ export function DesignTab({ tab }: { tab: Extract<Tab, { kind: 'design' }> }) {
       if (flowing && point && !drag.broke) drag.broke = true
       setFlowBar(null)
       const moveIds = designRoots(live, drag.ids)
-      if (!drag.scene) drag.scene = designSnapScene(live, drag.ids)
-      const snap = drag.scene
+      if (!drag.scene) drag.scene = designSnapScene(live, drag.ids, viewportBox())
+      const snap = drag.scene && !(event.metaKey || event.ctrlKey)
         ? designObjectSnap(drag.scene.moving, drag.scene.targets, screenDx, screenDy, 5 / zoom)
         : { dx: screenDx, dy: screenDy, snappedX: false, snappedY: false, guides: [], measures: [] }
       setSnapMarks(snap.guides.length || snap.measures.length ? { guides: snap.guides, measures: snap.measures } : null)
@@ -859,22 +972,44 @@ export function DesignTab({ tab }: { tab: Extract<Tab, { kind: 'design' }> }) {
         const y = snap.snappedY ? origin.y + delta.y : snapDesign(origin.y + delta.y, doc.grid, doc.snap)
         view = updateDesignNode(view, id, (node) => ({ ...node, x, y }))
       }
-      const next = projectDoc(stored, focus, layoutDesign(view, frozen))
-      if (serializeDesign(next) === serializeDesign(stored)) return
+      const next = projectDoc(stored, focus, view, frozen)
+      if (sameDesign(next, stored)) return
       if (!drag.remembered) {
         noteRef.current(stored)
         drag.remembered = true
       }
       updateRef.current(tab.root, tab.path, next)
     }
-    const up = (event: PointerEvent) => {
+    const release = () => {
       const drag = dragRef.current
       dragRef.current = null
+      if (captureRef.current != null) {
+        try {
+          canvasRef.current?.releasePointerCapture(captureRef.current)
+        } catch {
+          // Capture already ended with the pointer.
+        }
+        captureRef.current = null
+      }
       setDragCursor(null)
       setGhost(null)
       setFlowBar(null)
       setSnapMarks(null)
       if (drag?.kind === 'pen') setPenHandle(null)
+      return drag
+    }
+    /** Losing the window ends a drag where it is and lets go of Space, since its keyup never arrives. */
+    const abandon = () => {
+      if (document.visibilityState === 'hidden' || !document.hasFocus()) {
+        release()
+        spaceRef.current = false
+        setSpaceDown(false)
+        setAltDown(false)
+        setDesignHover(null)
+      }
+    }
+    const up = (event: PointerEvent) => {
+      const drag = release()
       if (!drag || drag.kind === 'pan' || drag.kind === 'pen') return
       const stored = useKoma.getState().design?.docs?.[key]?.doc
       if (!stored) return
@@ -910,8 +1045,8 @@ export function DesignTab({ tab }: { tab: Extract<Tab, { kind: 'design' }> }) {
           next = placeDesignNode(doc, dragId, drop.parentId, snapDesign(drop.x, doc.grid, doc.snap), snapDesign(drop.y, doc.grid, doc.snap))
         }
       }
-      const laid = projectDoc(stored, focus, layoutDesign(next))
-      if (serializeDesign(laid) === serializeDesign(stored)) return
+      const laid = projectDoc(stored, focus, next)
+      if (sameDesign(laid, stored)) return
       if (!drag.remembered) noteRef.current(stored)
       updateRef.current(tab.root, tab.path, laid)
     }
@@ -920,7 +1055,7 @@ export function DesignTab({ tab }: { tab: Extract<Tab, { kind: 'design' }> }) {
       if (!detail || detail.root !== tab.root || detail.path !== tab.path) return
       event.preventDefault()
       const stored = useKoma.getState().design?.docs?.[key]?.doc
-      if (!stored || serializeDesign(stored) === serializeDesign(detail.doc)) return
+      if (!stored || sameDesign(stored, detail.doc)) return
       noteRef.current(stored)
       updateRef.current(tab.root, tab.path, detail.doc)
     }
@@ -930,7 +1065,7 @@ export function DesignTab({ tab }: { tab: Extract<Tab, { kind: 'design' }> }) {
       const stored = useKoma.getState().design?.docs?.[key]?.doc
       if (!stored || !selectionRef.current.length) return
       const next = applyDesignToken(stored, selectionRef.current, detail.name)
-      if (serializeDesign(next) === serializeDesign(stored)) return
+      if (sameDesign(next, stored)) return
       noteRef.current(stored)
       updateRef.current(tab.root, tab.path, next)
     }
@@ -940,7 +1075,11 @@ export function DesignTab({ tab }: { tab: Extract<Tab, { kind: 'design' }> }) {
     window.addEventListener('pointermove', move)
     window.addEventListener('pointerup', up)
     window.addEventListener('pointercancel', up)
+    window.addEventListener('blur', abandon)
+    document.addEventListener('visibilitychange', abandon)
     return () => {
+      window.removeEventListener('blur', abandon)
+      document.removeEventListener('visibilitychange', abandon)
       window.removeEventListener('koma-design-commit', onCommit)
       window.removeEventListener('koma-design-apply-token', onApplyToken)
       window.removeEventListener('koma-design-restore', onRestore)
@@ -953,30 +1092,57 @@ export function DesignTab({ tab }: { tab: Extract<Tab, { kind: 'design' }> }) {
   useEffect(() => {
     const canvas = canvasRef.current
     if (!canvas) return
+    // Wheel events arrive faster than frames. Deltas pile up and apply once per frame.
+    const pending = { panX: 0, panY: 0, zoom: 1, clientX: 0, clientY: 0, frame: 0 }
+    const flush = () => {
+      pending.frame = 0
+      if (pending.zoom !== 1) zoomAt(pending.clientX, pending.clientY, viewRef.current.zoom * pending.zoom, true)
+      if (pending.panX || pending.panY) {
+        const current = viewRef.current
+        applyView({ ...current, panX: current.panX - pending.panX, panY: current.panY - pending.panY }, pending.zoom !== 1)
+      }
+      pending.panX = 0
+      pending.panY = 0
+      pending.zoom = 1
+    }
     const onWheel = (event: WheelEvent) => {
       event.preventDefault()
-      if (!(event.ctrlKey || event.metaKey)) {
-        const current = viewRef.current
-        applyView({ ...current, panX: current.panX - event.deltaX, panY: current.panY - event.deltaY })
-        return
+      const unit = event.deltaMode === WheelEvent.DOM_DELTA_LINE ? 16 : event.deltaMode === WheelEvent.DOM_DELTA_PAGE ? canvas.clientHeight : 1
+      let dx = event.deltaX * unit
+      let dy = event.deltaY * unit
+      if (event.ctrlKey || event.metaKey) {
+        // A trackpad pinch sends many small deltas and a mouse notch one large one; both scale smoothly.
+        pending.zoom *= Math.exp(-dy * ZOOM_PER_PIXEL)
+        pending.clientX = event.clientX
+        pending.clientY = event.clientY
+      } else {
+        if (event.shiftKey && !dx) {
+          dx = dy
+          dy = 0
+        }
+        pending.panX += dx
+        pending.panY += dy
       }
-      const factor = event.deltaY < 0 ? 1.1 : 1 / 1.1
-      zoomAt(event.clientX, event.clientY, viewRef.current.zoom * factor)
+      if (!pending.frame) pending.frame = requestAnimationFrame(flush)
     }
     canvas.addEventListener('wheel', onWheel, { passive: false })
-    return () => canvas.removeEventListener('wheel', onWheel)
+    return () => {
+      canvas.removeEventListener('wheel', onWheel)
+      if (pending.frame) cancelAnimationFrame(pending.frame)
+    }
   }, [file?.loading])
 
   useEffect(() => {
     if (!active) return
     const onKey = (event: KeyboardEvent) => {
       if (isTerminalInputTarget(event.target)) return
-      const typing = !!(event.target as HTMLElement | null)?.closest('input, textarea, [contenteditable="true"]')
+      const typing = !!(event.target as HTMLElement | null)?.closest('input, textarea, [contenteditable="true"], [contenteditable="plaintext-only"]')
       if ((event.metaKey || event.ctrlKey) && !event.shiftKey && !event.altKey && event.key.toLowerCase() === 's') {
         event.preventDefault()
         saveDesign(tab.root, tab.path)
         return
       }
+      if (event.key === 'Alt') setAltDown(event.type === 'keydown' && !typing)
       if (event.code === 'Space') {
         if (typing) return
         event.preventDefault()
@@ -1019,8 +1185,12 @@ export function DesignTab({ tab }: { tab: Extract<Tab, { kind: 'design' }> }) {
         return
       }
       if (meta && !event.shiftKey && !event.altKey && event.key.toLowerCase() === 'v') {
-        event.preventDefault()
-        commandsRef.current?.paste()
+        // The browser's paste event comes next and may carry an image. The shape paste waits one turn for it.
+        if (pasteTimerRef.current) clearTimeout(pasteTimerRef.current)
+        pasteTimerRef.current = setTimeout(() => {
+          pasteTimerRef.current = null
+          commandsRef.current?.paste()
+        }, 0)
         return
       }
       if (meta && !event.shiftKey && !event.altKey && event.key.toLowerCase() === 'd') {
@@ -1125,7 +1295,7 @@ export function DesignTab({ tab }: { tab: Extract<Tab, { kind: 'design' }> }) {
         const step = event.shiftKey ? 10 : 1
         const dx = event.key === 'ArrowLeft' ? -step : event.key === 'ArrowRight' ? step : 0
         const dy = event.key === 'ArrowUp' ? -step : event.key === 'ArrowDown' ? step : 0
-        commandsRef.current?.nudge(dx, dy, event.altKey)
+        commandsRef.current?.nudge(dx, dy, event.altKey && !event.repeat)
         return
       }
       if (!meta && !event.shiftKey && !event.altKey) {
@@ -1140,7 +1310,24 @@ export function DesignTab({ tab }: { tab: Extract<Tab, { kind: 'design' }> }) {
       if (event.key === 'Enter' && !meta) {
         event.preventDefault()
         if (toolRef.current === 'pen' && penRef.current) finishPenRef.current(false)
-        else setVectorEditId(null)
+        else if (vectorEditRef.current) setVectorEditId(null)
+        else if (event.shiftKey) commandsRef.current?.selectParent()
+        else commandsRef.current?.selectChildren()
+        return
+      }
+      if (event.key === 'Tab' && !meta && !event.altKey && selectionRef.current.length) {
+        event.preventDefault()
+        commandsRef.current?.step(event.shiftKey ? -1 : 1)
+        return
+      }
+      if (!meta && !event.altKey && (event.key === '=' || event.key === '+' || event.key === '-')) {
+        event.preventDefault()
+        commandsRef.current?.zoomStep(event.key === '-' ? 1 / ZOOM_KEY_STEP : ZOOM_KEY_STEP)
+        return
+      }
+      if (!meta && !event.altKey && event.shiftKey && event.code === 'Digit0') {
+        event.preventDefault()
+        commandsRef.current?.zoomStep(0)
         return
       }
       if (event.key === 'Escape') {
@@ -1230,8 +1417,8 @@ export function DesignTab({ tab }: { tab: Extract<Tab, { kind: 'design' }> }) {
           strokeWidth: current.strokeWidth ?? 2,
         }))
       : insertDesignNode(doc, draft.parentId, node)
-    const next = projectDoc(stored, focus, layoutDesign(view))
-    if (serializeDesign(next) === serializeDesign(stored)) return
+    const next = projectDoc(stored, focus, view)
+    if (sameDesign(next, stored)) return
     if (!penNoted.current) {
       note(stored)
       penNoted.current = true
@@ -1294,13 +1481,18 @@ export function DesignTab({ tab }: { tab: Extract<Tab, { kind: 'design' }> }) {
   commandsRef.current = {
     copy: () => {
       const open = viewDoc()
-      const ids = selectionRef.current
-      if (!open || !ids.length) return
-      const rows = ids.map((id) => locateDesign(open.doc, id)).filter((row) => row != null)
-      if (!rows.length || rows.some((row) => row.parentId !== rows[0].parentId)) return
+      if (!open || !selectionRef.current.length) return
+      const rows = designRoots(open.doc, selectionRef.current).map((id) => locateDesign(open.doc, id)).filter((row) => row != null)
+      if (!rows.length) return
+      // Shapes from different parents travel in canvas space and land side by side.
+      const shared = rows.every((row) => row.parentId === rows[0].parentId)
+      const nodes = shared ? rows.map((row) => row.node) : rows.map((row) => {
+        const origin = nodeBoxOrigin(open.doc, row.node.id)
+        return origin ? { ...row.node, x: origin.x, y: origin.y } : row.node
+      })
       const components = open.doc.components.filter((component) => rows.some((row) => row.node.kind === 'instance' && row.node.component === component.id))
       const images = open.doc.images
-      const slice = { nodes: rows.map((row) => row.node), parentId: rows[0].parentId, components: components.length ? components : undefined, images }
+      const slice = { nodes, parentId: shared ? rows[0].parentId : null, components: components.length ? components : undefined, images }
       setCopiedShape(slice)
       void navigator.clipboard?.writeText(serializeDesignSlice(slice.nodes, { components, images })).catch(() => undefined)
     },
@@ -1310,28 +1502,37 @@ export function DesignTab({ tab }: { tab: Extract<Tab, { kind: 'design' }> }) {
       const clip = getCopiedShape()
       const sources = clip?.nodes.length ? clip.nodes : []
       const finish = (nodes: DesignNode[], extras?: { parentId?: string | null; components?: DesignDoc['components']; images?: DesignDoc['images'] }) => {
-      const step = open.doc.snap && open.doc.grid > 0 ? open.doc.grid : 10
+      const source = extras ? extras.parentId : clip?.parentId
+      const lone = selectionRef.current.length === 1 ? findDesignNode(open.doc, selectionRef.current[0]) : null
+      // Paste lands in a selected frame, unless it carries frames itself; otherwise next to where it was copied.
+      const into = !at && lone?.kind === 'frame' && !nodes.some((node) => node.kind === 'frame') ? lone.id : null
       const parentId = at
         ? frameAtPoint(open.doc, at.x, at.y, '')
-        : extras?.parentId && locateDesign(open.doc, extras.parentId)
-          ? extras.parentId
-          : clip?.parentId && locateDesign(open.doc, clip.parentId)
-            ? clip.parentId
-            : null
+        : into ?? (source && locateDesign(open.doc, source) ? source : null)
+      const minX = Math.min(...nodes.map((node) => node.x))
+      const minY = Math.min(...nodes.map((node) => node.y))
+      const spanW = Math.max(...nodes.map((node) => node.x + node.w)) - minX
+      const spanH = Math.max(...nodes.map((node) => node.y + node.h)) - minY
+      let shift = { x: 0, y: 0 }
+      if (at) {
+        const local = canvasToContent(open.doc, parentId, at.x, at.y)
+        if (local) shift = { x: local.x - minX, y: local.y - minY }
+      } else if (into && into !== source && lone) {
+        shift = { x: (lone.w - spanW) / 2 - minX, y: (lone.h - spanH) / 2 - minY }
+      } else {
+        // In place while the copied spot is on screen; else in the middle of the view.
+        const view = viewportBox()
+        const corner = parentId ? nodeCanvasPoint(open.doc, parentId, minX, minY) : { x: minX, y: minY }
+        const visible = !view || !corner || (corner.x < view.x + view.w && corner.x + spanW > view.x && corner.y < view.y + view.h && corner.y + spanH > view.y)
+        const center = view && !visible ? canvasToContent(open.doc, parentId, view.x + view.w / 2, view.y + view.h / 2) : null
+        if (center) shift = { x: center.x - spanW / 2 - minX, y: center.y - spanH / 2 - minY }
+      }
       let next = open.doc
       const pasted: DesignNode[] = []
-      for (const source of nodes) {
-        const node = copyTree(source, () => mintId('n'), step, step)
-        if (at && parentId) {
-          const local = canvasToContent(open.doc, parentId, at.x, at.y)
-          if (local) {
-            node.x = snapDesign(local.x, open.doc.grid, open.doc.snap)
-            node.y = snapDesign(local.y, open.doc.grid, open.doc.snap)
-          }
-        } else if (at) {
-          node.x = snapDesign(at.x, open.doc.grid, open.doc.snap)
-          node.y = snapDesign(at.y, open.doc.grid, open.doc.snap)
-        }
+      for (const item of nodes) {
+        const node = copyTree(item, () => mintId('n'))
+        node.x = snapDesign(item.x + shift.x, open.doc.grid, open.doc.snap)
+        node.y = snapDesign(item.y + shift.y, open.doc.grid, open.doc.snap)
         if (parentId) next = insertDesignNode(next, parentId, node)
         else if (focusRef.current && node.kind !== 'frame' && node.kind !== 'group' && next.screens[0]) next = insertDesignNode(next, next.screens[0].id, node)
         else if (focusRef.current && node.kind !== 'frame' && node.kind !== 'group') {
@@ -1414,8 +1615,8 @@ export function DesignTab({ tab }: { tab: Extract<Tab, { kind: 'design' }> }) {
       view = nudgeDesignNodes(view, ids, dx, dy)
       const stored = useKoma.getState().design?.docs?.[key]?.doc
       if (!stored) return
-      const next = projectDoc(stored, focusRef.current, layoutDesign(view))
-      if (serializeDesign(stored) === serializeDesign(next)) return
+      const next = projectDoc(stored, focusRef.current, view)
+      if (sameDesign(stored, next)) return
       if (!nudgeOpenRef.current) {
         note(stored)
         nudgeOpenRef.current = true
@@ -1463,7 +1664,7 @@ export function DesignTab({ tab }: { tab: Extract<Tab, { kind: 'design' }> }) {
         next = unwrapped
         released.push(...children)
       }
-      if (!released.length || serializeDesign(next) === serializeDesign(open.doc)) return
+      if (!released.length || sameDesign(next, open.doc)) return
       commit(next)
       setSelection(released)
     },
@@ -1523,6 +1724,40 @@ export function DesignTab({ tab }: { tab: Extract<Tab, { kind: 'design' }> }) {
       setSelection([id])
       setPropsOpen(true)
     },
+    step: (dir) => {
+      const open = viewDoc()
+      const id = selectionRef.current[selectionRef.current.length - 1]
+      if (!open || !id) return
+      setSelection([stepDesignSibling(open.doc, id, dir)])
+      setPropsOpen(true)
+    },
+    selectChildren: () => {
+      const open = viewDoc()
+      const ids = selectionRef.current
+      if (!open || !ids.length) return
+      const lone = ids.length === 1 ? findDesignNode(open.doc, ids[0]) : null
+      if (lone?.kind === 'text' && !lone.locked) {
+        setEditing(lone.id)
+        labelNoted.current = false
+        return
+      }
+      const children = designChildIds(open.doc, ids)
+      if (ids.length === 1 && children[0] !== ids[0]) setEnteredContainerId(ids[0])
+      setSelection(children)
+    },
+    selectParent: () => {
+      const open = viewDoc()
+      const ids = selectionRef.current
+      if (!open || !ids.length) return
+      const parents = designParentIds(open.doc, ids)
+      setSelection(parents)
+      setEnteredContainerId(parents.length === 1 ? designEnterScopeForLayerSelect(open.doc, parents[0]) : null)
+    },
+    zoomStep: (factor) => {
+      const rect = canvasRef.current?.getBoundingClientRect()
+      if (!rect) return
+      zoomAt(rect.left + rect.width / 2, rect.top + rect.height / 2, factor ? viewRef.current.zoom * factor : 1)
+    },
     boolean: (op) => {
       const open = viewDoc()
       const ids = selectionRef.current
@@ -1561,8 +1796,13 @@ export function DesignTab({ tab }: { tab: Extract<Tab, { kind: 'design' }> }) {
     }
     if (action.op === 'select') {
       const ids = selectionRef.current
-      setSelection(action.shift ? (ids.includes(action.id) ? ids.filter((item) => item !== action.id) : [...ids, action.id]) : [action.id])
-      if (!action.shift) setEnteredContainerId(designEnterScopeForLayerSelect(open.doc, action.id))
+      const last = action.ids[action.ids.length - 1]
+      if (!last) return
+      if (action.toggle) setSelection(ids.includes(last) ? ids.filter((item) => item !== last) : [...ids, last])
+      else {
+        setSelection(action.ids)
+        setEnteredContainerId(designEnterScopeForLayerSelect(open.doc, last))
+      }
       setPropsOpen(true)
       setEditing(null)
       return
@@ -1586,9 +1826,11 @@ export function DesignTab({ tab }: { tab: Extract<Tab, { kind: 'design' }> }) {
       return
     }
     if (action.op === 'move') {
-      if (focusRef.current && action.parentId == null && locateDesign(open.doc, action.id)?.parentId != null) return
-      if (!canLeaveParent(open.doc, action.id, action.parentId)) return
-      commit(moveDesignNode(open.doc, action.id, action.parentId, action.index))
+      const ids = action.ids.filter((id) => {
+        if (focusRef.current && action.parentId == null && locateDesign(open.doc, id)?.parentId != null) return false
+        return canLeaveParent(open.doc, id, action.parentId)
+      })
+      if (ids.length) commit(moveDesignNodes(open.doc, ids, action.parentId, action.targetId, action.place))
       return
     }
     if (!selectionRef.current.includes(action.id)) setSelection([action.id])
@@ -1603,7 +1845,7 @@ export function DesignTab({ tab }: { tab: Extract<Tab, { kind: 'design' }> }) {
     const zero = { x: 0, y: 0 }
     if (draft && draft.points.length >= 3) {
       const first = draft.points[0]
-      const threshold = 8 / Math.max(viewRef.current.zoom, 0.25)
+      const threshold = 8 / viewRef.current.zoom
       if (Math.hypot(first.x - point.x, first.y - point.y) <= threshold) {
         applyPen(draft, true)
         penRef.current = null
@@ -1621,7 +1863,7 @@ export function DesignTab({ tab }: { tab: Extract<Tab, { kind: 'design' }> }) {
       const resume = selectionRef.current.map((id) => findDesignNode(open.doc, id)).find((node) => node?.kind === 'vector' && node.vector)
       if (resume?.vector) {
         const origin = nodeOrigin(open.doc, resume.id)
-        const threshold = 8 / Math.max(viewRef.current.zoom, 0.25)
+        const threshold = 8 / viewRef.current.zoom
         const end = origin ? openVectorEndpoints(resume).find((item) => Math.hypot(origin.x + item.x - point.x, origin.y + item.y - point.y) <= threshold) : null
         if (end && origin) {
           const points = resume.vector.vertices.map((vertex) => ({ x: origin.x + vertex.x, y: origin.y + vertex.y, incoming: zero, outgoing: zero }))
@@ -1655,6 +1897,27 @@ export function DesignTab({ tab }: { tab: Extract<Tab, { kind: 'design' }> }) {
   const startPan = (event: ReactPointerEvent | PointerEvent) => {
     dragRef.current = { kind: 'pan', lastX: event.clientX, lastY: event.clientY }
     setDragCursor('grabbing')
+  }
+
+  /** Outline what a click would select, once per frame. Cmd or Ctrl hovers the deepest shape. */
+  const onCanvasHover = (event: ReactPointerEvent<HTMLDivElement>) => {
+    const pending = hoverFrameRef.current
+    pending.clientX = event.clientX
+    pending.clientY = event.clientY
+    pending.deep = deepSelectKey(event)
+    if (pending.frame) return
+    pending.frame = requestAnimationFrame(() => {
+      pending.frame = 0
+      const stored = useKoma.getState().design?.docs?.[key]?.doc
+      const point = toDoc(pending.clientX, pending.clientY)
+      if (!stored || !point || dragRef.current || toolRef.current !== 'select' || spaceRef.current) {
+        setDesignHover(null)
+        return
+      }
+      const current = editingDoc(stored, focusRef.current)
+      const hit = pending.deep ? hitDesignDeepest(current, point.x, point.y)?.id : selectDesignHit(current, point.x, point.y, false, enteredContainerRef.current)
+      setDesignHover(hit ?? null)
+    })
   }
 
   const onCanvasPointerDown = (event: ReactPointerEvent<HTMLDivElement>) => {
@@ -1702,7 +1965,8 @@ export function DesignTab({ tab }: { tab: Extract<Tab, { kind: 'design' }> }) {
     const storedNow = useKoma.getState().design?.docs?.[key]?.doc
     const current = storedNow ? editingDoc(storedNow, focusRef.current) : null
     if (!current) return
-    const resolved = resolveDesignSelectHit(current, point.x, point.y, enteredContainerRef.current)
+    const deepId = deepSelectKey(event) ? hitDesignDeepest(current, point.x, point.y)?.id : undefined
+    const resolved = deepId ? { kind: 'hit' as const, id: deepId } : resolveDesignSelectHit(current, point.x, point.y, enteredContainerRef.current)
     if (resolved.kind === 'exit-and-hit') setEnteredContainerId(resolved.enteredContainerId)
     const target = resolved.kind === 'hit' ? resolved.id : resolved.kind === 'exit-and-hit' ? resolved.id : null
     if (!target) {
@@ -1748,7 +2012,7 @@ export function DesignTab({ tab }: { tab: Extract<Tab, { kind: 'design' }> }) {
       alt: event.altKey,
       scene: null,
     }
-    setDragCursor('grabbing')
+    setDragCursor('default')
   }
 
   const placeInstance = (componentId: string, point: { x: number; y: number }) => {
@@ -1809,6 +2073,7 @@ export function DesignTab({ tab }: { tab: Extract<Tab, { kind: 'design' }> }) {
 
   const storedDoc = file.doc
   const doc = editingDoc(storedDoc, focusId)
+  const paintDoc = paintOnlyDoc(paintDocRef, doc)
   const selectedNodes = selection.flatMap((id) => {
     const hit = locateDesign(doc, id)
     return hit ? [hit.node] : []
@@ -1817,6 +2082,11 @@ export function DesignTab({ tab }: { tab: Extract<Tab, { kind: 'design' }> }) {
   const located = selectedId ? locateDesign(doc, selectedId) : null
   const selected = located?.node ?? null
   const multi = selectedNodes.length > 1
+  // Alt over another shape shows the distances from the selection to it.
+  const altFrom = altDown && hoverId && selection.length && !dragCursor && !selection.includes(hoverId) ? designSelectionCanvasBox(doc, selection) : null
+  const altTo = altFrom && hoverId ? designCanvasBox(doc, hoverId) : null
+  const altMeasures = altFrom && altTo ? designDistances(altFrom, altTo) : []
+  const marks = snapMarks ?? (altMeasures.length ? { guides: [], measures: altMeasures } : null)
   const cropEdit = !multi && isImageCropPaint(inspectorPaint)
   cropEditRef.current = cropEdit
   const parentNode = located?.parentId ? findDesignNode(doc, located.parentId) : null
@@ -1904,8 +2174,8 @@ export function DesignTab({ tab }: { tab: Extract<Tab, { kind: 'design' }> }) {
     if (!stored) return
     let view = editingDoc(stored, focusRef.current)
     for (const id of selection) view = updateDesignNode(view, id, fn)
-    const next = projectDoc(stored, focusRef.current, layoutDesign(view))
-    if (serializeDesign(next) === serializeDesign(stored)) return
+    const next = projectDoc(stored, focusRef.current, view)
+    if (sameDesign(next, stored)) return
     if (noteOnce) {
       if (!labelNoted.current) {
         note(stored)
@@ -1937,6 +2207,145 @@ export function DesignTab({ tab }: { tab: Extract<Tab, { kind: 'design' }> }) {
       pendingTypePatchRef.current = null
       if (apply) patchSelected(apply, true)
     }, DESIGN_PATCH_DEBOUNCE_MS)
+  }
+
+  nodeHandlersRef.current = {
+    onOpenFill: (id) => {
+      setSelection([id])
+      setPropsOpen(true)
+      setOpenFillToken((token) => token + 1)
+    },
+    onEnterContainer: (id, event) => {
+      event.preventDefault()
+      event.stopPropagation()
+      const hit = findDesignNode(doc, id)
+      if (hit?.kind === 'vector') {
+        setSelection([id])
+        setVectorEditId(id)
+        setTool('select')
+        return
+      }
+      enterContainerAt(id, event.clientX, event.clientY)
+    },
+    onMenu: (id, clientX, clientY) => {
+      const point = toDoc(clientX, clientY)
+      if (!selection.includes(id)) setSelection([id])
+      if (point) setMenu({ x: clientX, y: clientY, canvasX: point.x, canvasY: point.y })
+    },
+    onSelect: (id, event, exact) => {
+      setOverrideTargetId(null)
+      if (event.button === 0) setMenu(null)
+      if (event.button === 1 || spaceRef.current || toolRef.current === 'pan') {
+        event.preventDefault()
+        event.stopPropagation()
+        startPan(event)
+        return
+      }
+      if (event.button !== 0 || toolRef.current !== 'select') return
+      event.preventDefault()
+      event.stopPropagation()
+      const storedNow = useKoma.getState().design?.docs?.[key]?.doc
+      const current = storedNow ? editingDoc(storedNow, focusRef.current) : doc
+      const point = toDoc(event.clientX, event.clientY)
+      let target = id
+      if (point && !exact) {
+        const deepId = deepSelectKey(event) ? hitDesignDeepest(current, point.x, point.y)?.id : undefined
+        const resolved = deepId ? { kind: 'hit' as const, id: deepId } : resolveDesignSelectHit(current, point.x, point.y, enteredContainerRef.current)
+        if (resolved.kind === 'clear') {
+          selectionRef.current = []
+          setSelection([])
+          setPropsOpen(true)
+          return
+        }
+        if (resolved.kind === 'exit-and-hit') {
+          setEnteredContainerId(resolved.enteredContainerId)
+          if (!resolved.id) {
+            selectionRef.current = []
+            setSelection([])
+            setPropsOpen(true)
+            return
+          }
+          target = resolved.id
+        } else {
+          target = resolved.id
+        }
+      }
+      const previous = selectionRef.current
+      const ids = event.shiftKey ? previous.includes(target) ? previous.filter((item) => item !== target) : [...previous, target] : previous.includes(target) ? previous : [target]
+      const moveIds = designRoots(current, ids)
+      selectionRef.current = ids
+      setSelection(ids)
+      setPropsOpen(true)
+      if (event.shiftKey) return
+      const origins: Record<string, { x: number; y: number }> = {}
+      for (const item of moveIds) {
+        const row = locateDesign(current, item)
+        if (row) origins[item] = { x: row.node.x, y: row.node.y }
+      }
+      if (locateDesign(current, target)?.node.locked) return
+      if (cropEditRef.current && ids.length === 1 && ids[0] === target) {
+        const paint = nodePaints(locateDesign(current, target)?.node, 'fill').find(isImageCropPaint)
+        if (paint) {
+          dragRef.current = { kind: 'crop', id: target, startX: event.clientX, startY: event.clientY, paint: { ...paint }, remembered: false }
+          setDragCursor('move')
+          return
+        }
+      }
+      dragRef.current = {
+        kind: 'move',
+        ids: moveIds,
+        startX: event.clientX,
+        startY: event.clientY,
+        origins,
+        remembered: false,
+        moved: false,
+        broke: false,
+        alt: event.altKey,
+        scene: null,
+      }
+      setDragCursor('default')
+    },
+    onEdit: (id) => {
+      setSelection([id])
+      setEditing(id)
+      setPropsOpen(true)
+      labelNoted.current = false
+    },
+    onText: (id, text) => {
+      const stored = useKoma.getState().design?.docs?.[key]?.doc
+      if (!stored) return
+      const view = updateDesignNode(editingDoc(stored, focusRef.current), id, (node) => {
+        const runs = retargetTextRuns(node.runs, node.text ?? '', text)
+        const next = { ...node, text }
+        if (runs.length) next.runs = runs
+        else delete next.runs
+        return next
+      })
+      const next = projectDoc(stored, focusRef.current, view)
+      if (sameDesign(next, stored)) return
+      if (!labelNoted.current) {
+        note(stored)
+        labelNoted.current = true
+      }
+      updateDesign(tab.root, tab.path, next)
+    },
+    onTextRange: (id, start, end) => setTextRange({ id, start, end }),
+    onTextBlur: () => {
+      labelNoted.current = false
+      setEditing(null)
+      setTextRange(null)
+      // Leaving a text box empty removes it, like Penpot. Its undo step already holds the state before the edit.
+      const stored = useKoma.getState().design?.docs?.[key]?.doc
+      const view = stored ? editingDoc(stored, focusRef.current) : null
+      const node = editing && view ? findDesignNode(view, editing) : null
+      if (!stored || !view || node?.kind !== 'text' || node.text?.trim()) return
+      const next = projectDoc(stored, focusRef.current, deleteDesignNode(view, node.id))
+      const top = pastRef.current[pastRef.current.length - 1]
+      if (top && sameDesign(top.doc, next)) pastRef.current.pop()
+      selectionRef.current = selectionRef.current.filter((id) => id !== node.id)
+      setSelection(selectionRef.current)
+      updateDesign(tab.root, tab.path, next)
+    },
   }
 
   return (
@@ -1987,6 +2396,8 @@ export function DesignTab({ tab }: { tab: Extract<Tab, { kind: 'design' }> }) {
           ref={canvasRef}
           className={`koma-authored-canvas relative min-h-0 min-w-0 flex-1 overflow-hidden select-none ${spaceDown || tool === 'pan' ? 'cursor-grab' : ''}`}
           onPointerDown={onCanvasPointerDown}
+          onPointerMove={onCanvasHover}
+          onPointerLeave={() => setDesignHover(null)}
           onContextMenu={(event) => {
             event.preventDefault()
             const point = toDoc(event.clientX, event.clientY)
@@ -2002,17 +2413,18 @@ export function DesignTab({ tab }: { tab: Extract<Tab, { kind: 'design' }> }) {
               re-layouts/paints at screen resolution so text and shapes stay sharp
               (unlike `transform: scale()`, which upscales a low-res raster). */}
           <div className="pointer-events-none absolute left-0 top-0" style={{ transform: `translate(${view.panX}px, ${view.panY}px)`, transformOrigin: '0 0' }}>
-            <div style={{ zoom: view.zoom }}>
+            <div style={{ transform: view.zoom === layerZoom ? undefined : `scale(${view.zoom / layerZoom})`, transformOrigin: '0 0' }}>
+            <div style={{ zoom: layerZoom }}>
             {flowBar ? (
               <div className="pointer-events-none absolute z-10" style={{ left: flowBar.x, top: flowBar.y, width: flowBar.w, height: flowBar.h, background: SELECTION }} />
             ) : null}
-            {snapMarks?.guides.map((guide, index) => (
+            {marks?.guides.map((guide, index) => (
               <div
                 key={`guide-${guide.axis}-${index}`}
                 className="pointer-events-none absolute z-10"
                 style={guide.axis === 'x'
-                  ? { left: guide.at, top: guide.from, width: 1 / Math.max(view.zoom, 0.25), height: Math.max(guide.to - guide.from, 1), background: SELECTION }
-                  : { left: guide.from, top: guide.at, width: Math.max(guide.to - guide.from, 1), height: 1 / Math.max(view.zoom, 0.25), background: SELECTION }}
+                  ? { left: guide.at, top: guide.from, width: 1 / view.zoom, height: Math.max(guide.to - guide.from, 1), background: SELECTION }
+                  : { left: guide.from, top: guide.at, width: Math.max(guide.to - guide.from, 1), height: 1 / view.zoom, background: SELECTION }}
               />
             ))}
             {enteredBox ? (
@@ -2023,19 +2435,19 @@ export function DesignTab({ tab }: { tab: Extract<Tab, { kind: 'design' }> }) {
                   top: enteredBox.y,
                   width: enteredBox.w,
                   height: enteredBox.h,
-                  outline: `${1 / Math.max(view.zoom, 0.25)}px dashed ${SELECTION}`,
+                  outline: `${1 / view.zoom}px dashed ${SELECTION}`,
                 }}
               />
             ) : null}
-            {snapMarks?.measures.map((measure, index) => (
+            {marks?.measures.map((measure, index) => (
               <div
                 key={`measure-${measure.axis}-${index}`}
                 className="pointer-events-none absolute z-10"
                 style={{
                   left: measure.x,
                   top: measure.y,
-                  width: measure.axis === 'x' ? measure.length : 1 / Math.max(view.zoom, 0.25),
-                  height: measure.axis === 'y' ? measure.length : 1 / Math.max(view.zoom, 0.25),
+                  width: measure.axis === 'x' ? measure.length : 1 / view.zoom,
+                  height: measure.axis === 'y' ? measure.length : 1 / view.zoom,
                   background: SELECTION,
                 }}
               >
@@ -2045,7 +2457,7 @@ export function DesignTab({ tab }: { tab: Extract<Tab, { kind: 'design' }> }) {
                     left: measure.axis === 'x' ? measure.length / 2 : 0,
                     top: measure.axis === 'y' ? measure.length / 2 : 0,
                     transform: 'translate(-50%, -50%)',
-                    fontSize: 11 / Math.max(view.zoom, 0.25),
+                    fontSize: 11 / view.zoom,
                     lineHeight: 1.2,
                     color: SELECTION,
                     background: '#e6e8ed',
@@ -2058,139 +2470,14 @@ export function DesignTab({ tab }: { tab: Extract<Tab, { kind: 'design' }> }) {
             {visibleDesignScreens(doc).map((screen) => (
               <DesignNodeView
                 key={screen.id}
-                doc={doc}
+                doc={paintDoc}
                 node={screen}
-                selectedIds={vectorEditId ? [] : selection}
                 editing={editing}
                 dragCursor={dragCursor}
-                zoom={view.zoom}
                 enteredContainerId={enteredContainerId}
                 overrideTargetId={overrideTargetId}
                 cropEditId={cropEdit ? selectedId : null}
-                onOpenFill={(id) => {
-                  setSelection([id])
-                  setPropsOpen(true)
-                  setOpenFillToken((token) => token + 1)
-                }}
-                onEnterContainer={(id, event) => {
-                  event.preventDefault()
-                  event.stopPropagation()
-                  const hit = findDesignNode(doc, id)
-                  if (hit?.kind === 'vector') {
-                    setSelection([id])
-                    setVectorEditId(id)
-                    setTool('select')
-                    return
-                  }
-                  enterContainerAt(id, event.clientX, event.clientY)
-                }}
-                onMenu={(id, clientX, clientY) => {
-                  const point = toDoc(clientX, clientY)
-                  if (!selection.includes(id)) setSelection([id])
-                  if (point) setMenu({ x: clientX, y: clientY, canvasX: point.x, canvasY: point.y })
-                }}
-                onSelect={(id, event) => {
-                  setOverrideTargetId(null)
-                  if (event.button === 0) setMenu(null)
-                  if (event.button === 1 || spaceRef.current || toolRef.current === 'pan') {
-                    event.preventDefault()
-                    event.stopPropagation()
-                    startPan(event)
-                    return
-                  }
-                  if (event.button !== 0 || toolRef.current !== 'select') return
-                  event.preventDefault()
-                  event.stopPropagation()
-                  const storedNow = useKoma.getState().design?.docs?.[key]?.doc
-                  const current = storedNow ? editingDoc(storedNow, focusRef.current) : doc
-                  const point = toDoc(event.clientX, event.clientY)
-                  let target = id
-                  if (point) {
-                    const resolved = resolveDesignSelectHit(current, point.x, point.y, enteredContainerRef.current)
-                    if (resolved.kind === 'clear') {
-                      selectionRef.current = []
-                      setSelection([])
-                      setPropsOpen(true)
-                      return
-                    }
-                    if (resolved.kind === 'exit-and-hit') {
-                      setEnteredContainerId(resolved.enteredContainerId)
-                      if (!resolved.id) {
-                        selectionRef.current = []
-                        setSelection([])
-                        setPropsOpen(true)
-                        return
-                      }
-                      target = resolved.id
-                    } else {
-                      target = resolved.id
-                    }
-                  }
-                  const previous = selectionRef.current
-                  const ids = event.shiftKey ? previous.includes(target) ? previous.filter((item) => item !== target) : [...previous, target] : previous.includes(target) ? previous : [target]
-                  const moveIds = designRoots(current, ids)
-                  selectionRef.current = ids
-                  setSelection(ids)
-                  setPropsOpen(true)
-                  if (event.shiftKey) return
-                  const origins: Record<string, { x: number; y: number }> = {}
-                  for (const item of moveIds) {
-                    const row = locateDesign(current, item)
-                    if (row) origins[item] = { x: row.node.x, y: row.node.y }
-                  }
-                  if (locateDesign(current, target)?.node.locked) return
-                  if (cropEditRef.current && ids.length === 1 && ids[0] === target) {
-                    const paint = nodePaints(locateDesign(current, target)?.node, 'fill').find(isImageCropPaint)
-                    if (paint) {
-                      dragRef.current = { kind: 'crop', id: target, startX: event.clientX, startY: event.clientY, paint: { ...paint }, remembered: false }
-                      setDragCursor('move')
-                      return
-                    }
-                  }
-                  dragRef.current = {
-                    kind: 'move',
-                    ids: moveIds,
-                    startX: event.clientX,
-                    startY: event.clientY,
-                    origins,
-                    remembered: false,
-                    moved: false,
-                    broke: false,
-                    alt: event.altKey,
-                    scene: null,
-                  }
-                  setDragCursor('grabbing')
-                }}
-                onEdit={(id) => {
-                  setSelection([id])
-                  setEditing(id)
-                  setPropsOpen(true)
-                  labelNoted.current = false
-                }}
-                onText={(id, text) => {
-                  const stored = useKoma.getState().design?.docs?.[key]?.doc
-                  if (!stored) return
-                  const view = updateDesignNode(editingDoc(stored, focusRef.current), id, (node) => {
-                    const runs = retargetTextRuns(node.runs, node.text ?? '', text)
-                    const next = { ...node, text }
-                    if (runs.length) next.runs = runs
-                    else delete next.runs
-                    return next
-                  })
-                  const next = projectDoc(stored, focusRef.current, layoutDesign(view))
-                  if (serializeDesign(next) === serializeDesign(stored)) return
-                  if (!labelNoted.current) {
-                    note(stored)
-                    labelNoted.current = true
-                  }
-                  updateDesign(tab.root, tab.path, next)
-                }}
-                onTextRange={(id, start, end) => setTextRange({ id, start, end })}
-                onTextBlur={() => {
-                  labelNoted.current = false
-                  setEditing(null)
-                  setTextRange(null)
-                }}
+                {...nodeHandlers}
               />
             ))}
             {selection.length === 1 ? (() => {
@@ -2246,13 +2533,13 @@ export function DesignTab({ tab }: { tab: Extract<Tab, { kind: 'design' }> }) {
                 width: Math.max(ghost.w, 1),
                 height: Math.max(ghost.h, 1),
                 background: ghost.kind === 'marquee' ? 'color-mix(in srgb, var(--koma-accent) 12%, transparent)' : ghost.shape === 'frame' ? '#ffffff' : ghost.shape === 'rect' || ghost.shape === 'ellipse' ? SHAPE_FILL : 'transparent',
-                border: `${1 / Math.max(view.zoom, 0.25)}px solid ${SELECTION}`,
+                border: `${1 / view.zoom}px solid ${SELECTION}`,
                 borderRadius: ghost.kind === 'shape' && ghost.shape === 'ellipse' ? '50%' : undefined,
                 transform: ghost.kind === 'shape' && ghost.rotation ? `rotate(${ghost.rotation}deg)` : undefined,
               }}
             >
               {ghost.kind === 'shape' ? (
-                <span className="absolute left-0 whitespace-nowrap" style={{ top: '100%', marginTop: 6 / Math.max(view.zoom, 0.25), fontSize: 11 / Math.max(view.zoom, 0.25), color: SELECTION }}>
+                <span className="absolute left-0 whitespace-nowrap" style={{ top: '100%', marginTop: 6 / view.zoom, fontSize: 11 / view.zoom, color: SELECTION }}>
                   {ghost.shape === 'line' ? Math.round(ghost.w) : `${Math.round(ghost.w)} × ${Math.round(ghost.h)}`}
                 </span>
               ) : null}
@@ -2264,8 +2551,8 @@ export function DesignTab({ tab }: { tab: Extract<Tab, { kind: 'design' }> }) {
             const origin = nodeOrigin(doc, vectorEditId)
             const vector = edited?.vector
             if (!edited || !origin || !vector?.vertices.length) return null
-            const unit = 7 / Math.max(view.zoom, 0.25)
-            const stroke = 1 / Math.max(view.zoom, 0.25)
+            const unit = 7 / view.zoom
+            const stroke = 1 / view.zoom
             return (
               <>
                 {vector.segments.map((segment, index) => {
@@ -2349,6 +2636,30 @@ export function DesignTab({ tab }: { tab: Extract<Tab, { kind: 'design' }> }) {
             )
           })() : null}
             </div>
+            </div>
+          </div>
+          {/* Root screen names stay one size on screen, like Penpot board titles. Click one to select and drag that screen. */}
+          <div className="pointer-events-none absolute inset-0">
+            {visibleDesignScreens(doc).filter((screen) => screen.kind === 'frame').map((screen) => {
+              const box = designCanvasBox(doc, screen.id)
+              if (!box) return null
+              return (
+                <div
+                  key={screen.id}
+                  className={`absolute truncate text-[11px] leading-4 ${selection.includes(screen.id) ? 'text-koma-accent' : 'text-koma-dim'} ${screen.locked || tool !== 'select' ? '' : 'pointer-events-auto cursor-default'}`}
+                  style={{ left: view.panX + box.x * view.zoom, top: view.panY + box.y * view.zoom - 18, maxWidth: Math.max(box.w * view.zoom, 24) }}
+                  onPointerEnter={() => setDesignHover(screen.id)}
+                  onPointerLeave={() => setDesignHover(null)}
+                  onPointerDown={(event) => {
+                    if (event.button !== 0) return
+                    event.stopPropagation()
+                    nodeHandlers.onSelect(screen.id, event, true)
+                  }}
+                >
+                  {designLayerName(screen)}
+                </div>
+              )
+            })}
           </div>
           <DesignSelectionChrome
             doc={doc}
@@ -2359,6 +2670,7 @@ export function DesignTab({ tab }: { tab: Extract<Tab, { kind: 'design' }> }) {
             dragCursor={dragCursor}
             enteredContainerId={enteredContainerId}
             cropEditId={cropEdit ? selectedId : null}
+            hoverId={tool === 'select' && !vectorEditId && !editing ? hoverId : null}
             onCorner={(id, corner, event) => {
               event.preventDefault()
               event.stopPropagation()
