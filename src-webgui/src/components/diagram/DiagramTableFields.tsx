@@ -1,7 +1,7 @@
-import { useEffect, useRef, useState, type ReactNode } from "react";
-import { createPortal } from "react-dom";
-import { ChevronDown, ChevronRight, MoreHorizontal, Plus } from "lucide-react";
-import { useAnchorRect } from "../panels/form";
+import { useEffect, useRef, useState, type ReactNode } from 'react'
+import { createPortal } from 'react-dom'
+import { ChevronDown, ChevronRight, MoreHorizontal, Plus } from 'lucide-react'
+import { useAnchorRect } from '../panels/form'
 import {
   DOCUMENT_TYPES,
   TABLE_ROW_LIMIT,
@@ -17,62 +17,30 @@ import {
   updateRow,
   type DiagramKey,
   type DiagramRow,
-} from "../../lib/diagram";
+} from '../../lib/diagram'
 
-type TypeGroup = { label: string; types: string[] };
+type TypeGroup = { label: string; types: string[] }
 
 /** Types offered for document fields: scalars first, then nests, then arrays of scalars. */
 const DOCUMENT_GROUPS: TypeGroup[] = [
-  {
-    label: "Value",
-    types: DOCUMENT_TYPES.filter(
-      (type) => type !== "object" && type !== "array",
-    ),
-  },
-  { label: "Nested", types: ["object", "array<object>"] },
-  {
-    label: "Array of",
-    types: [
-      "array<string>",
-      "array<number>",
-      "array<int>",
-      "array<objectId>",
-      "array<date>",
-      "array<mixed>",
-    ],
-  },
-];
+  { label: 'Value', types: DOCUMENT_TYPES.filter((type) => type !== 'object' && type !== 'array') },
+  { label: 'Nested', types: ['object', 'array<object>'] },
+  { label: 'Array of', types: ['array<string>', 'array<number>', 'array<int>', 'array<objectId>', 'array<date>', 'array<mixed>'] },
+]
 
 /** Common SQL column types; any other type can be typed in. */
 const SQL_GROUPS: TypeGroup[] = [
-  { label: "Number", types: ["int", "bigint", "serial", "numeric", "real"] },
-  { label: "Text", types: ["varchar(255)", "text", "char(36)", "uuid"] },
-  {
-    label: "Other",
-    types: [
-      "boolean",
-      "date",
-      "timestamp",
-      "timestamptz",
-      "json",
-      "jsonb",
-      "bytea",
-    ],
-  },
-];
+  { label: 'Number', types: ['int', 'bigint', 'serial', 'numeric', 'real'] },
+  { label: 'Text', types: ['varchar(255)', 'text', 'char(36)', 'uuid'] },
+  { label: 'Other', types: ['boolean', 'date', 'timestamp', 'timestamptz', 'json', 'jsonb', 'bytea'] },
+]
 
 function newRowId(): string {
-  return `r${Date.now().toString(36)}${Math.random().toString(36).slice(2, 5)}`;
+  return `r${Date.now().toString(36)}${Math.random().toString(36).slice(2, 5)}`
 }
 
 function keyText(key: DiagramKey | undefined): string {
-  return key === "pk"
-    ? "PK"
-    : key === "fk"
-      ? "FK"
-      : key === "pk,fk"
-        ? "PK FK"
-        : "";
+  return key === 'pk' ? 'PK' : key === 'fk' ? 'FK' : key === 'pk,fk' ? 'PK FK' : ''
 }
 
 /** A small floating menu anchored to its trigger, rendered in a portal so the panel never clips it. */
@@ -83,100 +51,79 @@ function Popover({
   width,
   children,
 }: {
-  anchor: React.RefObject<HTMLElement | null>;
-  open: boolean;
-  onClose: () => void;
-  width: number;
-  children: ReactNode;
+  anchor: React.RefObject<HTMLElement | null>
+  open: boolean
+  onClose: () => void
+  width: number
+  children: ReactNode
 }) {
-  const rect = useAnchorRect(open, anchor);
-  const menuRef = useRef<HTMLDivElement>(null);
+  const rect = useAnchorRect(open, anchor)
+  const menuRef = useRef<HTMLDivElement>(null)
   useEffect(() => {
-    if (!open) return;
+    if (!open) return
     const onDown = (e: MouseEvent) => {
-      const target = e.target as Node;
-      if (anchor.current?.contains(target) || menuRef.current?.contains(target))
-        return;
-      onClose();
-    };
+      const target = e.target as Node
+      if (anchor.current?.contains(target) || menuRef.current?.contains(target)) return
+      onClose()
+    }
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
-    };
-    window.addEventListener("mousedown", onDown);
-    window.addEventListener("keydown", onKey);
+      if (e.key === 'Escape') onClose()
+    }
+    window.addEventListener('mousedown', onDown)
+    window.addEventListener('keydown', onKey)
     return () => {
-      window.removeEventListener("mousedown", onDown);
-      window.removeEventListener("keydown", onKey);
-    };
-  }, [anchor, onClose, open]);
-  if (!open || !rect) return null;
+      window.removeEventListener('mousedown', onDown)
+      window.removeEventListener('keydown', onKey)
+    }
+  }, [anchor, onClose, open])
+  if (!open || !rect) return null
   // Opens below the trigger, right-aligned to it, and flips up near the bottom of the window.
-  const below = rect.bottom + 260 < window.innerHeight;
+  const below = rect.bottom + 260 < window.innerHeight
   return createPortal(
     <div
       ref={menuRef}
       style={{
-        position: "fixed",
+        position: 'fixed',
         left: Math.max(4, rect.right - width),
         width,
         zIndex: 80,
-        ...(below
-          ? { top: rect.bottom + 4 }
-          : { bottom: window.innerHeight - rect.top + 4 }),
+        ...(below ? { top: rect.bottom + 4 } : { bottom: window.innerHeight - rect.top + 4 }),
       }}
       className="max-h-64 overflow-y-auto rounded-md border border-koma-border bg-koma-panel py-1 shadow-xl"
     >
       {children}
     </div>,
     document.body,
-  );
+  )
 }
 
-function MenuItem({
-  children,
-  onPick,
-  disabled,
-  danger,
-}: {
-  children: ReactNode;
-  onPick: () => void;
-  disabled?: boolean;
-  danger?: boolean;
-}) {
+function MenuItem({ children, onPick, disabled, danger }: { children: ReactNode; onPick: () => void; disabled?: boolean; danger?: boolean }) {
   return (
     <button
       type="button"
       disabled={disabled}
       onMouseDown={(e) => {
-        e.preventDefault();
-        if (!disabled) onPick();
+        e.preventDefault()
+        if (!disabled) onPick()
       }}
       className={`flex w-full items-center gap-2 px-2.5 py-1 text-left text-[12px] hover:bg-koma-hover disabled:opacity-35 disabled:hover:bg-transparent ${
-        danger ? "text-koma-error" : "text-koma-fg"
+        danger ? 'text-koma-error' : 'text-koma-fg'
       }`}
     >
       {children}
     </button>
-  );
+  )
 }
 
 /** The type of a field as a pill; the menu lists document types, or takes any typed name. */
-function TypePill({
-  type,
-  groups,
-  onChange,
-}: {
-  type: string;
-  groups: TypeGroup[];
-  onChange: (type: string | undefined) => void;
-}) {
-  const [open, setOpen] = useState(false);
-  const [draft, setDraft] = useState("");
-  const ref = useRef<HTMLButtonElement>(null);
+function TypePill({ type, groups, onChange }: { type: string; groups: TypeGroup[]; onChange: (type: string | undefined) => void }) {
+  const [open, setOpen] = useState(false)
+  const [draft, setDraft] = useState('')
+  const ref = useRef<HTMLButtonElement>(null)
   const pick = (next: string) => {
-    onChange(next.trim() || undefined);
-    setOpen(false);
-  };
+    onChange(next.trim() || undefined)
+    setOpen(false)
+  }
   return (
     <>
       <button
@@ -184,21 +131,16 @@ function TypePill({
         type="button"
         title="Field type"
         onClick={() => {
-          setDraft("");
-          setOpen((current) => !current);
+          setDraft('')
+          setOpen((current) => !current)
         }}
         className={`h-6 max-w-[45%] flex-none truncate rounded px-1.5 font-mono text-[11px] hover:bg-koma-hover ${
-          type ? "text-koma-accent" : "text-koma-dim"
+          type ? 'text-koma-accent' : 'text-koma-dim'
         }`}
       >
-        {type || "type"}
+        {type || 'type'}
       </button>
-      <Popover
-        anchor={ref}
-        open={open}
-        onClose={() => setOpen(false)}
-        width={180}
-      >
+      <Popover anchor={ref} open={open} onClose={() => setOpen(false)} width={180}>
         <div className="px-2 pb-1">
           <input
             autoFocus
@@ -206,30 +148,24 @@ function TypePill({
             placeholder="Custom type…"
             onChange={(e) => setDraft(e.target.value)}
             onKeyDown={(e) => {
-              if (e.key === "Enter" && draft.trim()) pick(draft);
+              if (e.key === 'Enter' && draft.trim()) pick(draft)
             }}
             className="h-6 w-full rounded border border-koma-border bg-koma-bg px-1.5 font-mono text-[11px] text-koma-fg outline-none focus:border-koma-fg/40"
           />
         </div>
         {groups.map((group) => (
           <div key={group.label}>
-            <div className="px-2.5 pt-1 text-[10px] uppercase tracking-wider text-koma-dim">
-              {group.label}
-            </div>
+            <div className="px-2.5 pt-1 text-[10px] uppercase tracking-wider text-koma-dim">{group.label}</div>
             {group.types.map((option) => (
               <MenuItem key={option} onPick={() => pick(option)}>
-                <span
-                  className={`font-mono text-[11px] ${option === type ? "text-koma-accent" : ""}`}
-                >
-                  {option}
-                </span>
+                <span className={`font-mono text-[11px] ${option === type ? 'text-koma-accent' : ''}`}>{option}</span>
               </MenuItem>
             ))}
           </div>
         ))}
       </Popover>
     </>
-  );
+  )
 }
 
 /**
@@ -243,18 +179,14 @@ export function TableFields({
   onRows,
   onTextDone,
 }: {
-  rows: DiagramRow[];
+  rows: DiagramRow[]
   /** Document tables nest and mark optional fields; SQL tables are flat columns. */
-  document: boolean;
-  onRows: (rows: DiagramRow[], live: boolean) => void;
-  onTextDone: () => void;
+  document: boolean
+  onRows: (rows: DiagramRow[], live: boolean) => void
+  onTextDone: () => void
 }) {
-  const total = allRows(rows).length;
-  const set = (id: string, patch: Partial<DiagramRow>, live = false) =>
-    onRows(
-      updateRow(rows, id, (row) => ({ ...row, ...patch })),
-      live,
-    );
+  const total = allRows(rows).length
+  const set = (id: string, patch: Partial<DiagramRow>, live = false) => onRows(updateRow(rows, id, (row) => ({ ...row, ...patch })), live)
   const render = (list: DiagramRow[], depth: number): ReactNode =>
     list.map((row, index) => (
       <div key={row.id}>
@@ -267,53 +199,39 @@ export function TableFields({
           full={total >= TABLE_ROW_LIMIT}
           onName={(name) => set(row.id, { name }, true)}
           onType={(type) => set(row.id, { type })}
-          onOptional={() =>
-            set(row.id, { optional: row.optional ? undefined : true })
-          }
+          onOptional={() => set(row.id, { optional: row.optional ? undefined : true })}
           onKey={() => set(row.id, { key: nextKey(row.key) })}
           onFold={() => onRows(toggleCollapsed(rows, row.id), false)}
-          onAddInside={() =>
-            onRows(
-              addChildRow(rows, row.id, { id: newRowId(), name: "" }),
-              false,
-            )
-          }
+          onAddInside={() => onRows(addChildRow(rows, row.id, { id: newRowId(), name: '' }), false)}
           onIndent={() => onRows(indentRow(rows, row.id), false)}
           onOutdent={() => onRows(outdentRow(rows, row.id), false)}
-          onMove={(by) =>
-            onRows(moveRowWithinSiblings(rows, row.id, index + by), false)
-          }
+          onMove={(by) => onRows(moveRowWithinSiblings(rows, row.id, index + by), false)}
           onRemove={() => onRows(removeRow(rows, row.id), false)}
           onTextDone={onTextDone}
         />
         {row.children?.length && !row.collapsed ? (
           // The nest's own fields sit under a guide rule: a table in the table.
           <div className="relative">
-            <span
-              className="pointer-events-none absolute bottom-1 top-0 w-px bg-koma-border"
-              style={{ left: depth * 14 + 9 }}
-            />
+            <span className="pointer-events-none absolute bottom-1 top-0 w-px bg-koma-border" style={{ left: depth * 14 + 9 }} />
             {render(row.children, depth + 1)}
           </div>
         ) : null}
       </div>
-    ));
+    ))
   return (
     <div className="flex flex-col">
-      <div className="flex flex-col rounded border border-koma-border bg-koma-bg/40 py-0.5">
-        {render(rows, 0)}
-      </div>
+      <div className="flex flex-col rounded border border-koma-border bg-koma-bg/40 py-0.5">{render(rows, 0)}</div>
       <button
         type="button"
         className="mt-1 flex h-7 items-center justify-center gap-1 rounded text-[12px] text-koma-dim hover:bg-koma-hover hover:text-koma-fg disabled:opacity-40"
         disabled={total >= TABLE_ROW_LIMIT}
-        onClick={() => onRows([...rows, { id: newRowId(), name: "" }], false)}
+        onClick={() => onRows([...rows, { id: newRowId(), name: '' }], false)}
       >
         <Plus size={12} />
-        {document ? "Add field" : "Add column"}
+        {document ? 'Add field' : 'Add column'}
       </button>
     </div>
-  );
+  )
 }
 
 function FieldLine({
@@ -335,74 +253,61 @@ function FieldLine({
   onRemove,
   onTextDone,
 }: {
-  row: DiagramRow;
-  depth: number;
-  document: boolean;
-  first: boolean;
-  last: boolean;
-  full: boolean;
-  onName: (name: string) => void;
-  onType: (type: string | undefined) => void;
-  onOptional: () => void;
-  onKey: () => void;
-  onFold: () => void;
-  onAddInside: () => void;
-  onIndent: () => void;
-  onOutdent: () => void;
-  onMove: (by: number) => void;
-  onRemove: () => void;
-  onTextDone: () => void;
+  row: DiagramRow
+  depth: number
+  document: boolean
+  first: boolean
+  last: boolean
+  full: boolean
+  onName: (name: string) => void
+  onType: (type: string | undefined) => void
+  onOptional: () => void
+  onKey: () => void
+  onFold: () => void
+  onAddInside: () => void
+  onIndent: () => void
+  onOutdent: () => void
+  onMove: (by: number) => void
+  onRemove: () => void
+  onTextDone: () => void
 }) {
-  const [menu, setMenu] = useState(false);
-  const more = useRef<HTMLButtonElement>(null);
-  const nest = document && isNestType(row.type);
-  const key = keyText(row.key);
+  const [menu, setMenu] = useState(false)
+  const more = useRef<HTMLButtonElement>(null)
+  const nest = document && isNestType(row.type)
+  const key = keyText(row.key)
   const run = (action: () => void) => () => {
-    action();
-    setMenu(false);
-  };
+    action()
+    setMenu(false)
+  }
   return (
-    <div
-      className="group flex h-7 items-center gap-0.5 pr-1"
-      style={{ paddingLeft: depth * 14 + 2 }}
-    >
+    <div className="group flex h-7 items-center gap-0.5 pr-1" style={{ paddingLeft: depth * 14 + 2 }}>
       {document ? (
         <button
           type="button"
-          aria-label={row.collapsed ? "Unfold" : "Fold"}
+          aria-label={row.collapsed ? 'Unfold' : 'Fold'}
           disabled={!row.children?.length}
           onClick={onFold}
           className="flex h-5 w-4 flex-none items-center justify-center rounded text-koma-dim hover:text-koma-fg disabled:invisible"
         >
-          {row.collapsed ? (
-            <ChevronRight size={12} />
-          ) : (
-            <ChevronDown size={12} />
-          )}
+          {row.collapsed ? <ChevronRight size={12} /> : <ChevronDown size={12} />}
         </button>
       ) : null}
       {key || !document ? (
         <button
           type="button"
-          title={
-            key
-              ? "Key. Click to change."
-              : "No key. Click for PK, again for FK."
-          }
+          title={key ? 'Key. Click to change.' : 'No key. Click for PK, again for FK.'}
           onClick={onKey}
           className={`h-4 flex-none rounded px-1 text-[9px] font-semibold leading-4 ${
-            key
-              ? "bg-koma-accent/15 text-koma-accent"
-              : "w-6 text-koma-dim opacity-40 hover:opacity-100"
+            key ? 'bg-koma-accent/15 text-koma-accent' : 'w-6 text-koma-dim opacity-40 hover:opacity-100'
           }`}
         >
-          {key || "—"}
+          {key || '—'}
         </button>
       ) : null}
       <input
         value={row.name}
-        placeholder={document ? "field" : "column"}
-        aria-label={document ? "Field name" : "Column name"}
+        placeholder={document ? 'field' : 'column'}
+        aria-label={document ? 'Field name' : 'Column name'}
         onFocus={onTextDone}
         onBlur={onTextDone}
         onChange={(e) => onName(e.target.value)}
@@ -412,58 +317,30 @@ function FieldLine({
         <button
           type="button"
           aria-pressed={!!row.optional}
-          title={
-            row.optional
-              ? "Optional (some documents lack it). Click to make required."
-              : "Required. Click to make optional."
-          }
+          title={row.optional ? 'Optional (some documents lack it). Click to make required.' : 'Required. Click to make optional.'}
           onClick={onOptional}
           className={`h-5 w-4 flex-none rounded text-[12px] font-semibold ${
-            row.optional
-              ? "text-koma-accent"
-              : "text-koma-dim opacity-0 hover:opacity-100 group-hover:opacity-60"
+            row.optional ? 'text-koma-accent' : 'text-koma-dim opacity-0 hover:opacity-100 group-hover:opacity-60'
           }`}
         >
           ?
         </button>
       ) : null}
-      <TypePill
-        type={row.type ?? ""}
-        groups={document ? DOCUMENT_GROUPS : SQL_GROUPS}
-        onChange={onType}
-      />
+      <TypePill type={row.type ?? ''} groups={document ? DOCUMENT_GROUPS : SQL_GROUPS} onChange={onType} />
       <button
         ref={more}
         type="button"
         aria-label="More field actions"
         onClick={() => setMenu((open) => !open)}
-        className={`flex h-5 w-5 flex-none items-center justify-center rounded text-koma-dim hover:bg-koma-hover hover:text-koma-fg ${menu ? "opacity-100" : "opacity-0 group-hover:opacity-100 focus:opacity-100"}`}
+        className={`flex h-5 w-5 flex-none items-center justify-center rounded text-koma-dim hover:bg-koma-hover hover:text-koma-fg ${menu ? 'opacity-100' : 'opacity-0 group-hover:opacity-100 focus:opacity-100'}`}
       >
         <MoreHorizontal size={13} />
       </button>
-      <Popover
-        anchor={more}
-        open={menu}
-        onClose={() => setMenu(false)}
-        width={190}
-      >
+      <Popover anchor={more} open={menu} onClose={() => setMenu(false)} width={140}>
         {nest ? (
           <MenuItem disabled={full} onPick={run(onAddInside)}>
-            Add field inside
+            Add inside
           </MenuItem>
-        ) : null}
-        {document ? (
-          <>
-            <MenuItem disabled={first} onPick={run(onIndent)}>
-              Nest into field above{" "}
-              <span className="ml-auto text-[10px] text-koma-dim">⌥→</span>
-            </MenuItem>
-            <MenuItem disabled={depth === 0} onPick={run(onOutdent)}>
-              Move out of parent{" "}
-              <span className="ml-auto text-[10px] text-koma-dim">⌥←</span>
-            </MenuItem>
-            <div className="my-1 h-px bg-koma-border" />
-          </>
         ) : null}
         <MenuItem disabled={first} onPick={run(() => onMove(-1))}>
           Move up
@@ -471,15 +348,25 @@ function FieldLine({
         <MenuItem disabled={last} onPick={run(() => onMove(1))}>
           Move down
         </MenuItem>
+        {/* Right nests a field into the one above it; left takes it out of its parent. */}
+        {document ? (
+          <MenuItem disabled={first} onPick={run(onIndent)}>
+            Move right <span className="ml-auto text-[10px] text-koma-dim">⌥→</span>
+          </MenuItem>
+        ) : null}
+        {document ? (
+          <MenuItem disabled={depth === 0} onPick={run(onOutdent)}>
+            Move left <span className="ml-auto text-[10px] text-koma-dim">⌥←</span>
+          </MenuItem>
+        ) : null}
         <MenuItem onPick={run(onKey)}>
-          Key: <span className="text-koma-dim">{key || "none"}</span>
-          <span className="ml-auto text-[10px] text-koma-dim">cycle</span>
+          Key <span className="ml-auto text-[10px] text-koma-dim">{key || 'none'}</span>
         </MenuItem>
         <div className="my-1 h-px bg-koma-border" />
         <MenuItem danger onPick={run(onRemove)}>
-          {document ? "Remove field" : "Remove column"}
+          Remove
         </MenuItem>
       </Popover>
     </div>
-  );
+  )
 }
