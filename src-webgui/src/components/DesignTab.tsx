@@ -157,6 +157,7 @@ import {
 } from '../lib/design'
 import type { FramePreset } from '../lib/design/presets'
 import { DesignCursorGhost, type CursorGhostShape } from './design/DesignCursorGhost'
+import { fixAngle, snapToPoints } from '../lib/design/vectorEdit'
 import { designPngBase64 } from '../lib/designRender'
 import { fileKey } from '../store/coding'
 import { isTabVisible } from '../store/editorGroups'
@@ -303,6 +304,10 @@ export function DesignTab({ tab }: { tab: Extract<Tab, { kind: 'design' }> }) {
   const chooseToolRef = useRef<(next: Tool) => void>(() => {})
   const penRef = useRef<PenDraft | null>(null)
   const penNoted = useRef(false)
+  /** Last pen click, so a second click on the same spot soon after ends the path. */
+  const penClickRef = useRef<{ time: number; x: number; y: number } | null>(null)
+  const penTargetRef = useRef<(raw: { x: number; y: number }, shift: boolean) => { x: number; y: number }>((raw) => raw)
+  const penBackRef = useRef<() => void>(() => {})
   const selectionRef = useRef<string[]>([])
   selectionRef.current = selection
   penRef.current = pen
@@ -721,7 +726,7 @@ export function DesignTab({ tab }: { tab: Extract<Tab, { kind: 'design' }> }) {
       const drag = dragRef.current
       if (toolRef.current === 'pen' && drag?.kind !== 'pen') {
         const hover = toDoc(event.clientX, event.clientY)
-        if (hover) setPenHover(hover)
+        if (hover) setPenHover(penTargetRef.current(hover, event.shiftKey))
       }
       if (!drag) return
       setDesignHover(null)
@@ -782,8 +787,10 @@ export function DesignTab({ tab }: { tab: Extract<Tab, { kind: 'design' }> }) {
           current.x = point.x
           current.y = point.y
         } else {
-          current.outgoing = { x: point.x - current.x, y: point.y - current.y }
-          current.incoming = { x: current.x - point.x, y: current.y - point.y }
+          // Shift keeps the handle on 45° steps; Alt breaks the pair so only the outgoing side moves.
+          const tip = event.shiftKey ? fixAngle(current, point) : point
+          current.outgoing = { x: tip.x - current.x, y: tip.y - current.y }
+          if (!event.altKey) current.incoming = { x: current.x - tip.x, y: current.y - tip.y }
         }
         const next = { ...draft, points }
         penRef.current = next
@@ -1320,7 +1327,8 @@ export function DesignTab({ tab }: { tab: Extract<Tab, { kind: 'design' }> }) {
       }
       if (event.key === 'Delete' || event.key === 'Backspace') {
         event.preventDefault()
-        commandsRef.current?.remove()
+        if (toolRef.current === 'pen' && penRef.current) penBackRef.current()
+        else commandsRef.current?.remove()
         return
       }
       if (!meta && !event.altKey && event.shiftKey && (event.code === 'Digit1' || event.code === 'Digit2')) {
@@ -1375,7 +1383,9 @@ export function DesignTab({ tab }: { tab: Extract<Tab, { kind: 'design' }> }) {
           return
         }
         if (toolRef.current === 'pen' && penRef.current) {
-          cancelPenRef.current()
+          // Escape keeps what was drawn (Penpot); a lone first point is dropped.
+          if (penRef.current.points.length >= 2) finishPenRef.current(false)
+          else cancelPenRef.current()
           return
         }
         if (vectorEditRef.current) {
@@ -1485,6 +1495,41 @@ export function DesignTab({ tab }: { tab: Extract<Tab, { kind: 'design' }> }) {
     setTool('select')
     setSelection([draft.id])
   }
+
+  /**
+   * Where a pen point lands: Shift locks it to 45° from the last point; otherwise it snaps
+   * to the path's own points and, with snapping on, to the grid.
+   */
+  const penTarget = (raw: { x: number; y: number }, shift: boolean) => {
+    const draft = penRef.current
+    const last = draft?.points[draft.points.length - 1]
+    if (shift && last) return fixAngle(last, raw)
+    const others = draft ? draft.points.slice(0, -1) : []
+    const near = snapToPoints(raw, others, 6 / viewRef.current.zoom)
+    const doc = viewDoc()?.doc
+    if (!doc?.snap) return near
+    return {
+      x: near.x === raw.x ? snapDesign(raw.x, doc.grid, true) : near.x,
+      y: near.y === raw.y ? snapDesign(raw.y, doc.grid, true) : near.y,
+    }
+  }
+  penTargetRef.current = penTarget
+
+  /** Backspace while drawing takes back the last point; the last one left cancels the path. */
+  const penBack = () => {
+    const draft = penRef.current
+    if (!draft) return
+    if (draft.points.length <= 1) {
+      cancelPen()
+      return
+    }
+    const next = { ...draft, points: draft.points.slice(0, -1) }
+    penRef.current = next
+    setPen(next)
+    setPenHandle(null)
+    applyPen(next)
+  }
+  penBackRef.current = penBack
 
   const cancelPen = () => {
     const draft = penRef.current
@@ -1880,11 +1925,19 @@ export function DesignTab({ tab }: { tab: Extract<Tab, { kind: 'design' }> }) {
     setMenu({ x: action.x, y: action.y, canvasX: origin?.x ?? 0, canvasY: origin?.y ?? 0 })
   }
 
-  const beginPen = (point: { x: number; y: number }) => {
+  const beginPen = (point: { x: number; y: number }, time: number) => {
     const open = viewDoc()
     if (!open) return
     const draft = penRef.current
     const zero = { x: 0, y: 0 }
+    const previous = penClickRef.current
+    penClickRef.current = { time, x: point.x, y: point.y }
+    if (draft && previous && time - previous.time < 400 && Math.hypot(previous.x - point.x, previous.y - point.y) <= 4 / viewRef.current.zoom) {
+      // A double-click ends an open path where it is, like Penpot.
+      penClickRef.current = null
+      finishPen(false)
+      return
+    }
     if (draft && draft.points.length >= 3) {
       const first = draft.points[0]
       const threshold = 8 / viewRef.current.zoom
@@ -1974,7 +2027,7 @@ export function DesignTab({ tab }: { tab: Extract<Tab, { kind: 'design' }> }) {
     if (!point || !file) return
     if (tool === 'pen') {
       event.preventDefault()
-      beginPen(point)
+      beginPen(penTargetRef.current(point, event.shiftKey), event.timeStamp)
       return
     }
     if (tool === 'polygon' || tool === 'star' || tool === 'triangle') {
