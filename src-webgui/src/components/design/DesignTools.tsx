@@ -1,5 +1,5 @@
 import { useState, type ReactNode } from 'react'
-import { Frame, Square } from 'lucide-react'
+import { ChevronUp, Frame, Square } from 'lucide-react'
 import { FRAME_PRESETS, type FramePreset } from '../../lib/design'
 import { ToolButton } from './DesignRulers'
 import type { Tool } from './tabShared'
@@ -19,7 +19,7 @@ export function ToolFlyout({
 }) {
   const [open, setOpen] = useState(false)
   return (
-    <div className="relative" onPointerLeave={() => setOpen(false)}>
+    <div className="relative flex items-center" onPointerLeave={() => setOpen(false)}>
       <ToolButton
         label={label}
         selected={selected}
@@ -27,16 +27,23 @@ export function ToolFlyout({
       >
         {children}
       </ToolButton>
+      {/* The menu opens upward from the bottom toolbar, so the chevron points up. */}
       <button
         type="button"
         title={`${label} options`}
         aria-label={`${label} options`}
-        className="absolute -right-0.5 -top-0.5 h-2 w-2 rounded-full bg-koma-dim/50"
+        aria-haspopup="menu"
+        aria-expanded={open}
+        className={`flex h-6 w-3.5 flex-none items-center justify-center rounded transition ${
+          open ? 'bg-koma-hover text-koma-fg' : 'text-koma-dim hover:bg-koma-hover hover:text-koma-fg'
+        }`}
         onClick={(event) => {
           event.stopPropagation()
           setOpen((current) => !current)
         }}
-      />
+      >
+        <ChevronUp size={12} strokeWidth={2.25} />
+      </button>
       {open ? (
         <div className="absolute bottom-8 left-0 z-40 min-w-36 rounded border border-koma-border bg-koma-panel py-1 shadow-lg">
           {items.map((item) => (
