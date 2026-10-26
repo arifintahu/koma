@@ -1,5 +1,5 @@
 import type { DesignBooleanOp, DesignDoc, DesignNode, DesignPenPoint } from './types'
-import { booleanPaintNode, booleanResult, contoursToVector, isBooleanNode } from './boolean'
+import { booleanEligible, booleanPaintNode, booleanResult, contoursToVector, isBooleanNode } from './boolean'
 import { createNode, findDesignNode, fitVectorNode, nodeFromPen, spinToParent, updateDesignNode, wrapDesignNodes } from './model'
 import { setNodeSolid } from './paint'
 
@@ -159,6 +159,21 @@ export function booleanDesignNodes(doc: DesignDoc, ids: string[], op: DesignBool
   return updateDesignNode(wrapped, id, (node) => booleanPaintNode({ ...node, name: opTitle(op), booleanOp: op }))
 }
 
+/** A boolean back to a plain group; its shapes stay as they are. */
+export function booleanToGroup(node: DesignNode): DesignNode {
+  if (!node.booleanOp) return node
+  const next = { ...node }
+  delete next.booleanOp
+  if (next.name === opTitle(node.booleanOp)) next.name = 'Group'
+  return next
+}
+
+/** A plain group takes a boolean operation in place (Penpot's group-to-bool). */
+export function groupToBoolean(node: DesignNode, op: DesignBooleanOp): DesignNode {
+  if (node.kind !== 'group' || !node.children?.length) return node
+  return booleanPaintNode({ ...node, name: node.name === 'Group' || !node.name ? opTitle(op) : node.name, booleanOp: op })
+}
+
 export function retargetBooleanOp(node: DesignNode, op: DesignBooleanOp): DesignNode {
   if (!node.booleanOp) return node
   const name = node.name === opTitle(node.booleanOp) ? opTitle(op) : node.name
@@ -166,13 +181,23 @@ export function retargetBooleanOp(node: DesignNode, op: DesignBooleanOp): Design
   return { ...node, booleanOp: op, name }
 }
 
-/** Union, subtract, intersect, exclude, or flatten. One boolean changes op instead of nesting. */
+/**
+ * Union, subtract, intersect, exclude, or flatten. One boolean changes op instead of nesting,
+ * and picking the operation it already has turns it back into a group. One plain group takes
+ * the operation in place.
+ */
 export function applyDesignBoolean(doc: DesignDoc, ids: string[], op: DesignBooleanOp | 'flatten', mint: () => string): DesignDoc | null {
   if (!ids.length) return null
+  if (!booleanEligible(doc, ids).ok) return null
   if (ids.length === 1) {
     const node = findDesignNode(doc, ids[0])
-    if (!node || !isBooleanNode(node)) return null
+    if (!node) return null
+    if (!isBooleanNode(node)) {
+      if (op === 'flatten') return null
+      return updateDesignNode(doc, ids[0], (item) => groupToBoolean(item, op))
+    }
     if (op === 'flatten') return updateDesignNode(doc, ids[0], (item) => flattenBooleanNode(doc, item))
+    if (node.booleanOp === op) return updateDesignNode(doc, ids[0], booleanToGroup)
     return updateDesignNode(doc, ids[0], (item) => retargetBooleanOp(item, op))
   }
   if (op === 'flatten') {

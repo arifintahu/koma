@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { booleanResult, contoursToVector, nodeContours, pointInContours, type Contour } from './boolean'
+import { booleanEligible, booleanResult, contoursToVector, nodeContours, pointInContours, type Contour } from './boolean'
 import { designChatHtml } from './chatHtml'
 import {
   bendSegment,
@@ -601,5 +601,42 @@ describe('boolean geometry', () => {
     expect(area('intersect')).toBeGreaterThan(9000)
     expect(area('subtract')).toBeLessThan(400)
     expect(area('exclude')).toBeLessThan(400)
+  })
+
+  it('shapes that only touch along an edge intersect to nothing', () => {
+    const result = booleanResult(doc, boolGroup('g', 'intersect', [square('a', 0, 0), square('b', 100, 0)]))
+    expect(result.contours).toEqual([])
+    // Touching shapes still union into one piece.
+    const merged = booleanResult(doc, boolGroup('u', 'union', [square('a', 0, 0), square('b', 100, 0)]))
+    expect(merged.contours).toHaveLength(1)
+  })
+
+  it('a plain group takes an operation, and the same operation turns it back', () => {
+    const plain: DesignNode = { ...boolGroup('g', 'union', [square('a', 0, 0), square('b', 40, 30)]), name: 'Group' }
+    delete plain.booleanOp
+    const made = applyDesignBoolean(docOf(plain), ['g'], 'subtract', () => 'x')
+    expect(made?.screens[0].booleanOp).toBe('subtract')
+    expect(made?.screens[0].name).toBe('Subtract')
+    const back = applyDesignBoolean(made!, ['g'], 'subtract', () => 'x')
+    expect(back?.screens[0].booleanOp).toBeUndefined()
+    expect(back?.screens[0].name).toBe('Group')
+    expect(back?.screens[0].children?.map((child) => child.id)).toEqual(['a', 'b'])
+    // A different operation switches instead of toggling off.
+    expect(applyDesignBoolean(made!, ['g'], 'exclude', () => 'x')?.screens[0].booleanOp).toBe('exclude')
+  })
+
+  it('text and lines block a boolean; a lone shape does too', () => {
+    const text: DesignNode = { id: 't', kind: 'text', x: 0, y: 0, w: 40, h: 20, text: 'Hi' }
+    const line: DesignNode = { id: 'l', kind: 'line', x: 0, y: 0, w: 60, h: 2 }
+    const host: DesignNode = { id: 'host', kind: 'frame', x: 0, y: 0, w: 300, h: 200, children: [square('a', 0, 0), square('b', 40, 30), text, line] }
+    const d = docOf(host)
+    expect(booleanEligible(d, ['a', 'b']).ok).toBe(true)
+    expect(booleanEligible(d, ['a', 't'])).toMatchObject({ ok: false })
+    expect(booleanEligible(d, ['a', 'l'])).toMatchObject({ ok: false })
+    expect(booleanEligible(d, ['a'])).toMatchObject({ ok: false })
+    expect(applyDesignBoolean(d, ['a', 't'], 'union', () => 'x')).toBeNull()
+    // A group holding text is blocked as a whole.
+    const group: DesignNode = { ...boolGroup('g', 'union', [square('c', 0, 0)]), children: [square('c', 0, 0), text] }
+    expect(booleanEligible(docOf(group), ['g'])).toMatchObject({ ok: false })
   })
 })

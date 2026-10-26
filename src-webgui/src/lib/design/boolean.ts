@@ -1,7 +1,7 @@
 // Real boolean geometry. Lines are cubics with controls on the chord thirds,
 // so every piece splits and classifies the same way.
 import type { DesignBooleanOp, DesignDoc, DesignNode, DesignVector, DesignVectorPoint } from './types'
-import { cornerPixels, spinToParent } from './model'
+import { cornerPixels, findDesignNode, spinToParent } from './model'
 import { clonePaint, nodeHasPaint } from './paint'
 
 export type Point = { x: number; y: number }
@@ -529,13 +529,33 @@ export function booleanPair(op: DesignBooleanOp, a: Contour[], b: Contour[]): Co
   return stitch(kept)
 }
 
+/** Twice the signed area of a closed contour, from its endpoints and three points along each curve. */
+function contourArea(contour: Contour): number {
+  const points: Point[] = []
+  for (const cubic of contour) {
+    points.push(cubic[0], bezierAt(cubic, 0.25), bezierAt(cubic, 0.5), bezierAt(cubic, 0.75))
+  }
+  let sum = 0
+  for (let i = 0; i < points.length; i++) {
+    const a = points[i]
+    const b = points[(i + 1) % points.length]
+    sum += a.x * b.y - b.x * a.y
+  }
+  return sum
+}
+
+/** Slivers a boolean leaves behind: a lone edge shared by two shapes, or a contour with no area. */
+function dropDegenerate(contours: Contour[]): Contour[] {
+  return contours.filter((contour) => contour.length >= 2 && Math.abs(contourArea(contour)) / 2 >= 0.5)
+}
+
 export function booleanContours(op: DesignBooleanOp, lists: Contour[][]): BooleanGeometry {
   const rule: FillRule = op === 'exclude' ? 'evenodd' : 'nonzero'
   const ready = lists.filter((item) => item.length)
   if (!ready.length) return { contours: [], rule }
   let acc = ready[0]
-  for (let index = 1; index < ready.length; index++) acc = booleanPair(op, acc, ready[index])
-  return { contours: acc, rule }
+  for (let index = 1; index < ready.length; index++) acc = dropDegenerate(booleanPair(op, acc, ready[index]))
+  return { contours: ready.length > 1 ? acc : dropDegenerate(acc), rule }
 }
 
 function arcCubic(cx: number, cy: number, rx: number, ry: number, a0: number, a1: number): Cubic {
@@ -686,6 +706,27 @@ export function booleanContains(doc: DesignDoc, node: DesignNode, point: Point):
 
 export function isBooleanNode(node: DesignNode | null | undefined): boolean {
   return !!node?.booleanOp && !!node.children?.length
+}
+
+/** Text and lines have no closed area to combine, so a boolean cannot take them. */
+function hasOpenShape(node: DesignNode): boolean {
+  if (node.kind === 'text' || node.kind === 'line') return true
+  return (node.children ?? []).some(hasOpenShape)
+}
+
+export type BooleanEligibility = { ok: true } | { ok: false; reason: string }
+
+/**
+ * Whether the selection can be combined. Two or more shapes combine; one node qualifies
+ * only when it is a group or a boolean (to switch or set its operation). Text and lines
+ * (also inside groups) block it, as Penpot blocks text.
+ */
+export function booleanEligible(doc: DesignDoc, ids: readonly string[]): BooleanEligibility {
+  const nodes = ids.map((id) => findDesignNode(doc, id)).filter((node): node is DesignNode => !!node)
+  if (!nodes.length) return { ok: false, reason: 'Select shapes to combine' }
+  if (nodes.length === 1 && nodes[0].kind !== 'group') return { ok: false, reason: 'Select two or more shapes, or a group' }
+  if (nodes.some(hasOpenShape)) return { ok: false, reason: "Text and lines can't be combined" }
+  return { ok: true }
 }
 
 /** The group's own paint, or the back-most child's when the group has none. */
