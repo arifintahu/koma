@@ -19,17 +19,162 @@ export const GROUP_TITLE = 28
 
 export type DiagramKey = 'pk' | 'fk' | 'pk,fk'
 
-/** One column of a table. Ids are unique within the table and let lines attach to rows. */
-export type DiagramRow = { id: string; name: string; type?: string; key?: DiagramKey }
+/**
+ * One column of a table, or one field of a document. Ids are unique across the whole
+ * table, nested fields included, so lines can attach to any row. In a document table a
+ * field of type object or array holds its own fields in `children`: a table in the table.
+ */
+export type DiagramRow = {
+  id: string
+  name: string
+  type?: string
+  key?: DiagramKey
+  /** Document fields some documents lack. */
+  optional?: boolean
+  /** Nested fields of an object or an array of objects (document tables only). */
+  children?: DiagramRow[]
+  /** A folded nest hides its fields; lines to them meet the nest's row instead. */
+  collapsed?: boolean
+}
+
+/** SQL tables are flat; document tables (MongoDB-style collections) nest. */
+export type DiagramDialect = 'sql' | 'document'
 
 export const TABLE_HEADER = 30
 export const TABLE_ROW = 26
-export const TABLE_ROW_LIMIT = 200
+/** Indent per nesting level of a document field, in px. */
+export const TABLE_INDENT = 14
+/** Total rows a table may hold, nested ones included. Nesting depth itself is unlimited. */
+export const TABLE_ROW_LIMIT = 1000
 const KEYS: readonly DiagramKey[] = ['pk', 'fk', 'pk,fk']
 
-/** Tables are as tall as their rows (draw.io resizeLast): only the width is free. */
+/** Field types offered for document tables. `array<…>` takes any of these inside. */
+export const DOCUMENT_TYPES = ['string', 'number', 'int', 'bool', 'date', 'objectId', 'object', 'array', 'null', 'mixed'] as const
+
+/** An object, or an array of objects: a field that holds fields of its own. */
+export function isNestType(type: string | undefined): boolean {
+  const t = type?.trim().toLowerCase() ?? ''
+  return t === 'object' || t === 'array<object>' || t === 'array'
+}
+
+export type DiagramTableLine = { row: DiagramRow; depth: number; parentId: string | null }
+
+/** Rows as drawn, top to bottom: nested fields follow their nest unless it is folded. */
+export function tableRowLines(rows: readonly DiagramRow[] | undefined, depth = 0, parentId: string | null = null): DiagramTableLine[] {
+  const lines: DiagramTableLine[] = []
+  for (const row of rows ?? []) {
+    lines.push({ row, depth, parentId })
+    if (row.children?.length && !row.collapsed) lines.push(...tableRowLines(row.children, depth + 1, row.id))
+  }
+  return lines
+}
+
+export function tableLines(node: DiagramNode): DiagramTableLine[] {
+  return tableRowLines(node.rows)
+}
+
+/** Tables are as tall as their visible rows (draw.io resizeLast): only the width is free. */
 export function tableHeight(rows: readonly DiagramRow[] | undefined): number {
-  return TABLE_HEADER + Math.max(1, rows?.length ?? 0) * TABLE_ROW
+  return TABLE_HEADER + Math.max(1, tableRowLines(rows).length) * TABLE_ROW
+}
+
+/** Every row, folded ones too, depth first. */
+export function allRows(rows: readonly DiagramRow[] | undefined): DiagramRow[] {
+  const out: DiagramRow[] = []
+  for (const row of rows ?? []) {
+    out.push(row)
+    if (row.children) out.push(...allRows(row.children))
+  }
+  return out
+}
+
+export function findRow(rows: readonly DiagramRow[] | undefined, id: string): DiagramRow | undefined {
+  return allRows(rows).find((row) => row.id === id)
+}
+
+/** The sibling list holding a row, and the row's place in it. */
+function siblingsOf(rows: DiagramRow[], id: string): { list: DiagramRow[]; index: number; parent: DiagramRow | null } | null {
+  const index = rows.findIndex((row) => row.id === id)
+  if (index >= 0) return { list: rows, index, parent: null }
+  for (const row of rows) {
+    if (!row.children) continue
+    const found = siblingsOf(row.children, id)
+    if (found) return { ...found, parent: found.parent ?? row }
+  }
+  return null
+}
+
+/** Copy the tree with `fn` applied to one row. */
+export function updateRow(rows: readonly DiagramRow[], id: string, fn: (row: DiagramRow) => DiagramRow): DiagramRow[] {
+  return rows.map((row) => {
+    if (row.id === id) return fn(row)
+    return row.children ? { ...row, children: updateRow(row.children, id, fn) } : row
+  })
+}
+
+/** Copy the tree with each sibling list passed through `fn` (the top level included). */
+function mapLists(rows: readonly DiagramRow[], fn: (list: DiagramRow[]) => DiagramRow[]): DiagramRow[] {
+  return fn(rows.map((row) => (row.children ? { ...row, children: mapLists(row.children, fn) } : row)))
+}
+
+export function removeRow(rows: readonly DiagramRow[], id: string): DiagramRow[] {
+  return mapLists(rows, (list) => list.filter((row) => row.id !== id))
+}
+
+export function insertRowAfter(rows: readonly DiagramRow[], id: string, row: DiagramRow): DiagramRow[] {
+  return mapLists(rows, (list) => {
+    const index = list.findIndex((item) => item.id === id)
+    return index < 0 ? list : [...list.slice(0, index + 1), row, ...list.slice(index + 1)]
+  })
+}
+
+/** A first field inside a nest, which unfolds so the new field shows. */
+export function addChildRow(rows: readonly DiagramRow[], id: string, row: DiagramRow): DiagramRow[] {
+  return updateRow(rows, id, (parent) => ({ ...parent, collapsed: undefined, children: [row, ...(parent.children ?? [])] }))
+}
+
+/** Move a row into its previous sibling, which becomes an object if it held no fields. */
+export function indentRow(rows: readonly DiagramRow[], id: string): DiagramRow[] {
+  const copy = mapLists(rows, (list) => list)
+  const found = siblingsOf(copy, id)
+  if (!found || found.index === 0) return rows as DiagramRow[]
+  const row = found.list[found.index] as DiagramRow
+  const host = found.list[found.index - 1] as DiagramRow
+  const nest: DiagramRow = {
+    ...host,
+    type: isNestType(host.type) ? host.type : 'object',
+    collapsed: undefined,
+    children: [...(host.children ?? []), row],
+  }
+  found.list.splice(found.index - 1, 2, nest)
+  return copy
+}
+
+/** Move a nested row out, just after the nest that held it. */
+export function outdentRow(rows: readonly DiagramRow[], id: string): DiagramRow[] {
+  const copy = mapLists(rows, (list) => list)
+  const found = siblingsOf(copy, id)
+  if (!found?.parent) return rows as DiagramRow[]
+  const row = found.list[found.index] as DiagramRow
+  const parentId = found.parent.id
+  const without = removeRow(copy, id)
+  return insertRowAfter(without, parentId, row)
+}
+
+/** Reorder a row among its own siblings. */
+export function moveRowWithinSiblings(rows: readonly DiagramRow[], id: string, to: number): DiagramRow[] {
+  return mapLists(rows, (list) => {
+    const index = list.findIndex((row) => row.id === id)
+    if (index < 0) return list
+    const next = [...list]
+    const [row] = next.splice(index, 1)
+    next.splice(Math.max(0, Math.min(to, next.length)), 0, row as DiagramRow)
+    return next
+  })
+}
+
+export function toggleCollapsed(rows: readonly DiagramRow[], id: string): DiagramRow[] {
+  return updateRow(rows, id, (row) => (row.collapsed ? { ...row, collapsed: undefined } : { ...row, collapsed: true }))
 }
 export type DiagramSide = 'n' | 'e' | 's' | 'w'
 export type DiagramHandle = 'nw' | 'n' | 'ne' | 'e' | 'se' | 's' | 'sw' | 'w'
@@ -82,6 +227,8 @@ export type DiagramNode = {
   detail?: string
   /** Columns of a table. Only tables have them. */
   rows?: DiagramRow[]
+  /** Document tables nest fields; omitted means a flat SQL table. */
+  dialect?: 'document'
   /** Group this shape sits in. One level only: a group never has a parent. */
   parent?: string
 }
@@ -220,26 +367,38 @@ export function copyNode(node: DiagramNode, id: string, dx: number, dy: number):
   if (node.strokeColor) next.strokeColor = node.strokeColor
   if (node.textColor) next.textColor = node.textColor
   if (node.detail?.trim()) next.detail = node.detail
-  if (node.rows) next.rows = node.rows.map((row) => ({ ...row }))
+  if (node.rows) next.rows = cloneRows(node.rows)
+  if (node.dialect) next.dialect = node.dialect
   if (node.parent) next.parent = node.parent
   return next
 }
 
-function parseRows(value: unknown): DiagramRow[] {
+function cloneRows(rows: readonly DiagramRow[]): DiagramRow[] {
+  return rows.map((row) => (row.children ? { ...row, children: cloneRows(row.children) } : { ...row }))
+}
+
+/** Rows from a file. Nesting is kept for document tables; ids stay unique across the tree. */
+function parseRows(value: unknown, nested: boolean, seen = new Set<string>(), budget = { left: TABLE_ROW_LIMIT }): DiagramRow[] {
   if (!Array.isArray(value)) return []
   const rows: DiagramRow[] = []
-  const seen = new Set<string>()
   for (const item of value) {
+    if (budget.left <= 0) break
     if (!item || typeof item !== 'object') continue
     const row = item as Record<string, unknown>
     if (typeof row.id !== 'string' || !row.id || seen.has(row.id) || typeof row.name !== 'string') continue
     seen.add(row.id)
+    budget.left -= 1
     const next: DiagramRow = { id: row.id, name: row.name.slice(0, LABEL_LIMIT) }
     if (typeof row.type === 'string' && row.type.trim()) next.type = row.type.slice(0, LABEL_LIMIT)
     const key = oneOf(row.key, KEYS)
     if (key) next.key = key
+    if (nested && row.optional === true) next.optional = true
+    if (nested && Array.isArray(row.children)) {
+      const children = parseRows(row.children, true, seen, budget)
+      if (children.length) next.children = children
+      if (children.length && row.collapsed === true) next.collapsed = true
+    }
     rows.push(next)
-    if (rows.length >= TABLE_ROW_LIMIT) break
   }
   return rows
 }
@@ -275,7 +434,8 @@ function parseNodes(value: unknown): DiagramNode[] | null {
     const detail = parseDetail(row.detail)
     if (detail) node.detail = detail
     if (node.kind === 'table') {
-      node.rows = parseRows(row.rows)
+      if (row.dialect === 'document') node.dialect = 'document'
+      node.rows = parseRows(row.rows, node.dialect === 'document')
       node.h = tableHeight(node.rows)
       delete node.rotation
     }
@@ -406,7 +566,7 @@ export function parseDiagram(text: string): { doc: DiagramDoc; error: string | n
   const edges = parseEdges(raw.edges)
   if (!nodes || !edges) return { doc: emptyDiagram(), error: 'This file is not a diagram' }
   // A line keeps its row only while that row is still in the table.
-  const rowIds = new Map(nodes.map((node) => [node.id, new Set((node.rows ?? []).map((row) => row.id))]))
+  const rowIds = new Map(nodes.map((node) => [node.id, new Set(allRows(node.rows).map((row) => row.id))]))
   for (const edge of edges) {
     if (edge.fromRow && !rowIds.get(edge.from)?.has(edge.fromRow)) delete edge.fromRow
     if (edge.toRow && !rowIds.get(edge.to)?.has(edge.toRow)) delete edge.toRow
@@ -437,7 +597,8 @@ export function serializeDiagram(doc: DiagramDoc): string {
       if (n.strokeColor) row.strokeColor = n.strokeColor
       if (n.textColor) row.textColor = n.textColor
       if (n.detail?.trim()) row.detail = n.detail
-      if (n.kind === 'table') row.rows = (n.rows ?? []).map((r) => ({ ...r }))
+      if (n.kind === 'table') row.rows = cloneRows(n.rows ?? [])
+      if (n.kind === 'table' && n.dialect) row.dialect = n.dialect
       if (n.parent && n.kind !== 'group') row.parent = n.parent
       return row
     }),
@@ -946,7 +1107,7 @@ export const ER_LINE: Pick<DiagramEdge, 'route' | 'start' | 'end'> = { route: 'e
  * fall back to the table itself instead of disappearing.
  */
 export function updateTableRows(doc: DiagramDoc, id: string, rows: DiagramRow[]): DiagramDoc {
-  const kept = new Set(rows.map((row) => row.id))
+  const kept = new Set(allRows(rows).map((row) => row.id))
   return {
     ...doc,
     nodes: doc.nodes.map((node) => (node.id === id ? { ...node, rows, h: tableHeight(rows) } : node)),
@@ -1238,8 +1399,26 @@ function dedupe(points: DiagramPoint[]): DiagramPoint[] {
 
 /** Vertical middle of a table row, or null when the row is gone. */
 export function rowCenterY(node: DiagramNode, rowId: string): number | null {
-  const index = node.rows?.findIndex((row) => row.id === rowId) ?? -1
-  return index < 0 ? null : node.y + TABLE_HEADER + index * TABLE_ROW + TABLE_ROW / 2
+  const lines = tableLines(node)
+  let index = lines.findIndex((line) => line.row.id === rowId)
+  if (index < 0) {
+    // A row inside a folded nest meets the outermost folded nest that hides it.
+    const path = rowPath(node.rows ?? [], rowId)
+    if (!path) return null
+    index = lines.findIndex((line) => path.includes(line.row.id) && line.row.collapsed)
+    if (index < 0) return null
+  }
+  return node.y + TABLE_HEADER + index * TABLE_ROW + TABLE_ROW / 2
+}
+
+/** Ids from the top-level row down to `id`, or null when it is not in the tree. */
+function rowPath(rows: readonly DiagramRow[], id: string): string[] | null {
+  for (const row of rows) {
+    if (row.id === id) return [row.id]
+    const below = row.children ? rowPath(row.children, id) : null
+    if (below) return [row.id, ...below]
+  }
+  return null
 }
 
 /** Where a line meets a table row: the left or right edge, whichever faces `toward`. */
@@ -1249,13 +1428,18 @@ export function rowAnchor(node: DiagramNode, rowId: string, toward: DiagramPoint
   return { x: toward.x < node.x + node.w / 2 ? node.x : node.x + node.w, y }
 }
 
-/** Row under a doc point: its index, -1 on the header, null outside the table. */
+/** Visible line under a doc point: its index, -1 on the header, null outside the table. */
 export function tableRowAt(node: DiagramNode, point: DiagramPoint): number | null {
   if (node.kind !== 'table' || point.x < node.x || point.x > node.x + node.w || point.y < node.y || point.y > node.y + node.h) return null
   const offset = point.y - node.y - TABLE_HEADER
   if (offset < 0) return -1
   const index = Math.floor(offset / TABLE_ROW)
-  return index < (node.rows?.length ?? 0) ? index : null
+  return index < tableLines(node).length ? index : null
+}
+
+/** The row on visible line `index`, as returned by `tableRowAt`. */
+export function tableLineRow(node: DiagramNode, index: number | null): DiagramRow | undefined {
+  return index != null && index >= 0 ? tableLines(node)[index]?.row : undefined
 }
 
 function routeEnd(

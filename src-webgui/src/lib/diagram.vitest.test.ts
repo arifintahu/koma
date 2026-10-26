@@ -1,5 +1,15 @@
 import { describe, expect, it } from 'vitest'
 import {
+  TABLE_HEADER,
+  TABLE_ROW,
+  allRows,
+  findRow,
+  indentRow,
+  outdentRow,
+  rowCenterY,
+  tableHeight,
+  tableLines,
+  toggleCollapsed,
   arrowHead,
   arrowTarget,
   entityRoute,
@@ -496,5 +506,69 @@ describe('diagram groups', () => {
     expect(group?.text).toBe('Box')
     expect(child?.parent).toBe(group?.id)
     expect(child?.kind).toBe('rect')
+  })
+})
+
+describe('document tables', () => {
+  const orders = (): DiagramNode => ({
+    id: 'o',
+    kind: 'table',
+    dialect: 'document',
+    x: 0,
+    y: 0,
+    w: 220,
+    h: 0,
+    text: 'orders',
+    rows: [
+      { id: 'r1', name: '_id', type: 'objectId', key: 'pk' },
+      {
+        id: 'r2',
+        name: 'items',
+        type: 'array<object>',
+        children: [
+          { id: 'r3', name: 'sku', type: 'string' },
+          { id: 'r4', name: 'meta', type: 'object', children: [{ id: 'r5', name: 'color', type: 'string', optional: true }] },
+        ],
+      },
+      { id: 'r6', name: 'total', type: 'number' },
+    ],
+  })
+
+  it('lines follow the tree and folded nests hide their fields', () => {
+    const node = orders()
+    expect(tableLines(node).map((line) => [line.row.name, line.depth])).toEqual([
+      ['_id', 0],
+      ['items', 0],
+      ['sku', 1],
+      ['meta', 1],
+      ['color', 2],
+      ['total', 0],
+    ])
+    const folded = { ...node, rows: toggleCollapsed(node.rows ?? [], 'r2') }
+    expect(tableLines(folded)).toHaveLength(3)
+    expect(tableHeight(folded.rows)).toBe(TABLE_HEADER + 3 * TABLE_ROW)
+    // A line to a folded-away field meets the folded nest's row.
+    expect(rowCenterY(folded, 'r5')).toBe(rowCenterY(folded, 'r2'))
+    expect(rowCenterY(node, 'r5')).toBe(TABLE_HEADER + 4 * TABLE_ROW + TABLE_ROW / 2)
+  })
+
+  it('indent nests a field into the one above; outdent moves it back out', () => {
+    const rows = orders().rows ?? []
+    const indented = indentRow(rows, 'r6')
+    const items = indented.find((row) => row.id === 'r2')
+    expect(items?.children?.map((row) => row.id)).toEqual(['r3', 'r4', 'r6'])
+    const back = outdentRow(indented, 'r6')
+    expect(back.map((row) => row.id)).toEqual(['r1', 'r2', 'r6'])
+    // A scalar field that takes a child becomes an object.
+    expect(indentRow(rows, 'r2').find((row) => row.id === 'r1')?.type).toBe('object')
+  })
+
+  it('a deep tree survives a save, and SQL tables stay flat', () => {
+    const doc: DiagramDoc = { ...emptyDiagram(), nodes: [orders()] }
+    const parsed = parseDiagram(serializeDiagram(doc)).doc.nodes[0]
+    expect(parsed?.dialect).toBe('document')
+    expect(findRow(parsed?.rows, 'r5')).toMatchObject({ name: 'color', optional: true })
+    const sql = parseDiagram(serializeDiagram({ ...doc, nodes: [{ ...orders(), dialect: undefined }] })).doc.nodes[0]
+    expect(allRows(sql?.rows).map((row) => row.id)).toEqual(['r1', 'r2', 'r6'])
   })
 })
