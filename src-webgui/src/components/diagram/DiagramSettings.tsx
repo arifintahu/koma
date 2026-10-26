@@ -1,19 +1,15 @@
 import { useState, type ReactNode } from 'react'
-import { ChevronDown, ChevronUp, ListIndentDecrease, ListIndentIncrease, Plus, X } from 'lucide-react'
+import { ChevronDown, ChevronUp, Plus, X } from 'lucide-react'
 import { keyLabel } from './DiagramNodeView'
 import { tableToJsonSample, tableToJsonSchema } from '../../lib/diagramJson'
+import { DocumentFields } from './DiagramDocumentFields'
 import { Toggle } from '../panels/form'
 import { InlineMarkdownInput, MarkdownNote } from '../MarkdownNote'
 import { diagramShapeFolder, shapeHeadingFor } from '../../lib/diagramNotes'
 import {
-  DOCUMENT_TYPES,
   TABLE_ROW_LIMIT,
-  addChildRow,
   allRows,
-  indentRow,
-  isNestType,
   moveRowWithinSiblings,
-  outdentRow,
   removeRow,
   updateRow,
   edgeStyle,
@@ -448,101 +444,61 @@ function ColumnSettings({
         onChange={(next) => onDialect(next, next === 'sql' ? flattenRows(rows) : rows)}
       />
       <span className="text-[10px] font-semibold uppercase tracking-wider text-koma-dim">{document ? 'Fields' : 'Columns'}</span>
-      <datalist id="diagram-document-types">
-        {[...DOCUMENT_TYPES, 'array<object>', 'array<string>', 'array<number>', 'array<objectId>'].map((type) => (
-          <option key={type} value={type} />
-        ))}
-      </datalist>
-      {fieldLines(rows).map(({ row, depth, siblings, index }) => (
-        <div key={row.id} className="flex flex-col gap-0.5" style={{ paddingLeft: depth * 12 }}>
-          <div className="flex items-center gap-1">
-            <button
-              type="button"
-              title={`${KEY_NAMES[row.key ?? '']}. Click to change.`}
-              aria-label={KEY_NAMES[row.key ?? '']}
-              className="h-7 w-9 flex-none rounded border border-koma-border bg-koma-bg text-[10px] font-semibold text-koma-fg hover:border-koma-fg/40"
-              onClick={() => set(row.id, { key: nextKey(row.key) }, false)}
-            >
-              {keyLabel(row.key) || '—'}
-            </button>
-            <input
-              value={row.name}
-              placeholder="name"
-              aria-label={document ? 'Field name' : 'Column name'}
-              className={`${field} flex-1`}
-              onFocus={onTextDone}
-              onBlur={onTextDone}
-              onChange={(e) => set(row.id, { name: e.target.value }, true)}
-            />
-            <input
-              value={row.type ?? ''}
-              placeholder="type"
-              aria-label={document ? 'Field type' : 'Column type'}
-              list={document ? 'diagram-document-types' : undefined}
-              className={`${field} w-20 flex-none`}
-              onFocus={onTextDone}
-              onBlur={onTextDone}
-              onChange={(e) => set(row.id, { type: e.target.value.trim() ? e.target.value : undefined }, true)}
-            />
-            {document ? null : (
-              <>
-                <button type="button" title="Move up" aria-label="Move up" className={icon} disabled={index === 0} onClick={() => onRows(moveRowWithinSiblings(rows, row.id, index - 1), false)}>
-                  <ChevronUp size={12} />
-                </button>
-                <button type="button" title="Move down" aria-label="Move down" className={icon} disabled={index === siblings.length - 1} onClick={() => onRows(moveRowWithinSiblings(rows, row.id, index + 1), false)}>
-                  <ChevronDown size={12} />
-                </button>
-                <button type="button" title="Remove column" aria-label="Remove column" className={icon} onClick={() => onRows(removeRow(rows, row.id), false)}>
-                  <X size={12} />
-                </button>
-              </>
-            )}
-          </div>
-          {document ? (
-            <div className="flex items-center gap-0.5 pl-10">
+      {document ? (
+        <DocumentFields rows={rows} onRows={onRows} onTextDone={onTextDone} />
+      ) : (
+        <>
+          {fieldLines(rows).map(({ row, siblings, index }) => (
+            <div key={row.id} className="flex items-center gap-1">
               <button
                 type="button"
-                aria-pressed={!!row.optional}
-                title="Optional: some documents lack this field"
-                className={`h-5 rounded px-1 text-[10px] ${row.optional ? 'bg-koma-accent/20 text-koma-accent' : 'text-koma-dim hover:bg-koma-hover hover:text-koma-fg'}`}
-                onClick={() => set(row.id, { optional: row.optional ? undefined : true }, false)}
+                title={`${KEY_NAMES[row.key ?? '']}. Click to change.`}
+                aria-label={KEY_NAMES[row.key ?? '']}
+                className="h-7 w-9 flex-none rounded border border-koma-border bg-koma-bg text-[10px] font-semibold text-koma-fg hover:border-koma-fg/40"
+                onClick={() => set(row.id, { key: nextKey(row.key) }, false)}
               >
-                optional
+                {keyLabel(row.key) || '—'}
               </button>
-              <span className="flex-1" />
-              {isNestType(row.type) ? (
-                <button type="button" title="Add a field inside" aria-label="Add a field inside" className={icon} disabled={total >= TABLE_ROW_LIMIT} onClick={() => onRows(addChildRow(rows, row.id, { id: newRowId(), name: '' }), false)}>
-                  <Plus size={12} />
-                </button>
-              ) : null}
-              <button type="button" title="Nest into the field above" aria-label="Indent" className={icon} disabled={index === 0} onClick={() => onRows(indentRow(rows, row.id), false)}>
-                <ListIndentIncrease size={12} />
-              </button>
-              <button type="button" title="Move out of its parent" aria-label="Outdent" className={icon} disabled={depth === 0} onClick={() => onRows(outdentRow(rows, row.id), false)}>
-                <ListIndentDecrease size={12} />
-              </button>
+              <input
+                value={row.name}
+                placeholder="name"
+                aria-label="Column name"
+                className={`${field} flex-1`}
+                onFocus={onTextDone}
+                onBlur={onTextDone}
+                onChange={(e) => set(row.id, { name: e.target.value }, true)}
+              />
+              <input
+                value={row.type ?? ''}
+                placeholder="type"
+                aria-label="Column type"
+                className={`${field} w-20 flex-none`}
+                onFocus={onTextDone}
+                onBlur={onTextDone}
+                onChange={(e) => set(row.id, { type: e.target.value.trim() ? e.target.value : undefined }, true)}
+              />
               <button type="button" title="Move up" aria-label="Move up" className={icon} disabled={index === 0} onClick={() => onRows(moveRowWithinSiblings(rows, row.id, index - 1), false)}>
                 <ChevronUp size={12} />
               </button>
               <button type="button" title="Move down" aria-label="Move down" className={icon} disabled={index === siblings.length - 1} onClick={() => onRows(moveRowWithinSiblings(rows, row.id, index + 1), false)}>
                 <ChevronDown size={12} />
               </button>
-              <button type="button" title="Remove field" aria-label="Remove field" className={icon} onClick={() => onRows(removeRow(rows, row.id), false)}>
+              <button type="button" title="Remove column" aria-label="Remove column" className={icon} onClick={() => onRows(removeRow(rows, row.id), false)}>
                 <X size={12} />
               </button>
             </div>
-          ) : null}
-        </div>
-      ))}
-      <button
-        type="button"
-        className="flex h-7 items-center justify-center gap-1 rounded border border-dashed border-koma-border text-[12px] text-koma-dim hover:border-koma-fg/40 hover:text-koma-fg disabled:opacity-40"
-        disabled={total >= TABLE_ROW_LIMIT}
-        onClick={() => onRows([...rows, { id: newRowId(), name: '' }], false)}
-      >
-        <Plus size={12} />
-        {document ? 'Add field' : 'Add column'}
-      </button>
+          ))}
+          <button
+            type="button"
+            className="flex h-7 items-center justify-center gap-1 rounded border border-dashed border-koma-border text-[12px] text-koma-dim hover:border-koma-fg/40 hover:text-koma-fg disabled:opacity-40"
+            disabled={total >= TABLE_ROW_LIMIT}
+            onClick={() => onRows([...rows, { id: newRowId(), name: '' }], false)}
+          >
+            <Plus size={12} />
+            Add column
+          </button>
+        </>
+      )}
     </div>
   )
 }

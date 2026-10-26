@@ -182,6 +182,31 @@ type Picker =
   | { mode: 'drop'; x: number; y: number; sourceId: string; port: number | null; row?: string; at: DiagramPoint }
   | { mode: 'canvas'; x: number; y: number; at: DiagramPoint }
 
+const PANEL_DEFAULT = 260
+const PANEL_KEY = 'koma.diagram.panelWidth'
+
+function clampPanelWidth(width: number): number {
+  return Math.round(Math.min(640, Math.max(220, width)))
+}
+
+/** The properties panel width this viewer last chose; storage may be unavailable. */
+function readPanelWidth(): number {
+  try {
+    const saved = Number(localStorage.getItem(PANEL_KEY))
+    return Number.isFinite(saved) && saved > 0 ? clampPanelWidth(saved) : PANEL_DEFAULT
+  } catch {
+    return PANEL_DEFAULT
+  }
+}
+
+function savePanelWidth(width: number): void {
+  try {
+    localStorage.setItem(PANEL_KEY, String(width))
+  } catch {
+    /* storage blocked: the width just resets next time */
+  }
+}
+
 function mintId(prefix: string): string {
   return `${prefix}${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`
 }
@@ -313,6 +338,7 @@ export function DiagramTab({ tab }: { tab: Extract<Tab, { kind: 'diagram' }> }) 
   const [picker, setPicker] = useState<Picker | null>(null)
   const pickerTimer = useRef(0)
   const [propsOpen, setPropsOpen] = useState(false)
+  const [panelWidth, setPanelWidth] = useState(readPanelWidth)
   const [spaceDown, setSpaceDown] = useState(false)
   const [dragCursor, setDragCursor] = useState<string | null>(null)
   const spaceRef = useRef(false)
@@ -1988,9 +2014,43 @@ export function DiagramTab({ tab }: { tab: Extract<Tab, { kind: 'diagram' }> }) 
         </div>
       </div>
       {propsOpen ? (
+        <div
+          data-diagram-ui=""
+          role="separator"
+          aria-orientation="vertical"
+          aria-label="Resize properties"
+          title="Drag to resize"
+          className="w-[5px] flex-none cursor-ew-resize hover:bg-koma-grip"
+          onPointerDown={(e) => {
+            // Dragging left widens the panel; the width is remembered for this viewer.
+            e.preventDefault()
+            e.stopPropagation()
+            const startX = e.clientX
+            const startW = panelWidth
+            const onMove = (ev: PointerEvent) => setPanelWidth(clampPanelWidth(startW - pagePoint(ev.clientX - startX)))
+            const onUp = (ev: PointerEvent) => {
+              window.removeEventListener('pointermove', onMove)
+              window.removeEventListener('pointerup', onUp)
+              document.body.style.cursor = ''
+              document.body.style.userSelect = ''
+              savePanelWidth(clampPanelWidth(startW - pagePoint(ev.clientX - startX)))
+            }
+            document.body.style.cursor = 'ew-resize'
+            document.body.style.userSelect = 'none'
+            window.addEventListener('pointermove', onMove)
+            window.addEventListener('pointerup', onUp)
+          }}
+          onDoubleClick={() => {
+            setPanelWidth(PANEL_DEFAULT)
+            savePanelWidth(PANEL_DEFAULT)
+          }}
+        />
+      ) : null}
+      {propsOpen ? (
         <aside
           data-diagram-ui=""
-          className="flex w-[260px] min-h-0 flex-none flex-col overflow-hidden border-l border-koma-border bg-koma-panel"
+          className="flex min-h-0 flex-none flex-col overflow-hidden border-l border-koma-border bg-koma-panel"
+          style={{ width: panelWidth }}
           onPointerDown={(e) => e.stopPropagation()}
           onContextMenu={(e) => {
             e.preventDefault()
