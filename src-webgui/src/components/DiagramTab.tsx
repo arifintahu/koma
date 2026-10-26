@@ -40,6 +40,7 @@ import {
 import { syncDiagramShapeNotes } from '../lib/diagramNoteAttach'
 import { diagramFolder, publishDiagramShapeNotes } from '../lib/diagramNotes'
 import { looksLikeSql, parseSqlTables, sqlToDiagram } from '../lib/diagramSql'
+import { jsonToTable, looksLikeJson } from '../lib/diagramJson'
 import {
   DIAGRAM_PORT_SNAP,
   ER_LINE,
@@ -925,8 +926,24 @@ export function DiagramTab({ tab }: { tab: Extract<Tab, { kind: 'diagram' }> }) 
     setPropsOpen(true)
     return true
   }
+  /** Pasted JSON documents become a document table at the middle of the view. */
+  const importJson = (text: string) => {
+    if (!looksLikeJson(text)) return false
+    const doc = currentDoc()
+    if (!doc) return false
+    const table = jsonToTable(JSON.parse(text.trim()), viewCenter(), mintId)
+    if (!table) return false
+    commit(reparentDragged({ ...doc, nodes: [...doc.nodes, tidyNode(table)] }, [table.id]))
+    setSelection({ nodes: [table.id], edges: [] })
+    setEditing(null)
+    setConnectFrom(null)
+    setPropsOpen(true)
+    return true
+  }
   const importSqlRef = useRef(importSql)
   importSqlRef.current = importSql
+  const importJsonRef = useRef(importJson)
+  importJsonRef.current = importJson
   const copySelection = () => {
     const doc = currentDoc()
     const picked = selectionRef.current
@@ -1124,7 +1141,8 @@ export function DiagramTab({ tab }: { tab: Extract<Tab, { kind: 'diagram' }> }) 
       const target = event.target as HTMLElement | null
       if (isTerminalInputTarget(event.target) || target?.closest?.('input, textarea, [contenteditable="true"], [contenteditable="plaintext-only"]')) return
       const text = event.clipboardData?.getData('text/plain') ?? ''
-      if (!importSqlRef.current(text)) return
+      // CREATE TABLE text builds SQL tables; JSON documents build a document table.
+      if (!importSqlRef.current(text) && !importJsonRef.current(text)) return
       event.preventDefault()
       if (pasteTimerRef.current) clearTimeout(pasteTimerRef.current)
       pasteTimerRef.current = null

@@ -1,6 +1,7 @@
 import { useState, type ReactNode } from 'react'
 import { ChevronDown, ChevronUp, ListIndentDecrease, ListIndentIncrease, Plus, X } from 'lucide-react'
 import { keyLabel } from './DiagramNodeView'
+import { tableToJsonSample, tableToJsonSchema } from '../../lib/diagramJson'
 import { Toggle } from '../panels/form'
 import { InlineMarkdownInput, MarkdownNote } from '../MarkdownNote'
 import { diagramShapeFolder, shapeHeadingFor } from '../../lib/diagramNotes'
@@ -350,6 +351,7 @@ function CardSettings({
         onToggle={(stroke) => onChange({ stroke })}
         onColor={(strokeColor) => onChange({ strokeColor, stroke: true })}
       />
+      {node.kind === 'table' && node.dialect === 'document' ? <JsonCopyRow node={node} /> : null}
       {node.kind === 'table' ? (
         <ColumnSettings
           rows={node.rows ?? []}
@@ -364,6 +366,32 @@ function CardSettings({
 }
 
 const KEY_NAMES: Record<string, string> = { '': 'No key', pk: 'Primary key', fk: 'Foreign key', 'pk,fk': 'Primary and foreign key' }
+
+/** Copy a document table out as a sample document or as a MongoDB validator. */
+function JsonCopyRow({ node }: { node: DiagramNode }) {
+  const [copied, setCopied] = useState<'json' | 'schema' | null>(null)
+  const copy = (kind: 'json' | 'schema') => {
+    const text = kind === 'json' ? tableToJsonSample(node) : tableToJsonSchema(node)
+    void navigator.clipboard.writeText(text).then(
+      () => {
+        setCopied(kind)
+        window.setTimeout(() => setCopied((current) => (current === kind ? null : current)), 1200)
+      },
+      () => setCopied(null),
+    )
+  }
+  const button = 'h-7 flex-1 rounded border border-koma-border bg-koma-bg text-[11px] text-koma-fg hover:border-koma-fg/40'
+  return (
+    <div className="flex gap-1">
+      <button type="button" className={button} title="A sample document shaped like this collection" onClick={() => copy('json')}>
+        {copied === 'json' ? 'Copied' : 'Copy JSON'}
+      </button>
+      <button type="button" className={button} title="A MongoDB $jsonSchema validator for this collection" onClick={() => copy('schema')}>
+        {copied === 'schema' ? 'Copied' : 'Copy JSON Schema'}
+      </button>
+    </div>
+  )
+}
 
 type FieldLine = { row: DiagramRow; depth: number; siblings: DiagramRow[]; index: number }
 

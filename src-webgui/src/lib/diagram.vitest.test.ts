@@ -56,6 +56,7 @@ import {
 } from './diagram'
 import { diagramToMermaid, parseMermaidDiagram, splitDiagramMessage } from './diagramMermaid'
 import { parseSqlTables, sqlToDiagram } from './diagramSql'
+import { jsonToTable, looksLikeJson, tableToJsonSample, tableToJsonSchema } from './diagramJson'
 import { SHAPE_KINDS } from './diagramShapes'
 
 const box = (id: string, x: number, y: number, extra: Partial<DiagramNode> = {}): DiagramNode => ({
@@ -570,5 +571,58 @@ describe('document tables', () => {
     expect(findRow(parsed?.rows, 'r5')).toMatchObject({ name: 'color', optional: true })
     const sql = parseDiagram(serializeDiagram({ ...doc, nodes: [{ ...orders(), dialect: undefined }] })).doc.nodes[0]
     expect(allRows(sql?.rows).map((row) => row.id)).toEqual(['r1', 'r2', 'r6'])
+  })
+})
+
+describe('JSON and document tables', () => {
+  const mint = () => {
+    let n = 0
+    return (prefix: string) => `${prefix}${++n}`
+  }
+  const orders = {
+    orders: [
+      { _id: { $oid: '65f0c0ffee0000000000aaaa' }, userId: '65f0c0ffee0000000000bbbb', total: 12.5, placedAt: '2026-10-26T04:00:00Z', items: [{ sku: 'a', qty: 1 }], shipping: { city: 'Jakarta' } },
+      { _id: { $oid: '65f0c0ffee0000000000cccc' }, userId: '65f0c0ffee0000000000dddd', total: 3, items: [{ sku: 'b', qty: 2, gift: true }], shipping: { city: 'Bandung', zip: '40111' } },
+    ],
+  }
+
+  it('pasted documents become a nested table named after their key', () => {
+    const table = jsonToTable(orders, { x: 0, y: 0 }, mint())
+    expect(table?.text).toBe('orders')
+    expect(table?.dialect).toBe('document')
+    const byName = (name: string, rows = table?.rows) => rows?.find((row) => row.name === name)
+    expect(byName('_id')).toMatchObject({ type: 'objectId', key: 'pk' })
+    expect(byName('userId')?.type).toBe('objectId')
+    expect(byName('total')?.type).toBe('number')
+    expect(byName('placedAt')).toMatchObject({ type: 'date', optional: true })
+    const items = byName('items')
+    expect(items?.type).toBe('array<object>')
+    expect(items?.children?.map((row) => [row.name, row.type, !!row.optional])).toEqual([
+      ['sku', 'string', false],
+      ['qty', 'int', false],
+      ['gift', 'bool', true],
+    ])
+    expect(byName('zip', byName('shipping')?.children)?.optional).toBe(true)
+  })
+
+  it('copies back out as a sample document and a MongoDB validator', () => {
+    const table = jsonToTable(orders, { x: 0, y: 0 }, mint())
+    if (!table) throw new Error('no table')
+    const sample = JSON.parse(tableToJsonSample(table))
+    expect(sample._id).toEqual({ $oid: '000000000000000000000000' })
+    expect(sample.items).toEqual([{ sku: '', qty: 0, gift: false }])
+    expect(sample.shipping).toEqual({ city: '', zip: '' })
+    const schema = JSON.parse(tableToJsonSchema(table)).$jsonSchema
+    expect(schema.required).not.toContain('placedAt')
+    expect(schema.properties.items).toMatchObject({ bsonType: 'array', items: { bsonType: 'object', required: ['sku', 'qty'] } })
+    expect(schema.properties._id).toEqual({ bsonType: 'objectId' })
+  })
+
+  it('only JSON objects and arrays count as JSON paste', () => {
+    expect(looksLikeJson('{"a": 1}')).toBe(true)
+    expect(looksLikeJson('[1, 2]')).toBe(true)
+    expect(looksLikeJson('CREATE TABLE x (id int)')).toBe(false)
+    expect(looksLikeJson('{ not json')).toBe(false)
+    expect(jsonToTable([1, 2], { x: 0, y: 0 }, mint())).toBeNull()
   })
 })
