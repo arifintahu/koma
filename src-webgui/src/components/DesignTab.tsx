@@ -261,6 +261,7 @@ function cursorGhostFor(
   if (tool === 'polygon') return sized('polygon', 'Polygon', 100, 100)
   if (tool === 'star') return sized('star', 'Star', 100, 100)
   if (tool === 'pen') return { shape: 'pen', width: 16, height: 16, label: 'Click to add points, drag for curves' }
+  if (tool === 'text') return { shape: 'text', width: 16, height: 16, label: 'Click to type, drag for a text box' }
   return null
 }
 

@@ -1,9 +1,12 @@
 import { useEffect, useRef, type RefObject } from 'react'
-import { PenTool } from 'lucide-react'
+import { PenTool, Type } from 'lucide-react'
 import { canvasPoint } from '../../lib/uiScale'
 
-/** What the miniature looks like. The pen has no size, so it shows a nib and a hint instead. */
-export type CursorGhostShape = 'frame' | 'rect' | 'ellipse' | 'triangle' | 'polygon' | 'star' | 'line' | 'pen'
+/**
+ * What the miniature looks like. The pen and text tools have no fixed size, so they
+ * show their glyph and a hint instead.
+ */
+export type CursorGhostShape = 'frame' | 'rect' | 'ellipse' | 'triangle' | 'polygon' | 'star' | 'line' | 'pen' | 'text'
 
 /** Outline of a shape miniature in a w×h box, as an SVG path. */
 function ghostPath(shape: CursorGhostShape, w: number, h: number): string {
@@ -63,7 +66,7 @@ export function DesignCursorGhost({
   const zoomRef = useRef(zoom)
   zoomRef.current = zoom
   const scale = GHOST_MAX / Math.max(width, height, 1)
-  const pen = shape === 'pen'
+  const pen = shape === 'pen' || shape === 'text'
   const miniW = pen ? 16 : Math.max(12, Math.round(width * scale))
   const miniH = pen ? 16 : shape === 'line' ? 12 : Math.max(12, Math.round(height * scale))
 
@@ -131,7 +134,7 @@ export function DesignCursorGhost({
       if (!state.pressed) return
       state.pressed = false
       const point = local(event)
-      // The pen places a point, not a shape, so there is nothing to grow into.
+      // The pen places a point and text opens an empty line, so there is nothing to grow into.
       if (pen || Math.hypot(point.x - state.down.x, point.y - state.down.y) > CLICK_SLOP || still) return
       // Grow a copy of the miniature into the real frame where the click placed it.
       const drop = ghost.cloneNode(true) as HTMLDivElement
@@ -172,7 +175,9 @@ export function DesignCursorGhost({
       className="pointer-events-none absolute left-0 top-0 z-30 flex flex-col items-start gap-1 transition-opacity duration-100"
       style={{ transformOrigin: '0 0', opacity: 0 }}
     >
-      {pen ? (
+      {shape === 'text' ? (
+        <Type size={miniW} strokeWidth={2.25} className="text-koma-accent" />
+      ) : pen ? (
         <PenTool size={miniW} strokeWidth={2} className="text-koma-accent" />
       ) : (
         <svg width={miniW} height={miniH} viewBox={`-1 -1 ${miniW + 2} ${miniH + 2}`} className="overflow-visible">
