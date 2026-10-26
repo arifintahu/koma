@@ -1,6 +1,10 @@
-import { memo, type PointerEvent as ReactPointerEvent } from 'react'
+import { memo, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent } from 'react'
 import {
+  booleanPaintNode,
+  booleanResult,
+  contoursSvgPath,
   cornerPixels,
+  isBooleanNode,
   nodeChrome,
   designImageSize,
   firstVisiblePaint,
@@ -42,7 +46,7 @@ import { DesignTextEditor } from './DesignTextEditor'
 export type DesignNodeHandlers = {
   /** `exact` selects this id as is, skipping the hit test at the pointer. */
   onSelect: (id: string, event: ReactPointerEvent<HTMLDivElement>, exact?: boolean) => void
-  onEnterContainer: (id: string, event: ReactPointerEvent<HTMLDivElement>) => void
+  onEnterContainer: (id: string, event: ReactMouseEvent<HTMLDivElement>) => void
   onEdit: (id: string) => void
   onOpenFill: (id: string) => void
   onText: (id: string, text: string) => void
@@ -95,7 +99,7 @@ export const DesignNodeView = memo(function DesignNodeView({
   overrideTargetId?: string | null
   cropEditId?: string | null
   onSelect: (id: string, event: ReactPointerEvent<HTMLDivElement>) => void
-  onEnterContainer?: (id: string, event: ReactPointerEvent<HTMLDivElement>) => void
+  onEnterContainer?: (id: string, event: ReactMouseEvent<HTMLDivElement>) => void
   onEdit: (id: string) => void
   onOpenFill?: (id: string) => void
   onText: (id: string, text: string) => void
@@ -106,17 +110,19 @@ export const DesignNodeView = memo(function DesignNodeView({
   maskStyle?: { clipPath?: string; maskImage?: string; WebkitMaskImage?: string; maskSize?: string; WebkitMaskSize?: string; maskPosition?: string; WebkitMaskPosition?: string; maskRepeat?: string; WebkitMaskRepeat?: string; maskMode?: string }
 }) {
   if (node.visible === false) return null
+  const booleanShape = isBooleanNode(node)
+  const booleanGeometry = booleanShape ? booleanResult(doc, node) : null
   const visual = node.kind === 'instance' ? resolveInstanceTree(doc, node) : null
   const boxW = visual?.w ?? node.w
   const boxH = visual?.h ?? node.h
-  const chrome = nodeChrome(visual ?? node)
+  const painted = booleanShape ? booleanPaintNode(node) : (visual ?? node)
+  const chrome = nodeChrome(painted)
   const style = textStyle(visual && node.kind !== 'instance' ? visual : node)
   const overrideMark = overrideTargetId === node.id
-  const bareFill = node.fill === 'none' || chrome.fill === 'none'
+  const bareFill = booleanShape ? chrome.fill === 'none' : node.fill === 'none' || chrome.fill === 'none'
   const bareStroke = (node.kind === 'frame' || node.kind === 'group') && (!node.stroke || node.stroke === 'none')
   const strokeOff = chrome.stroke === 'none' || ((node.kind === 'rect' || node.kind === 'ellipse') && node.stroke == null)
   const fillFallback = node.kind === 'frame' ? '#ffffff' : node.kind === 'rect' || node.kind === 'ellipse' || node.kind === 'vector' ? SHAPE_FILL : 'var(--color-koma-panel)'
-  const painted = visual ?? node
   const fillPaints = nodePaints(painted, 'fill').filter((paint) => isPaintVisible(paint) && paintAlias(paint) !== 'none')
   const fillPaint = firstVisiblePaint(fillPaints)
   const fillFallbackCss = paintCss(doc, chrome.fill, fillFallback)
@@ -141,7 +147,7 @@ export const DesignNodeView = memo(function DesignNodeView({
   const flipX = node.flipX ? -1 : 1
   const flipY = node.flipY ? -1 : 1
   const transform = rotation || node.flipX || node.flipY ? `rotate(${rotation}deg) scale(${flipX}, ${flipY})` : undefined
-  const opaqueUntilEnter = node.kind === 'group' || node.kind === 'instance'
+  const opaqueUntilEnter = booleanShape || node.kind === 'group' || node.kind === 'instance'
   const enteredHere = enteredContainerId === node.id
   const lockChildren = locked || !!node.locked || (opaqueUntilEnter && !enteredHere)
   const hitHere = !locked
@@ -193,6 +199,11 @@ export const DesignNodeView = memo(function DesignNodeView({
           onEdit(node.id)
           return
         }
+        if (booleanShape && onEnterContainer) {
+          event.stopPropagation()
+          onEnterContainer(node.id, event)
+          return
+        }
         if (nodeHasImageFill(painted) && onOpenFill) {
           event.stopPropagation()
           onOpenFill(node.id)
@@ -227,11 +238,11 @@ export const DesignNodeView = memo(function DesignNodeView({
           border: undefined,
           borderRadius: radius,
           overflow: clips ? 'hidden' : undefined,
-          ...effectStyle(doc, painted.effects, node.kind === 'text' || node.kind === 'line' || node.kind === 'vector'),
+          ...effectStyle(doc, painted.effects, booleanShape || node.kind === 'text' || node.kind === 'line' || node.kind === 'vector'),
           mixBlendMode: painted.blend && painted.blend !== 'normal' && painted.blend !== 'pass-through' ? painted.blend : undefined,
         }}
       >
-        {node.kind !== 'line' && node.kind !== 'vector' && node.kind !== 'text' ? (
+        {!booleanShape && node.kind !== 'line' && node.kind !== 'vector' && node.kind !== 'text' ? (
           <span
             aria-hidden
             className="pointer-events-none absolute inset-0"
@@ -245,7 +256,7 @@ export const DesignNodeView = memo(function DesignNodeView({
             }}
           />
         ) : null}
-        {node.kind !== 'text' && node.kind !== 'vector' && !bareStroke && !strokeOff ? (
+        {!booleanShape && node.kind !== 'text' && node.kind !== 'vector' && !bareStroke && !strokeOff ? (
           <svg className="pointer-events-none absolute overflow-visible" width={boxW} height={boxH}>
             {nodePaints(painted, 'stroke').filter((paint) => isPaintVisible(paint) && paintAlias(paint) !== 'none').map((paint, index) => (
               <StrokeShape key={`${paint.type}-${index}`} doc={doc} node={painted} paint={paint} fallback={stroke} boxW={boxW} boxH={boxH} />
@@ -258,7 +269,15 @@ export const DesignNodeView = memo(function DesignNodeView({
             ))}
           </svg>
         ) : null}
-        {node.kind === 'vector' && node.vector ? (
+        {booleanGeometry && booleanGeometry.contours.length ? (
+          <svg className="pointer-events-none absolute inset-0 overflow-visible" width={boxW} height={boxH}>
+            <path d={contoursSvgPath(booleanGeometry.contours)} fillRule={booleanGeometry.rule} fill={chrome.fill === 'none' ? 'none' : fill} stroke={chrome.stroke === 'none' ? 'none' : stroke} strokeWidth={chrome.strokeWidth} strokeLinecap={painted.strokeCap === 'round' || painted.strokeCap === 'square' ? painted.strokeCap : 'butt'} strokeLinejoin={painted.strokeJoin ?? 'miter'} strokeDasharray={painted.strokeDash?.join(' ')} />
+            {nodePaints(painted, 'stroke').slice(1).filter((paint) => isPaintVisible(paint) && paintAlias(paint) !== 'none').map((paint, index) => (
+              <path key={`stroke-${index}`} d={contoursSvgPath(booleanGeometry.contours)} fill="none" fillRule={booleanGeometry.rule} stroke={resolvePaintCss(doc, paint, stroke)} strokeWidth={strokePaintWidth(paint, chrome.strokeWidth)} strokeDasharray={strokePaintDash(paint, painted.strokeDash)} />
+            ))}
+          </svg>
+        ) : null}
+        {!booleanShape && node.kind === 'vector' && node.vector ? (
           <svg className="absolute inset-0 overflow-visible" width={boxW} height={boxH}>
             <path d={vectorSvgPath(node.vector)} fill={chrome.fill === 'none' ? 'none' : fill} stroke={chrome.stroke === 'none' ? 'none' : stroke} strokeWidth={chrome.strokeWidth} strokeLinecap={painted.strokeCap === 'round' || painted.strokeCap === 'square' ? painted.strokeCap : 'butt'} strokeLinejoin={painted.strokeJoin ?? 'miter'} strokeDasharray={painted.strokeDash?.join(' ')} {...(node.svgAttrs ?? {})} />
             {nodePaints(painted, 'stroke').slice(1).filter((paint) => isPaintVisible(paint) && paintAlias(paint) !== 'none').map((paint, index) => (
@@ -334,7 +353,7 @@ export const DesignNodeView = memo(function DesignNodeView({
             })}
           </svg>
         ) : null}
-        {children?.map((child, index) => {
+        {(!booleanShape || enteredHere) && children?.map((child, index) => {
           const mask = [...(children ?? [])].slice(0, index).reverse().find((item) => item.mask)
           return (
           <DesignNodeView

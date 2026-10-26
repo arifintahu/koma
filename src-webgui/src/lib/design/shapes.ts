@@ -1,4 +1,5 @@
 import type { DesignBooleanOp, DesignDoc, DesignNode, DesignPenPoint } from './types'
+import { booleanPaintNode } from './boolean'
 import { createNode, nodeFromPen, updateDesignNode, wrapDesignNodes } from './model'
 import { setNodeSolid } from './paint'
 
@@ -151,7 +152,7 @@ export function booleanDesignNodes(doc: DesignDoc, ids: string[], op: DesignBool
   const id = mint()
   const wrapped = wrapDesignNodes(doc, ids, 'group', id)
   if (!wrapped) return null
-  return updateDesignNode(wrapped, id, (node) => ({ ...node, name: op[0].toUpperCase() + op.slice(1), booleanOp: op }))
+  return updateDesignNode(wrapped, id, (node) => booleanPaintNode({ ...node, name: op[0].toUpperCase() + op.slice(1), booleanOp: op }))
 }
 
 export function outlineStrokeNode(node: DesignNode): DesignNode {

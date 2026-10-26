@@ -80,6 +80,7 @@ import {
   resolveRef,
   selectAllDesign,
   canEnterDesignContainer,
+  isBooleanNode,
   designEnterScopeForLayerSelect,
   exitDesignContainer,
   hitDesignInScope,
@@ -2724,7 +2725,7 @@ export function DesignTab({ tab }: { tab: Extract<Tab, { kind: 'design' }> }) {
       event.preventDefault()
       event.stopPropagation()
       const hit = findDesignNode(doc, id)
-      if (hit?.kind === 'vector') {
+      if (hit?.kind === 'vector' && !isBooleanNode(hit)) {
         setSelection([id])
         setVectorEditId(id)
         setTool('select')

@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { booleanResult, contoursToVector, nodeContours, pointInContours, type Contour } from './boolean'
+import { designChatHtml } from './chatHtml'
 import {
   bendSegment,
   closestOnSegment,
@@ -31,6 +32,8 @@ import {
   designCanvasBox,
   designTurnSign,
   emptyDesign,
+  booleanDesignNodes,
+  hitDesign,
   hitDesignDeepest,
   layoutDesign,
   makeInstance,
@@ -467,6 +470,38 @@ describe('boolean geometry', () => {
     expect(pointInContours({ x: 250, y: 50 }, result.contours, result.rule)).toBe(true)
     expect(rasterArea(result.contours, result.rule)).toBeGreaterThan(16000)
     expect(rasterArea(result.contours, result.rule)).toBeLessThan(19000)
+  })
+
+  it('hits the remaining solid and misses the hole', () => {
+    const group = boolGroup('g', 'subtract', [square('a', 0, 0), square('b', 30, 30, 40)])
+    const host = docOf(group)
+    expect(hitDesign(host, 10, 10)?.id).toBe('g')
+    expect(hitDesign(host, 50, 50)).toBeNull()
+    expect(hitDesignDeepest(host, 50, 50)?.id).toBe('b')
+  })
+
+  it('copies the back shape paint and draws one path', () => {
+    const host: DesignNode = {
+      id: 'host',
+      kind: 'frame',
+      x: 0,
+      y: 0,
+      w: 200,
+      h: 120,
+      children: [
+        { ...square('a', 0, 0), fill: '#112233' },
+        { ...square('b', 40, 0), fill: '#abcdef' },
+      ],
+    }
+    const next = booleanDesignNodes(docOf(host), ['a', 'b'], 'subtract', () => 'bool')
+    const group = next?.screens[0].children?.find((child) => child.id === 'bool')
+    expect(group?.fill).toBe('#112233')
+    expect(group?.booleanOp).toBe('subtract')
+    const html = group ? designChatHtml(next!, group) : ''
+    expect(html).toContain('<svg')
+    expect(html).toContain('fill-rule="nonzero"')
+    expect(html).not.toContain('data-koma-name="a"')
+    expect(html).not.toContain('data-koma-name="b"')
   })
 
   it('cancels identical shapes on subtract and exclude', () => {

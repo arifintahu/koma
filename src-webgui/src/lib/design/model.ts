@@ -34,6 +34,7 @@ import {
   type DesignVectorSegment,
   type DesignWeight,
 } from './types'
+import { booleanContains, isBooleanNode } from './boolean'
 import { clonePaint, firstVisiblePaint, nodePaints, paintAlias, scaleImageCrops, strokePaintWidth } from './paint'
 
 export function emptyDesign(): DesignDoc {
@@ -1132,7 +1133,7 @@ function outsideParent(doc: DesignDoc, located: { node: DesignNode; parentId: st
  */
 export function hitDesign(doc: DesignDoc, x: number, y: number, deep = false): DesignNode | null {
   for (let i = doc.screens.length - 1; i >= 0; i--) {
-    const found = hitIn(doc.screens[i], x, y, deep)
+    const found = hitIn(doc, doc.screens[i], x, y, deep)
     if (found) return found
   }
   return null
@@ -1141,21 +1142,32 @@ export function hitDesign(doc: DesignDoc, x: number, y: number, deep = false): D
 /** The innermost node under a canvas point, through groups too, for a Cmd or Ctrl click. A locked node or an instance stops the walk. */
 export function hitDesignDeepest(doc: DesignDoc, x: number, y: number): DesignNode | null {
   for (let i = doc.screens.length - 1; i >= 0; i--) {
-    const found = deepestIn(doc.screens[i], x, y)
+    const found = deepestIn(doc, doc.screens[i], x, y)
     if (found) return found
   }
   return null
 }
 
-function deepestIn(node: DesignNode, x: number, y: number): DesignNode | null {
+function deepestIn(doc: DesignDoc, node: DesignNode, x: number, y: number): DesignNode | null {
   if (node.visible === false) return null
   const local = parentPointToContent(node, x, y)
   const inside = insideNode(node, local, node.kind === 'line' ? 6 : 0)
+  if (isBooleanNode(node)) {
+    if (node.locked) return booleanContains(doc, node, local) ? node : null
+    if (inside) {
+      const children = node.children ?? []
+      for (let i = children.length - 1; i >= 0; i--) {
+        const found = deepestIn(doc, children[i], local.x, local.y)
+        if (found) return found
+      }
+    }
+    return booleanContains(doc, node, local) ? node : null
+  }
   if (node.locked || node.kind === 'instance') return inside ? node : null
   if (designClips(node) && !inside) return null
   const children = node.children ?? []
   for (let i = children.length - 1; i >= 0; i--) {
-    const found = deepestIn(children[i], local.x, local.y)
+    const found = deepestIn(doc, children[i], local.x, local.y)
     if (found) return found
   }
   return inside ? node : null
@@ -1195,7 +1207,7 @@ export function designParentIds(doc: DesignDoc, ids: readonly string[]): string[
 
 /** True when the user has double-clicked into a group, frame, or instance for scoped editing. */
 export function canEnterDesignContainer(node: DesignNode | null | undefined): boolean {
-  return node?.kind === 'group' || node?.kind === 'frame' || node?.kind === 'instance'
+  return node?.kind === 'group' || node?.kind === 'frame' || node?.kind === 'instance' || isBooleanNode(node)
 }
 
 /** Hit test within an entered container. Coordinates are canvas space. */
@@ -1206,7 +1218,7 @@ export function hitDesignInScope(doc: DesignDoc, scopeId: string, x: number, y: 
   if (!local) return null
   const children = scope.children ?? []
   for (let i = children.length - 1; i >= 0; i--) {
-    const found = hitIn(children[i], local.x, local.y, deep)
+    const found = hitIn(doc, children[i], local.x, local.y, deep)
     if (found) return found
   }
   return null
@@ -1280,10 +1292,10 @@ export function resolveDesignSelectHit(
 export function hitGroupChild(doc: DesignDoc, groupId: string, x: number, y: number): DesignNode | null {
   const group = findDesignNode(doc, groupId)
   const local = canvasToContent(doc, groupId, x, y)
-  if (!group || (group.kind !== 'group' && group.kind !== 'instance') || !local) return null
+  if (!group || (group.kind !== 'group' && group.kind !== 'instance' && !isBooleanNode(group)) || !local) return null
   const children = group.children ?? []
   for (let i = children.length - 1; i >= 0; i--) {
-    const found = hitIn(children[i], local.x, local.y, false)
+    const found = hitIn(doc, children[i], local.x, local.y, false)
     if (found) return found
   }
   return null
@@ -2139,7 +2151,7 @@ export function vectorSvgPath(vector: DesignVector): string {
 /** Nodes under a canvas point, front to back, skipping hidden and locked nodes. */
 export function stackDesign(doc: DesignDoc, x: number, y: number): DesignNode[] {
   const found: DesignNode[] = []
-  for (let i = doc.screens.length - 1; i >= 0; i--) stackIn(doc.screens[i], x, y, found)
+  for (let i = doc.screens.length - 1; i >= 0; i--) stackIn(doc, doc.screens[i], x, y, found)
   return found
 }
 
@@ -2394,12 +2406,20 @@ function fmt(value: number): string {
   return String(Math.round(value * 100) / 100)
 }
 
-function stackIn(node: DesignNode, x: number, y: number, into: DesignNode[]) {
+function stackIn(doc: DesignDoc, node: DesignNode, x: number, y: number, into: DesignNode[]) {
   if (node.visible === false) return
   const local = parentPointToContent(node, x, y)
+  if (isBooleanNode(node)) {
+    if (insideNode(node, local, 0)) {
+      const children = node.children ?? []
+      for (let i = children.length - 1; i >= 0; i--) stackIn(doc, children[i], local.x, local.y, into)
+    }
+    if (!node.locked && booleanContains(doc, node, local)) into.push(node)
+    return
+  }
   if (!insideNode(node, local, node.kind === 'line' ? 6 : 0)) return
   const children = node.children ?? []
-  for (let i = children.length - 1; i >= 0; i--) stackIn(children[i], local.x, local.y, into)
+  for (let i = children.length - 1; i >= 0; i--) stackIn(doc, children[i], local.x, local.y, into)
   if (!node.locked) into.push(node)
 }
 
@@ -3409,17 +3429,28 @@ function locateIn(node: DesignNode, id: string): { node: DesignNode; parentId: s
   return null
 }
 
-function hitIn(node: DesignNode, x: number, y: number, deep: boolean): DesignNode | null {
+function hitIn(doc: DesignDoc, node: DesignNode, x: number, y: number, deep: boolean): DesignNode | null {
   if (node.visible === false) return null
   const local = parentPointToContent(node, x, y)
   const inside = insideNode(node, local, node.kind === 'line' ? 6 : 0)
+  if (isBooleanNode(node)) {
+    if (node.locked) return booleanContains(doc, node, local) ? node : null
+    if (deep && inside) {
+      const children = node.children ?? []
+      for (let i = children.length - 1; i >= 0; i--) {
+        const found = hitIn(doc, children[i], local.x, local.y, false)
+        if (found) return found
+      }
+    }
+    return booleanContains(doc, node, local) ? node : null
+  }
   if (node.locked) return inside ? node : null
   if (node.kind === 'group' || node.kind === 'instance') {
     if (!inside) return null
     if (deep) {
       const children = node.children ?? []
       for (let i = children.length - 1; i >= 0; i--) {
-        const found = hitIn(children[i], local.x, local.y, false)
+        const found = hitIn(doc, children[i], local.x, local.y, false)
         if (found) return found
       }
     }
@@ -3428,7 +3459,7 @@ function hitIn(node: DesignNode, x: number, y: number, deep: boolean): DesignNod
   if (node.kind === 'frame' && node.clip !== false && !inside) return null
   const children = node.children ?? []
   for (let i = children.length - 1; i >= 0; i--) {
-    const found = hitIn(children[i], local.x, local.y, deep)
+    const found = hitIn(doc, children[i], local.x, local.y, deep)
     if (found) return found
   }
   if (!inside) return null
