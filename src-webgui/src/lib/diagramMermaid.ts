@@ -6,6 +6,8 @@ import {
   emptyDiagram,
   isErArrow,
   GROUP_TITLE,
+  allRows,
+  findRow,
   nodeBounds,
   tableHeight,
   type DiagramArrow,
@@ -267,17 +269,27 @@ export function diagramToMermaid(doc: DiagramDoc, title?: string, notes?: { path
   const tables = nodes.filter((node) => node.kind === 'table')
   // Entity names come from the table title, so two "users" tables stay distinct.
   for (const table of tables) ids.set(table.id, mermaidId(table.text || 'Table', used))
+  // SQL tables go to an erDiagram, document tables to a classDiagram (nesting needs classes).
+  const sqlTables = tables.filter((table) => table.dialect !== 'document')
+  const docTables = tables.filter((table) => table.dialect === 'document')
+  const sqlIds = new Set(sqlTables.map((table) => table.id))
+  const docIds = new Set(docTables.map((table) => table.id))
   const tableIds = new Set(tables.map((table) => table.id))
   const byId = new Map(doc.nodes.map((node) => [node.id, node]))
   const flowTable = new Set<string>()
   const erEdges: DiagramEdge[] = []
+  const classEdges: DiagramEdge[] = []
   const flowEdges: DiagramEdge[] = []
   for (const edge of doc.edges) {
     const token = linkToken(edge)
     const from = byId.get(edge.from)
     const to = byId.get(edge.to)
-    if (!token || !from || !to) continue
-    if (tableIds.has(from.id) && tableIds.has(to.id)) erEdges.push(edge)
+    if (!from || !to) continue
+    if (sqlIds.has(from.id) && sqlIds.has(to.id)) {
+      if (token) erEdges.push(edge)
+    } else if (docIds.has(from.id) && docIds.has(to.id)) {
+      if (edge.stroke !== false) classEdges.push(edge)
+    } else if (!token) continue
     else {
       flowEdges.push(edge)
       if (tableIds.has(from.id)) flowTable.add(from.id)
@@ -291,10 +303,10 @@ export function diagramToMermaid(doc: DiagramDoc, title?: string, notes?: { path
   const flowNodes = nodes.filter((node) => node.kind !== 'table' || flowTable.has(node.id))
   const heading = title?.replace(/[\r\n]/g, ' ').trim()
   const blocks: string[] = []
-  if (tables.length) {
+  if (sqlTables.length) {
     const lines = ['erDiagram']
     if (heading) lines.push(`  %% ${heading}`)
-    for (const table of tables) {
+    for (const table of sqlTables) {
       lines.push(`  ${alias(table.id)} {`)
       for (const row of table.rows ?? []) lines.push(`    ${erType(row.type)} ${erIdent(row.name)}${keySuffix(row.key)}`)
       lines.push('  }')
@@ -308,6 +320,7 @@ export function diagramToMermaid(doc: DiagramDoc, title?: string, notes?: { path
     }
     blocks.push(lines.join('\n'))
   }
+  if (docTables.length) blocks.push(classBlock(docTables, classEdges, alias, used, sqlTables.length ? undefined : heading))
   // A diagram with no tables keeps the single flowchart block, title included, as before.
   if (flowNodes.length || flowEdges.length || tables.length === 0) {
     const lines: string[] = ['flowchart TD']
@@ -428,6 +441,162 @@ function rightArrow(card: string): NonNullable<DiagramEdge['end']> {
   if (card === 'o{') return 'erZeroToMany'
   if (card === '|{') return 'erOneToMany'
   return 'erMandOne'
+}
+
+/** Tells the model how to read a document classDiagram; parsing skips it like any comment. */
+export const DOCUMENT_LEGEND = '%% koma documents: each class is a collection or a nested object; *-- embedded field (nested), --> reference by id'
+
+function memberType(type: string | undefined): string {
+  return (type?.trim() || 'mixed').replace(/\s+/g, '_').replace(/</g, '~').replace(/>/g, '~')
+}
+
+function memberName(name: string): string {
+  return name.trim().replace(/[\s{}:]+/g, '_') || 'field'
+}
+
+/**
+ * Document tables as a classDiagram: a class per collection and per nested object, nesting
+ * as composition (`*--`, "many" for arrays), references as associations (`-->`).
+ */
+function classBlock(
+  tables: DiagramNode[],
+  edges: DiagramEdge[],
+  alias: (id: string) => string,
+  used: Set<string>,
+  heading: string | undefined,
+): string {
+  const lines = ['classDiagram', `  ${DOCUMENT_LEGEND}`]
+  if (heading) lines.push(`  %% ${heading}`)
+  const relations: string[] = []
+  const writeClass = (name: string, rows: DiagramRow[]) => {
+    const nests: { row: DiagramRow; child: string }[] = []
+    lines.push(`  class ${name} {`)
+    for (const row of rows) {
+      lines.push(`    +${memberType(row.type)} ${memberName(row.name)}${row.optional ? '?' : ''}${keySuffix(row.key)}`)
+      if (row.children?.length) nests.push({ row, child: mermaidId(`${name}_${memberName(row.name)}`, used) })
+    }
+    lines.push('  }')
+    for (const { row, child } of nests) {
+      const many = (row.type ?? '').trim().toLowerCase().startsWith('array')
+      relations.push(`  ${name} *-- "${many ? 'many' : '1'}" ${child} : ${memberName(row.name)}`)
+      writeClass(child, row.children ?? [])
+    }
+  }
+  for (const table of tables) writeClass(alias(table.id), table.rows ?? [])
+  const byId = new Map(tables.map((table) => [table.id, table]))
+  for (const edge of edges) {
+    const from = byId.get(edge.from)
+    const field = (edge.fromRow ? findRow(from?.rows, edge.fromRow)?.name : undefined) ?? edge.text?.trim()
+    relations.push(`  ${alias(edge.from)} --> ${alias(edge.to)}${field ? ` : ${memberName(field)}` : ''}`)
+  }
+  return [...lines, ...relations].join('\n')
+}
+
+const CLASS_OPEN = /^class\s+([A-Za-z_][A-Za-z0-9_]*)\s*\{?\s*$/
+const CLASS_REL =
+  /^([A-Za-z_][A-Za-z0-9_]*)\s*(?:"([^"]*)"\s*)?(\*--|o--|-->|\.\.>|--)\s*(?:"([^"]*)"\s*)?([A-Za-z_][A-Za-z0-9_]*)\s*(?::\s*(.*?))?\s*$/
+
+/** `+type name? PK` (also `name: type`). Generics come back from Mermaid's `~` form. */
+function parseMember(line: string, mint: () => string): DiagramRow | null {
+  const text = line.replace(/^[+\-#~]\s*/, '').trim()
+  if (!text || text.includes('(')) return null
+  const colon = text.match(/^([^\s:?]+)(\?)?\s*:\s*(\S+)/)
+  const plain = text.match(/^(\S+)\s+([^\s?]+)(\?)?(?:\s+(.*))?$/)
+  const raw = colon ? { type: colon[3], name: colon[1], optional: !!colon[2], rest: '' } : plain ? { type: plain[1], name: plain[2], optional: !!plain[3], rest: plain[4] ?? '' } : null
+  if (!raw?.type || !raw.name) return null
+  const type = raw.type.replace(/~([^~]+)~/, '<$1>')
+  const row: DiagramRow = { id: mint(), name: raw.name, type }
+  if (raw.optional) row.optional = true
+  const key = parseKey(raw.rest.replace(/"/g, '').trim() || undefined)
+  if (key) row.key = key
+  return row
+}
+
+/** A classDiagram from a document diagram (or a model) becomes document tables, nests and references. */
+function parseClass(doc: DiagramDoc, body: string, title: string): string {
+  const classes = new Map<string, DiagramRow[]>()
+  const order: string[] = []
+  const nests: { parent: string; child: string; field: string; many: boolean }[] = []
+  const refs: { from: string; to: string; field: string }[] = []
+  let current: string | null = null
+  let rowSeq = 0
+  const mint = () => `r${++rowSeq}`
+  const ensure = (name: string) => {
+    if (!classes.has(name)) {
+      classes.set(name, [])
+      order.push(name)
+    }
+  }
+  for (const raw of body.split(/\r?\n/)) {
+    const line = raw.trim()
+    if (!line || line === 'classDiagram') continue
+    if (line.startsWith('%%')) {
+      const comment = line.replace(/^%%\s*/, '')
+      if (title === 'Diagram' && comment && !comment.startsWith('koma ')) title = comment
+      continue
+    }
+    if (current && line === '}') {
+      current = null
+      continue
+    }
+    const open = line.match(CLASS_OPEN)
+    if (open?.[1]) {
+      ensure(open[1])
+      current = line.endsWith('{') ? open[1] : null
+      continue
+    }
+    if (current) {
+      const row = parseMember(line, mint)
+      if (row) classes.get(current)?.push(row)
+      continue
+    }
+    const rel = line.match(CLASS_REL)
+    if (!rel?.[1] || !rel[3] || !rel[5]) continue
+    ensure(rel[1])
+    ensure(rel[5])
+    const field = rel[6]?.trim() ?? ''
+    if (rel[3] === '*--' || rel[3] === 'o--') {
+      const card = (rel[4] ?? '').toLowerCase()
+      nests.push({ parent: rel[1], child: rel[5], field: field || rel[5], many: /many|\*|\.\.|^n$/.test(card) })
+    } else refs.push({ from: rel[1], to: rel[5], field })
+  }
+  const nested = new Set(nests.map((nest) => nest.child))
+  const build = (name: string, seen: Set<string>): DiagramRow[] => {
+    const rows = (classes.get(name) ?? []).map((row) => ({ ...row }))
+    for (const nest of nests.filter((item) => item.parent === name)) {
+      if (seen.has(nest.child)) continue
+      const children = build(nest.child, new Set([...seen, nest.child]))
+      let row = rows.find((item) => item.name === nest.field)
+      if (!row) {
+        row = { id: mint(), name: nest.field }
+        rows.push(row)
+      }
+      row.type = nest.many ? 'array<object>' : 'object'
+      if (children.length) row.children = children
+    }
+    return rows
+  }
+  const rootOf = (name: string): string => {
+    const parent = nests.find((nest) => nest.child === name)?.parent
+    return parent && parent !== name ? rootOf(parent) : name
+  }
+  const fresh: string[] = []
+  for (const name of order) {
+    if (nested.has(name) || doc.nodes.some((node) => node.id === name)) continue
+    const rows = build(name, new Set([name]))
+    doc.nodes.push({ id: name, kind: 'table', dialect: 'document', x: 24, y: 24, w: TABLE_W, h: tableHeight(rows), text: name, rows })
+    fresh.push(name)
+  }
+  for (const ref of refs) {
+    const from = rootOf(ref.from)
+    const to = rootOf(ref.to)
+    const table = doc.nodes.find((node) => node.id === from)
+    const fromRow = ref.field ? allRows(table?.rows).find((row) => row.name === ref.field)?.id : undefined
+    if (!table || !doc.nodes.some((node) => node.id === to)) continue
+    doc.edges.push({ id: `e${doc.edges.length + 1}`, from, to, ...(fromRow ? { fromRow } : ref.field ? { text: ref.field } : {}) })
+  }
+  layoutTables(doc.nodes, fresh)
+  return title
 }
 
 /** `erDiagram` entities become tables on a grid. A later flowchart must not overwrite them. */
@@ -622,7 +791,10 @@ export function parseMermaidDiagram(mermaid: string): { doc: DiagramDoc; title: 
     if (/^\s*erDiagram\b/m.test(body)) title = parseEr(doc, body, title)
   }
   for (const body of bodies) {
-    if (!/^\s*erDiagram\b/m.test(body)) title = parseFlow(doc, body, title)
+    if (/^\s*classDiagram\b/m.test(body)) title = parseClass(doc, body, title)
+  }
+  for (const body of bodies) {
+    if (!/^\s*(?:erDiagram|classDiagram)\b/m.test(body)) title = parseFlow(doc, body, title)
   }
   fitGroups(doc)
   return { doc, title }

@@ -626,3 +626,71 @@ describe('JSON and document tables', () => {
     expect(jsonToTable([1, 2], { x: 0, y: 0 }, mint())).toBeNull()
   })
 })
+
+describe('document tables in Mermaid', () => {
+  const docDiagram = (): DiagramDoc => ({
+    ...emptyDiagram(),
+    nodes: [
+      {
+        id: 'o',
+        kind: 'table',
+        dialect: 'document',
+        x: 0,
+        y: 0,
+        w: 220,
+        h: 100,
+        text: 'orders',
+        rows: [
+          { id: 'r1', name: '_id', type: 'objectId', key: 'pk' },
+          { id: 'r2', name: 'userId', type: 'objectId' },
+          {
+            id: 'r3',
+            name: 'items',
+            type: 'array<object>',
+            children: [
+              { id: 'r4', name: 'sku', type: 'string' },
+              { id: 'r5', name: 'meta', type: 'object', children: [{ id: 'r6', name: 'color', type: 'string', optional: true }] },
+            ],
+          },
+        ],
+      },
+      { id: 'u', kind: 'table', dialect: 'document', x: 400, y: 0, w: 220, h: 60, text: 'users', rows: [{ id: 'r1', name: '_id', type: 'objectId', key: 'pk' }] },
+    ],
+    edges: [{ id: 'e1', from: 'o', to: 'u', fromRow: 'r2' }],
+  })
+
+  it('writes a classDiagram with the legend, nesting and references', () => {
+    const mermaid = diagramToMermaid(docDiagram(), 'shop')
+    expect(mermaid).toContain('classDiagram')
+    expect(mermaid).toContain('koma documents')
+    expect(mermaid).toContain('+array~object~ items')
+    expect(mermaid).toContain('orders *-- "many" orders_items : items')
+    expect(mermaid).toContain('orders_items *-- "1" orders_items_meta : meta')
+    expect(mermaid).toContain('+string color?')
+    expect(mermaid).toContain('orders --> users : userId')
+    expect(mermaid).not.toContain('erDiagram')
+  })
+
+  it('reads its own classDiagram back into nested document tables', () => {
+    const parsed = parseMermaidDiagram(diagramToMermaid(docDiagram(), 'shop')).doc
+    const orders = parsed.nodes.find((node) => node.text === 'orders')
+    expect(orders?.dialect).toBe('document')
+    const items = orders?.rows?.find((row) => row.name === 'items')
+    expect(items?.type).toBe('array<object>')
+    const meta = items?.children?.find((row) => row.name === 'meta')
+    expect(meta?.type).toBe('object')
+    expect(meta?.children?.[0]).toMatchObject({ name: 'color', type: 'string', optional: true })
+    expect(orders?.rows?.[0]?.key).toBe('pk')
+    expect(parsed.nodes.filter((node) => node.kind === 'table')).toHaveLength(2)
+    expect(parsed.edges).toHaveLength(1)
+    expect(findRow(orders?.rows, parsed.edges[0]?.fromRow ?? '')?.name).toBe('userId')
+  })
+
+  it('a mixed diagram sends SQL as erDiagram and documents as classDiagram', () => {
+    const doc = docDiagram()
+    doc.nodes.push({ id: 's', kind: 'table', x: 0, y: 300, w: 200, h: 60, text: 'payments', rows: [{ id: 'r1', name: 'id', type: 'int', key: 'pk' }] })
+    const mermaid = diagramToMermaid(doc, 'shop')
+    expect(mermaid).toContain('erDiagram')
+    expect(mermaid).toContain('classDiagram')
+  })
+})
