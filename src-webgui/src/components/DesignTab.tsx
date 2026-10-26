@@ -155,6 +155,8 @@ import {
   type DesignPaint,
   type DesignWeight,
 } from '../lib/design'
+import type { FramePreset } from '../lib/design/presets'
+import { DesignFrameGhost } from './design/DesignFrameGhost'
 import { designPngBase64 } from '../lib/designRender'
 import { fileKey } from '../store/coding'
 import { isTabVisible } from '../store/editorGroups'
@@ -245,6 +247,13 @@ export function DesignTab({ tab }: { tab: Extract<Tab, { kind: 'design' }> }) {
   const hoverFrameRef = useRef<{ frame: number; clientX: number; clientY: number; deep: boolean }>({ frame: 0, clientX: 0, clientY: 0, deep: false })
   const [altDown, setAltDown] = useState(false)
   const [tool, setTool] = useState<Tool>('select')
+  /** Preset picked from the frame menu: the next click places a frame of this size. */
+  const [framePreset, setFramePreset] = useState<FramePreset | null>(null)
+  const framePresetRef = useRef(framePreset)
+  framePresetRef.current = framePreset
+  useEffect(() => {
+    if (tool !== 'frame') setFramePreset(null)
+  }, [tool])
   const [selection, setSelection] = useState<string[]>([])
   const [editing, setEditing] = useState<string | null>(null)
   const [propsOpen, setPropsOpen] = useState(true)
@@ -650,6 +659,8 @@ export function DesignTab({ tab }: { tab: Extract<Tab, { kind: 'design' }> }) {
         node = { ...node, x: box.x, y: box.y, w: Math.max(1, box.w), h: Math.max(1, box.h) }
       } else {
         node = { ...node, x: snapDesign(drag.x0, doc.grid, doc.snap), y: snapDesign(drag.y0, doc.grid, doc.snap) }
+        const preset = toolRef.current === 'frame' ? framePresetRef.current : null
+        if (preset) node = { ...node, name: preset.name, w: preset.width, h: preset.height }
       }
       const local = canvasToContent(doc, drag.parentId, node.x, node.y)
       if (!local) return
@@ -1332,6 +1343,10 @@ export function DesignTab({ tab }: { tab: Extract<Tab, { kind: 'design' }> }) {
       }
       if (event.key === 'Escape') {
         setEditing(null)
+        if (toolRef.current === 'frame' || toolRef.current === 'section') {
+          setTool('select')
+          return
+        }
         if (toolRef.current === 'pen' && penRef.current) {
           cancelPenRef.current()
           return
@@ -2409,6 +2424,11 @@ export function DesignTab({ tab }: { tab: Extract<Tab, { kind: 'design' }> }) {
           style={{ backgroundColor: '#e6e8ed', ...canvasBackdrop(doc.snap, grid, view) }}
         >
           <DesignRulers panX={view.panX} panY={view.panY} zoom={view.zoom} bounds={selection.length ? designSelectionCanvasBox(doc, selection) : null} />
+          {(tool === 'frame' || tool === 'section') && !spaceDown ? (() => {
+            const size = framePreset ? { w: framePreset.width, h: framePreset.height } : createNode('frame', 'ghost', 0, 0)
+            const name = framePreset?.name ?? (tool === 'section' ? 'Section' : 'Frame')
+            return <DesignFrameGhost canvasRef={canvasRef} width={size.w} height={size.h} label={`${name} ${size.w}×${size.h}`} zoom={view.zoom} />
+          })() : null}
           {/* Translate only on the outer layer; CSS `zoom` on the inner layer
               re-layouts/paints at screen resolution so text and shapes stay sharp
               (unlike `transform: scale()`, which upscales a low-res raster). */}
@@ -2770,10 +2790,9 @@ export function DesignTab({ tab }: { tab: Extract<Tab, { kind: 'design' }> }) {
                 commit(updateDesignNode(viewDocNow, id, (node) => ({ ...node, w: preset.width, h: preset.height, wMode: 'fixed', hMode: 'fixed' })))
                 return
               }
-              const node = { ...createNode('frame', mintId('f'), 40, 40), name: preset.name, w: preset.width, h: preset.height }
-              commit(insertDesignNode(viewDocNow, null, node))
-              setSelection([node.id])
-              setTool('select')
+              // Arm the frame tool with this size; the cursor ghost shows where the click will put it.
+              setFramePreset(preset)
+              chooseTool('frame')
             }}
           />
           <ShapeToolFlyout tool={tool} onTool={chooseTool} />
