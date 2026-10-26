@@ -3003,12 +3003,12 @@ export function DesignTab({ tab }: { tab: Extract<Tab, { kind: 'design' }> }) {
               const hy = cy + Math.sin(rad) * selectedNode.h * 0.4
               return (
                 <>
-                  <button type="button" aria-label="Gradient center" className="absolute z-20 h-3 w-3 -translate-x-1/2 -translate-y-1/2 rounded-full border border-white bg-koma-accent" style={{ left: cx, top: cy }} onPointerDown={(event) => {
+                  <button type="button" aria-label="Gradient center" className="pointer-events-auto absolute z-20 h-3 w-3 -translate-x-1/2 -translate-y-1/2 rounded-full border border-white bg-koma-accent" style={{ left: cx, top: cy }} onPointerDown={(event) => {
                     event.preventDefault()
                     event.stopPropagation()
                     dragRef.current = { kind: 'move', ids: [selectedNode.id], startX: event.clientX, startY: event.clientY, origins: {}, remembered: false }
                   }} />
-                  <button type="button" aria-label="Gradient angle" className="absolute z-20 h-3 w-3 -translate-x-1/2 -translate-y-1/2 rounded-full border border-white bg-white" style={{ left: hx, top: hy }} onPointerDown={(event) => {
+                  <button type="button" aria-label="Gradient angle" className="pointer-events-auto absolute z-20 h-3 w-3 -translate-x-1/2 -translate-y-1/2 rounded-full border border-white bg-white" style={{ left: hx, top: hy }} onPointerDown={(event) => {
                     event.preventDefault()
                     event.stopPropagation()
                     const start = { x: event.clientX, y: event.clientY }
@@ -3111,7 +3111,7 @@ export function DesignTab({ tab }: { tab: Extract<Tab, { kind: 'design' }> }) {
                         type="button"
                         aria-label={`${handle.end} handle`}
                         title="Drag: ⌘ mirrors, Alt frees, Shift snaps to 45°"
-                        className="absolute z-20 rounded-full border-0 p-0"
+                        className="pointer-events-auto absolute z-20 rounded-full border-0 p-0"
                         style={{ left: origin.x + handle.x, top: origin.y + handle.y, width: unit, height: unit, background: '#ffffff', border: `${stroke}px solid ${SELECTION}`, transform: 'translate(-50%, -50%)' }}
                         onPointerDown={(event) => {
                           event.preventDefault()
@@ -3138,7 +3138,7 @@ export function DesignTab({ tab }: { tab: Extract<Tab, { kind: 'design' }> }) {
                     aria-label={`Node ${index + 1}`}
                     aria-pressed={picked.has(index)}
                     title="Shift adds, Alt-drag duplicates, ⌘-click toggles curve"
-                    className="absolute z-20 border-0 p-0"
+                    className="pointer-events-auto absolute z-20 border-0 p-0"
                     style={{
                       left: origin.x + point.x,
                       top: origin.y + point.y,

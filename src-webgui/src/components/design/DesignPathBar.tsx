@@ -31,8 +31,8 @@ export type PathBarAction =
   | { handles: HandleMode }
 
 /**
- * Penpot's node toolbar for path editing, floating over the canvas while a vector is
- * being edited. Every button names its shortcut.
+ * Penpot's node toolbar for path editing, floating at the bottom of the canvas while a
+ * vector is being edited. Every button names its shortcut.
  */
 export function DesignPathBar({
   drawing,
@@ -69,7 +69,7 @@ export function DesignPathBar({
   return (
     <div
       data-design-ui=""
-      className="pointer-events-auto absolute left-1/2 top-2 z-40 flex -translate-x-1/2 items-center gap-0.5 rounded-md border border-koma-border bg-koma-panel p-0.5 shadow-lg"
+      className="pointer-events-auto absolute bottom-3 left-1/2 z-40 flex -translate-x-1/2 items-center gap-0.5 rounded-md border border-koma-border bg-koma-panel p-0.5 shadow-lg"
       onPointerDown={(event) => event.stopPropagation()}
       onDoubleClick={(event) => event.stopPropagation()}
     >
