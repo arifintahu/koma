@@ -206,7 +206,7 @@ export function DiagramPanel() {
           />
         </div>
       </div>
-      <AccordionSection title="Shapes" open={shapesOpen} onToggle={() => setShapesOpen((v) => !v)} fill={false}>
+      <AccordionSection title="Shapes" open={shapesOpen} onToggle={() => setShapesOpen((v) => !v)} fill={false} shrink>
         <div className="flex flex-col gap-1 px-2 py-1.5">
           {PALETTE_GROUPS.map((group) => (
             <div key={group} className="flex flex-col gap-0.5">
@@ -223,6 +223,7 @@ export function DiagramPanel() {
       <AccordionSection
         title="Diagrams"
         open={diagramsOpen}
+        minHeight={120}
         onToggle={() => setDiagramsOpen((v) => !v)}
         action={<AddBtn label="New diagram" onClick={() => { setCreating(true); setRenaming(null); setDeleting(null) }} />}
       >
