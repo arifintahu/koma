@@ -2421,7 +2421,7 @@ function pathIn(node: DesignNode, id: string): DesignNode[] | null {
 }
 
 /** A content-space point of a node, expressed in its parent's space. */
-function spinToParent(node: DesignNode, localX: number, localY: number): DesignVectorPoint {
+export function spinToParent(node: DesignNode, localX: number, localY: number): DesignVectorPoint {
   const cx = node.w / 2
   const cy = node.h / 2
   const scaledX = (localX - cx) * (node.flipX ? -1 : 1)

@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import { booleanResult, contoursToVector, nodeContours, pointInContours, type Contour } from './boolean'
 import {
   bendSegment,
   closestOnSegment,
@@ -356,5 +357,125 @@ describe('path editing', () => {
     expect(Math.hypot(aligned.segments[0].tangentEnd.x, aligned.segments[0].tangentEnd.y)).toBeCloseTo(50 / 3)
     const free = moveHandle(curved, 1, 'start', tip, 'independent')
     expect(free.segments[0].tangentEnd).toEqual(curved.segments[0].tangentEnd)
+  })
+})
+
+function square(id: string, x: number, y: number, size = 100): DesignNode {
+  return { id, kind: 'rect', name: id, x, y, w: size, h: size, fill: '#d9d9d9', stroke: 'none' }
+}
+
+function boolGroup(id: string, op: 'union' | 'subtract' | 'intersect' | 'exclude', children: DesignNode[]): DesignNode {
+  const minX = Math.min(...children.map((child) => child.x))
+  const minY = Math.min(...children.map((child) => child.y))
+  const maxX = Math.max(...children.map((child) => child.x + child.w))
+  const maxY = Math.max(...children.map((child) => child.y + child.h))
+  return {
+    id,
+    kind: 'group',
+    name: op,
+    booleanOp: op,
+    x: minX,
+    y: minY,
+    w: Math.max(1, maxX - minX),
+    h: Math.max(1, maxY - minY),
+    fill: children[0]?.fill ?? '#d9d9d9',
+    stroke: 'none',
+    children: children.map((child) => ({ ...child, x: child.x - minX, y: child.y - minY })),
+  }
+}
+
+function rasterArea(contours: Contour[], rule: 'nonzero' | 'evenodd'): number {
+  let minX = Infinity
+  let minY = Infinity
+  let maxX = -Infinity
+  let maxY = -Infinity
+  for (const contour of contours) {
+    for (const cubic of contour) {
+      minX = Math.min(minX, cubic[0].x, cubic[3].x)
+      minY = Math.min(minY, cubic[0].y, cubic[3].y)
+      maxX = Math.max(maxX, cubic[0].x, cubic[3].x)
+      maxY = Math.max(maxY, cubic[0].y, cubic[3].y)
+    }
+  }
+  if (!Number.isFinite(minX)) return 0
+  const step = 2
+  let hits = 0
+  for (let y = minY; y < maxY; y += step) {
+    for (let x = minX; x < maxX; x += step) {
+      if (pointInContours({ x: x + step / 2, y: y + step / 2 }, contours, rule)) hits += 1
+    }
+  }
+  return hits * step * step
+}
+
+describe('boolean geometry', () => {
+  const doc = docOf()
+
+  it('treats a square as filled and a rotated square as turned', () => {
+    const plain = nodeContours(doc, square('s', 10, 20))
+    expect(pointInContours({ x: 60, y: 70 }, plain, 'nonzero')).toBe(true)
+    expect(pointInContours({ x: 0, y: 0 }, plain, 'nonzero')).toBe(false)
+    const turned = nodeContours(doc, { ...square('r', 0, 0), rotation: 45 })
+    const outside = turned.some((contour) => contour.some((cubic) => cubic[0].x < -1 || cubic[0].x > 101 || cubic[0].y < -1 || cubic[0].y > 101))
+    expect(outside).toBe(true)
+    expect(rasterArea(turned, 'nonzero')).toBeGreaterThan(9000)
+    expect(rasterArea(turned, 'nonzero')).toBeLessThan(11000)
+  })
+
+  it('unions, subtracts, intersects and excludes two overlapping squares', () => {
+    const a = square('a', 0, 0)
+    const b = square('b', 40, 30)
+    const expectArea = (op: 'union' | 'subtract' | 'intersect' | 'exclude', area: number) => {
+      const result = booleanResult(doc, boolGroup('g', op, [a, b]))
+      const vector = contoursToVector(result.contours, result.rule)
+      expect(vector.vertices.length).toBeGreaterThan(3)
+      expect(vector.vertices.length).toBeLessThan(40)
+      expect(rasterArea(result.contours, result.rule)).toBeGreaterThan(area - 800)
+      expect(rasterArea(result.contours, result.rule)).toBeLessThan(area + 800)
+    }
+    expectArea('union', 15800)
+    expectArea('subtract', 5800)
+    expectArea('intersect', 4200)
+    expectArea('exclude', 11600)
+    expect(booleanResult(doc, boolGroup('x', 'exclude', [a, b])).rule).toBe('evenodd')
+  })
+
+  it('keeps the circle when a square is cut out of it', () => {
+    const circle: DesignNode = { id: 'c', kind: 'ellipse', x: 0, y: 0, w: 100, h: 100, fill: '#d9d9d9' }
+    const hole = square('h', 30, 30, 40)
+    const result = booleanResult(doc, boolGroup('g', 'subtract', [circle, hole]))
+    const vector = contoursToVector(result.contours, result.rule)
+    expect(vector.segments.length).toBeGreaterThan(4)
+    expect(vector.segments.length).toBeLessThan(24)
+    expect(vector.segments.some((segment) => Math.hypot(segment.tangentStart.x, segment.tangentStart.y) > 1)).toBe(true)
+    expect(rasterArea(result.contours, result.rule)).toBeGreaterThan(5600)
+    expect(rasterArea(result.contours, result.rule)).toBeLessThan(7000)
+  })
+
+  it('folds three shapes from the left', () => {
+    const result = booleanResult(doc, boolGroup('g', 'union', [square('a', 0, 0), square('b', 60, 0), square('c', 120, 0)]))
+    expect(rasterArea(result.contours, result.rule)).toBeGreaterThan(21000)
+    expect(rasterArea(result.contours, result.rule)).toBeLessThan(23000)
+  })
+
+  it('nests a subtract inside a union', () => {
+    const inner = boolGroup('inner', 'subtract', [square('a', 0, 0), square('b', 25, 25, 50)])
+    const outer = boolGroup('outer', 'union', [inner, square('c', 200, 0)])
+    const result = booleanResult(doc, outer)
+    expect(pointInContours({ x: 10, y: 10 }, result.contours, result.rule)).toBe(true)
+    expect(pointInContours({ x: 50, y: 50 }, result.contours, result.rule)).toBe(false)
+    expect(pointInContours({ x: 250, y: 50 }, result.contours, result.rule)).toBe(true)
+    expect(rasterArea(result.contours, result.rule)).toBeGreaterThan(16000)
+    expect(rasterArea(result.contours, result.rule)).toBeLessThan(19000)
+  })
+
+  it('cancels identical shapes on subtract and exclude', () => {
+    const a = square('a', 0, 0)
+    const b = square('b', 0, 0)
+    const area = (op: 'union' | 'subtract' | 'intersect' | 'exclude') => rasterArea(booleanResult(doc, boolGroup('g', op, [a, b])).contours, op === 'exclude' ? 'evenodd' : 'nonzero')
+    expect(area('union')).toBeGreaterThan(9000)
+    expect(area('intersect')).toBeGreaterThan(9000)
+    expect(area('subtract')).toBeLessThan(400)
+    expect(area('exclude')).toBeLessThan(400)
   })
 })
