@@ -1,19 +1,11 @@
 import { useState, type ReactNode } from 'react'
-import { ChevronDown, ChevronUp, Plus, X } from 'lucide-react'
-import { keyLabel } from './DiagramNodeView'
 import { tableToJsonSample, tableToJsonSchema } from '../../lib/diagramJson'
-import { DocumentFields } from './DiagramDocumentFields'
+import { TableFields } from './DiagramTableFields'
 import { Toggle } from '../panels/form'
 import { InlineMarkdownInput, MarkdownNote } from '../MarkdownNote'
 import { diagramShapeFolder, shapeHeadingFor } from '../../lib/diagramNotes'
 import {
-  TABLE_ROW_LIMIT,
-  allRows,
-  moveRowWithinSiblings,
-  removeRow,
-  updateRow,
   edgeStyle,
-  nextKey,
   nodeStyle,
   type DiagramArrow,
   type DiagramDoc,
@@ -361,8 +353,6 @@ function CardSettings({
   )
 }
 
-const KEY_NAMES: Record<string, string> = { '': 'No key', pk: 'Primary key', fk: 'Foreign key', 'pk,fk': 'Primary and foreign key' }
-
 /** Copy a document table out as a sample document or as a MongoDB validator. */
 function JsonCopyRow({ node }: { node: DiagramNode }) {
   const [copied, setCopied] = useState<'json' | 'schema' | null>(null)
@@ -389,13 +379,6 @@ function JsonCopyRow({ node }: { node: DiagramNode }) {
   )
 }
 
-type FieldLine = { row: DiagramRow; depth: number; siblings: DiagramRow[]; index: number }
-
-/** Every field in tree order, with its sibling list (folded nests included: the panel shows all). */
-function fieldLines(rows: DiagramRow[], depth = 0): FieldLine[] {
-  return rows.flatMap((row, index) => [{ row, depth, siblings: rows, index }, ...(row.children ? fieldLines(row.children, depth + 1) : [])])
-}
-
 /** SQL tables are flat: nested document fields become dotted columns (`address.city`). */
 function flattenRows(rows: DiagramRow[], prefix = ''): DiagramRow[] {
   return rows.flatMap((row) => {
@@ -403,10 +386,6 @@ function flattenRows(rows: DiagramRow[], prefix = ''): DiagramRow[] {
     const own: DiagramRow = { id: row.id, name, ...(row.type ? { type: row.type } : {}), ...(row.key ? { key: row.key } : {}) }
     return [own, ...(row.children ? flattenRows(row.children, name) : [])]
   })
-}
-
-function newRowId(): string {
-  return `r${Date.now().toString(36)}${Math.random().toString(36).slice(2, 5)}`
 }
 
 /**
@@ -427,11 +406,7 @@ function ColumnSettings({
   onDialect: (dialect: DiagramDialect, rows: DiagramRow[]) => void
   onTextDone: () => void
 }) {
-  const field = 'h-7 min-w-0 rounded border border-koma-border bg-koma-bg px-1.5 text-[12px] text-koma-fg outline-none focus:border-koma-fg/40'
-  const icon = 'flex h-6 w-5 flex-none items-center justify-center rounded text-koma-dim hover:bg-koma-hover hover:text-koma-fg disabled:opacity-30'
   const document = dialect === 'document'
-  const set = (id: string, patch: Partial<DiagramRow>, live: boolean) => onRows(updateRow(rows, id, (row) => ({ ...row, ...patch })), live)
-  const total = allRows(rows).length
   return (
     <div className="flex flex-col gap-1">
       <Choices
@@ -444,61 +419,7 @@ function ColumnSettings({
         onChange={(next) => onDialect(next, next === 'sql' ? flattenRows(rows) : rows)}
       />
       <span className="text-[10px] font-semibold uppercase tracking-wider text-koma-dim">{document ? 'Fields' : 'Columns'}</span>
-      {document ? (
-        <DocumentFields rows={rows} onRows={onRows} onTextDone={onTextDone} />
-      ) : (
-        <>
-          {fieldLines(rows).map(({ row, siblings, index }) => (
-            <div key={row.id} className="flex items-center gap-1">
-              <button
-                type="button"
-                title={`${KEY_NAMES[row.key ?? '']}. Click to change.`}
-                aria-label={KEY_NAMES[row.key ?? '']}
-                className="h-7 w-9 flex-none rounded border border-koma-border bg-koma-bg text-[10px] font-semibold text-koma-fg hover:border-koma-fg/40"
-                onClick={() => set(row.id, { key: nextKey(row.key) }, false)}
-              >
-                {keyLabel(row.key) || '—'}
-              </button>
-              <input
-                value={row.name}
-                placeholder="name"
-                aria-label="Column name"
-                className={`${field} flex-1`}
-                onFocus={onTextDone}
-                onBlur={onTextDone}
-                onChange={(e) => set(row.id, { name: e.target.value }, true)}
-              />
-              <input
-                value={row.type ?? ''}
-                placeholder="type"
-                aria-label="Column type"
-                className={`${field} w-20 flex-none`}
-                onFocus={onTextDone}
-                onBlur={onTextDone}
-                onChange={(e) => set(row.id, { type: e.target.value.trim() ? e.target.value : undefined }, true)}
-              />
-              <button type="button" title="Move up" aria-label="Move up" className={icon} disabled={index === 0} onClick={() => onRows(moveRowWithinSiblings(rows, row.id, index - 1), false)}>
-                <ChevronUp size={12} />
-              </button>
-              <button type="button" title="Move down" aria-label="Move down" className={icon} disabled={index === siblings.length - 1} onClick={() => onRows(moveRowWithinSiblings(rows, row.id, index + 1), false)}>
-                <ChevronDown size={12} />
-              </button>
-              <button type="button" title="Remove column" aria-label="Remove column" className={icon} onClick={() => onRows(removeRow(rows, row.id), false)}>
-                <X size={12} />
-              </button>
-            </div>
-          ))}
-          <button
-            type="button"
-            className="flex h-7 items-center justify-center gap-1 rounded border border-dashed border-koma-border text-[12px] text-koma-dim hover:border-koma-fg/40 hover:text-koma-fg disabled:opacity-40"
-            disabled={total >= TABLE_ROW_LIMIT}
-            onClick={() => onRows([...rows, { id: newRowId(), name: '' }], false)}
-          >
-            <Plus size={12} />
-            Add column
-          </button>
-        </>
-      )}
+      <TableFields rows={rows} document={document} onRows={onRows} onTextDone={onTextDone} />
     </div>
   )
 }
