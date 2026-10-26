@@ -32,9 +32,13 @@ import {
   designCanvasBox,
   designTurnSign,
   emptyDesign,
+  applyDesignBoolean,
   booleanDesignNodes,
+  flattenBooleanNode,
   hitDesign,
   hitDesignDeepest,
+  nodeChangesToDesign,
+  spinToParent,
   layoutDesign,
   makeInstance,
   moveDesignNodes,
@@ -502,6 +506,91 @@ describe('boolean geometry', () => {
     expect(html).toContain('fill-rule="nonzero"')
     expect(html).not.toContain('data-koma-name="a"')
     expect(html).not.toContain('data-koma-name="b"')
+  })
+
+  it('flattens a boolean into one vector and keeps a turned shape put', () => {
+    const group = { ...boolGroup('g', 'union', [square('a', 10, 20), square('b', 50, 20)]), rotation: 30 }
+    const flat = flattenBooleanNode(doc, group)
+    expect(flat.kind).toBe('vector')
+    expect(flat.children).toBeUndefined()
+    expect(flat.booleanOp).toBeUndefined()
+    expect(flat.fill).toBe('#d9d9d9')
+    const source = booleanResult(doc, group).contours[0][0][0]
+    const vertex = flat.vector?.vertices[0]
+    expect(vertex).toBeTruthy()
+    const fromGroup = spinToParent(group, source.x, source.y)
+    const fromFlat = spinToParent(flat, vertex!.x, vertex!.y)
+    expect(fromFlat.x).toBeCloseTo(fromGroup.x, 1)
+    expect(fromFlat.y).toBeCloseTo(fromGroup.y, 1)
+    const emptied = flattenBooleanNode(doc, boolGroup('hole', 'subtract', [square('a', 0, 0), square('b', 0, 0)]))
+    expect(emptied.vector?.vertices).toEqual([])
+    expect(emptied.kind).toBe('vector')
+  })
+
+  it('changes one boolean in place and flattens a plain selection', () => {
+    const group = { ...boolGroup('g', 'union', [square('a', 0, 0), square('b', 40, 30)]), name: 'Union' }
+    const renamed = applyDesignBoolean(docOf(group), ['g'], 'subtract', () => 'x')
+    expect(renamed?.screens[0].booleanOp).toBe('subtract')
+    expect(renamed?.screens[0].name).toBe('Subtract')
+    const custom = applyDesignBoolean(docOf({ ...group, name: 'Window' }), ['g'], 'exclude', () => 'x')
+    expect(custom?.screens[0].booleanOp).toBe('exclude')
+    expect(custom?.screens[0].name).toBe('Window')
+    expect(applyDesignBoolean(docOf(square('a', 0, 0)), ['a'], 'union', () => 'x')).toBeNull()
+    const host: DesignNode = {
+      id: 'host',
+      kind: 'frame',
+      x: 0,
+      y: 0,
+      w: 200,
+      h: 160,
+      children: [square('a', 0, 0), square('b', 40, 30)],
+    }
+    const flat = applyDesignBoolean(docOf(host), ['a', 'b'], 'flatten', () => 'flat')
+    const node = flat?.screens[0].children?.find((child) => child.id === 'flat')
+    expect(node?.kind).toBe('vector')
+    expect(node?.booleanOp).toBeUndefined()
+    expect(node?.children).toBeUndefined()
+    const contours = node ? nodeContours(flat!, node) : []
+    expect(rasterArea(contours, 'nonzero')).toBeGreaterThan(15000)
+    expect(rasterArea(contours, 'nonzero')).toBeLessThan(16600)
+  })
+
+  it('recomputes a fig subtract instead of the baked rectangle', () => {
+    const imported = nodeChangesToDesign([
+      {
+        guid: { sessionID: 1, localID: 1 },
+        type: 'BOOLEAN_OPERATION',
+        booleanOperation: 'SUBTRACT',
+        name: 'Subtract',
+        size: { x: 100, y: 100 },
+        transform: { m02: 0, m12: 0 },
+      },
+      {
+        guid: { sessionID: 1, localID: 2 },
+        parentIndex: { guid: { sessionID: 1, localID: 1 } },
+        type: 'RECTANGLE',
+        size: { x: 100, y: 100 },
+        transform: { m02: 0, m12: 0 },
+        fillPaints: [{ type: 'SOLID', color: { r: 0.85, g: 0.85, b: 0.85 } }],
+      },
+      {
+        guid: { sessionID: 1, localID: 3 },
+        parentIndex: { guid: { sessionID: 1, localID: 1 } },
+        type: 'RECTANGLE',
+        size: { x: 40, y: 40 },
+        transform: { m02: 30, m12: 30 },
+        fillPaints: [{ type: 'SOLID', color: { r: 0, g: 0, b: 0 } }],
+      },
+    ])
+    const node = imported.doc.screens[0]
+    expect(node?.kind).toBe('vector')
+    expect(node?.booleanOp).toBe('subtract')
+    expect(node?.children).toHaveLength(2)
+    const result = booleanResult(imported.doc, node)
+    expect(pointInContours({ x: 10, y: 10 }, result.contours, result.rule)).toBe(true)
+    expect(pointInContours({ x: 50, y: 50 }, result.contours, result.rule)).toBe(false)
+    expect(rasterArea(result.contours, result.rule)).toBeGreaterThan(7600)
+    expect(rasterArea(result.contours, result.rule)).toBeLessThan(9200)
   })
 
   it('cancels identical shapes on subtract and exclude', () => {

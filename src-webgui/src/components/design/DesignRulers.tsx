@@ -1,6 +1,6 @@
 import type { ReactNode } from 'react'
 import { MessageSquarePlus } from 'lucide-react'
-import { locateDesign, designLayerName, stackDesign, type DesignDoc } from '../../lib/design'
+import { isBooleanNode, locateDesign, designLayerName, stackDesign, type DesignDoc } from '../../lib/design'
 import type { DesignMenuItem } from '../DesignMenu'
 import { SELECTION } from './tabShared'
 
@@ -120,6 +120,9 @@ export function designMenuItems(doc: DesignDoc, selection: string[], x: number, 
   const rows = selection.map((id) => locateDesign(doc, id))
   const sameParent = rows.length > 0 && rows.every((row) => row && row.parentId === rows[0]?.parentId)
   const canUngroup = rows.some((row) => row?.node.kind === 'group')
+  const oneBoolean = rows.length === 1 && isBooleanNode(rows[0]?.node)
+  const canCombine = selection.length >= 2 || oneBoolean
+  const canFlatten = oneBoolean || selection.length >= 2
   const stack = stackDesign(doc, x, y).slice(0, 12)
   return [
     { id: 'chat', label: 'Add to chat', disabled: !canChat, icon: <MessageSquarePlus size={12} /> },
@@ -143,11 +146,11 @@ export function designMenuItems(doc: DesignDoc, selection: string[], x: number, 
     { id: 'auto', label: 'Add auto layout', shortcut: '⇧A', disabled: !sameParent },
     { id: 'component', label: 'Create component', shortcut: '⌥⌘K', disabled: !canComponent },
     { id: 'detach', label: 'Detach instance', shortcut: '⌥⌘B', disabled: rows.every((row) => row?.node.kind !== 'instance') },
-    { id: 'union', label: 'Union', shortcut: '⌥⌘U', disabled: selection.length < 2 },
-    { id: 'subtract', label: 'Subtract', shortcut: '⌥⌘S', disabled: selection.length < 2 },
-    { id: 'intersect', label: 'Intersect', shortcut: '⌥⌘I', disabled: selection.length < 2 },
-    { id: 'exclude', label: 'Exclude', shortcut: '⌥⌘X', disabled: selection.length < 2 },
-    { id: 'flatten', label: 'Flatten', disabled: rows.every((row) => !row?.node.booleanOp) },
+    { id: 'union', label: 'Union', shortcut: '⌥⇧U', disabled: !canCombine },
+    { id: 'subtract', label: 'Subtract', shortcut: '⌥⇧S', disabled: !canCombine },
+    { id: 'intersect', label: 'Intersect', shortcut: '⌥⇧I', disabled: !canCombine },
+    { id: 'exclude', label: 'Exclude', shortcut: '⌥⇧E', disabled: !canCombine },
+    { id: 'flatten', label: 'Flatten', shortcut: '⌥⇧F', disabled: !canFlatten },
     { id: 'outline', label: 'Outline stroke', shortcut: '⌥⌘O', disabled: rows.every((row) => row?.node.kind !== 'vector') },
     { id: 'divider-4', label: '' },
     { id: 'hide', label: 'Show/Hide', shortcut: '⇧⌘H', disabled: !selected },

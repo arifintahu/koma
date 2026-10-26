@@ -105,10 +105,9 @@ import {
   wrapDesignNodes,
   applyDesignToken,
   applyImageFill,
-  booleanDesignNodes,
+  applyDesignBoolean,
   createPolygonNode,
   createStarNode,
-  flattenBooleanNode,
   rotationFromCenter,
   snapRotation,
   outlineStrokeNode,
@@ -1334,25 +1333,13 @@ export function DesignTab({ tab }: { tab: Extract<Tab, { kind: 'design' }> }) {
         commandsRef.current?.component()
         return
       }
-      if (meta && event.altKey && event.key.toLowerCase() === 'u') {
-        event.preventDefault()
-        commandsRef.current?.boolean('union')
-        return
-      }
-      if (meta && event.altKey && event.key.toLowerCase() === 's') {
-        event.preventDefault()
-        commandsRef.current?.boolean('subtract')
-        return
-      }
-      if (meta && event.altKey && event.key.toLowerCase() === 'i') {
-        event.preventDefault()
-        commandsRef.current?.boolean('intersect')
-        return
-      }
-      if (meta && event.altKey && event.key.toLowerCase() === 'x') {
-        event.preventDefault()
-        commandsRef.current?.boolean('exclude')
-        return
+      if (!meta && event.altKey && event.shiftKey) {
+        const booleanOp = event.code === 'KeyU' ? 'union' : event.code === 'KeyS' ? 'subtract' : event.code === 'KeyI' ? 'intersect' : event.code === 'KeyE' ? 'exclude' : event.code === 'KeyF' ? 'flatten' : null
+        if (booleanOp) {
+          event.preventDefault()
+          commandsRef.current?.boolean(booleanOp)
+          return
+        }
       }
       if (meta && event.altKey && event.key.toLowerCase() === 'o') {
         event.preventDefault()
@@ -2247,12 +2234,8 @@ export function DesignTab({ tab }: { tab: Extract<Tab, { kind: 'design' }> }) {
     boolean: (op) => {
       const open = viewDoc()
       const ids = selectionRef.current
-      if (!open || ids.length < 2) return
-      if (op === 'flatten') {
-        mutate(ids.reduce((doc, id) => updateDesignNode(doc, id, flattenBooleanNode), open.doc))
-        return
-      }
-      const next = booleanDesignNodes(open.doc, ids, op, () => mintId('b'))
+      if (!open || !ids.length) return
+      const next = applyDesignBoolean(open.doc, ids, op, () => mintId('b'))
       if (next) commit(next)
     },
     outline: () => {
