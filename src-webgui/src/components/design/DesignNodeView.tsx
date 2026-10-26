@@ -282,12 +282,13 @@ export const DesignNodeView = memo(function DesignNodeView({
                 text={node.text ?? ''}
                 runs={node.runs}
                 style={{ flex: style.align === 'justify' ? 1 : undefined }}
+                wrap={node.textHug !== 'width'}
                 onText={(text) => onText(node.id, text)}
                 onTextRange={onTextRange ? (start, end) => onTextRange(node.id, start, end) : undefined}
                 onDone={onTextBlur}
               />
             ) : (
-              <span className="whitespace-pre-wrap" style={{ flex: style.align === 'justify' ? 1 : undefined }}>
+              <span className={node.textHug === 'width' ? 'whitespace-pre' : 'whitespace-pre-wrap'} style={{ flex: style.align === 'justify' ? 1 : undefined }}>
                 {splitTextByRuns(node.text || 'Text', node.runs).map((part, index) => (
                   <span
                     key={`${part.text}-${index}`}

@@ -599,21 +599,61 @@ export function fontFamilyCss(node: DesignNode): string {
   return raw
 }
 
+export type DesignTextFont = { size: number; weight: DesignWeight; italic: boolean; family: string }
+/** Width in pixels of a stretch of text in one font, letter spacing excluded. */
+export type DesignTextMeasurer = (text: string, font: DesignTextFont) => number
+
+let textMeasurer: DesignTextMeasurer | null = null
+
 /**
- * Text box from a half-em estimate. Layout stays the same in the browser and in tests.
- * `width` hug uses this box. `height` hug wraps that width into the node's width.
+ * The browser installs real font measuring here (canvas `measureText`). Without one,
+ * as in tests, text is sized from a half-em estimate per character.
+ */
+export function setDesignTextMeasurer(measure: DesignTextMeasurer | null): void {
+  textMeasurer = measure
+}
+
+function casedText(text: string, textCase: DesignNode['textCase']): string {
+  if (textCase === 'upper') return text.toUpperCase()
+  if (textCase === 'lower') return text.toLowerCase()
+  if (textCase === 'title') return text.replace(/\b\p{L}/gu, (letter) => letter.toUpperCase())
+  return text
+}
+
+/**
+ * The text's natural box: the widest line and the line count. Styled runs are measured
+ * in their own font. `width` hug uses this box; `height` hug wraps it into the node width.
  */
 export function measureTextBox(node: DesignNode): { w: number; h: number } {
   const style = textStyle(node)
   const lineH = style.lineHeight > 0 ? style.lineHeight : Math.round(style.fontSize * 1.2)
-  const lines = style.text.split('\n')
-  const charW = style.fontSize * 0.5
-  let width = style.fontSize
-  for (const line of lines) {
-    const next = Math.ceil(line.length * charW + style.letterSpacing * Math.max(0, line.length - 1))
-    if (next > width) width = next
+  const widths: number[] = [0]
+  const glyphs: number[] = [0]
+  const text = casedText(style.text, node.textCase)
+  for (const part of splitTextByRuns(text, node.runs)) {
+    const font: DesignTextFont = {
+      size: part.run?.fontSize ?? style.fontSize,
+      weight: part.run?.weight ?? style.weight,
+      italic: part.run?.italic ?? node.italic ?? false,
+      family: part.run?.fontFamily ?? style.fontFamily,
+    }
+    part.text.split('\n').forEach((piece, index) => {
+      if (index > 0) {
+        widths.push(0)
+        glyphs.push(0)
+      }
+      const count = [...piece].length
+      widths[widths.length - 1] += textMeasurer ? textMeasurer(piece, font) : count * font.size * 0.5
+      glyphs[glyphs.length - 1] += count
+    })
   }
-  return { w: Math.max(1, width), h: Math.max(lineH, Math.max(1, lines.length) * lineH) }
+  // Letter spacing sits between characters, so a line of n characters has n - 1 gaps.
+  widths.forEach((width, line) => {
+    widths[line] = width + style.letterSpacing * Math.max(0, (glyphs[line] ?? 0) - 1)
+  })
+  // Rounded up with a pixel to spare, so a measured line never wraps on a fraction.
+  const widest = Math.max(style.fontSize, ...widths.map((width) => Math.ceil(width) + (textMeasurer ? 1 : 0)))
+  return { w: Math.max(1, widest), h: Math.max(lineH, widths.length * lineH) }
 }
 
 /** Resolved corner radii in pixels. An omitted corner uses `radius`. */
@@ -3077,7 +3117,7 @@ function placeGrid(frame: DesignNode, frozenId?: string): DesignNode {
   return { ...frame, children }
 }
 
-/** Hug a text node to the half-em estimate. Width hug sets both axes. Height hug wraps into the current width. */
+/** Hug a text node to its measured box. Width hug sets both axes. Height hug wraps into the current width. */
 function hugText(node: DesignNode): DesignNode {
   if (!node.textHug) return node
   const box = measureTextBox(node)

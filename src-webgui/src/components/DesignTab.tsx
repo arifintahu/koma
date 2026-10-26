@@ -182,6 +182,9 @@ import {
   type HandleMode,
 } from '../lib/design/vectorEdit'
 import { DesignPathBar, type PathBarAction } from './design/DesignPathBar'
+import { installDesignTextMeasurer } from './design/textMeasure'
+
+installDesignTextMeasurer()
 import { designPngBase64 } from '../lib/designRender'
 import { fileKey } from '../store/coding'
 import { isTabVisible } from '../store/editorGroups'

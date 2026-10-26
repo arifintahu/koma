@@ -12,6 +12,7 @@ export function DesignTextEditor({
   text,
   runs,
   style,
+  wrap = true,
   onText,
   onTextRange,
   onDone,
@@ -20,6 +21,8 @@ export function DesignTextEditor({
   text: string
   runs: DesignTextRun[] | undefined
   style: CSSProperties
+  /** Auto-width text grows on one line instead of wrapping inside its current box. */
+  wrap?: boolean
   onText: (text: string) => void
   onTextRange?: (start: number, end: number) => void
   onDone: () => void
@@ -70,7 +73,7 @@ export function DesignTextEditor({
       contentEditable="plaintext-only"
       suppressContentEditableWarning
       spellCheck={false}
-      className="z-10 min-w-[1px] whitespace-pre-wrap outline-none"
+      className={`z-10 min-w-[1px] outline-none ${wrap ? 'whitespace-pre-wrap' : 'whitespace-pre'}`}
       style={style}
       onInput={push}
       onCompositionStart={() => {
