@@ -13,8 +13,9 @@ import {
   imageFillPlacement,
   isImageCropPaint,
   isPaintVisible,
-  nodeFillCss,
   nodeFillLayers,
+  svgFillLayers,
+  type SvgFillLayer,
   nodeHasImageFill,
   nodePaints,
   roundedRectPath,
@@ -122,12 +123,19 @@ export const DesignNodeView = memo(function DesignNodeView({
   const bareFill = booleanShape ? chrome.fill === 'none' : node.fill === 'none' || chrome.fill === 'none'
   const bareStroke = (node.kind === 'frame' || node.kind === 'group') && (!node.stroke || node.stroke === 'none')
   const strokeOff = chrome.stroke === 'none' || ((node.kind === 'rect' || node.kind === 'ellipse') && node.stroke == null)
-  const fillFallback = node.kind === 'frame' ? '#ffffff' : node.kind === 'rect' || node.kind === 'ellipse' || node.kind === 'vector' ? SHAPE_FILL : 'var(--color-koma-panel)'
+  const fillFallback = node.kind === 'frame' ? '#ffffff' : node.kind === 'rect' || node.kind === 'ellipse' || node.kind === 'vector' || booleanShape ? SHAPE_FILL : 'var(--color-koma-panel)'
   const fillPaints = nodePaints(painted, 'fill').filter((paint) => isPaintVisible(paint) && paintAlias(paint) !== 'none')
   const fillPaint = firstVisiblePaint(fillPaints)
   const fillFallbackCss = paintCss(doc, chrome.fill, fillFallback)
-  const fill = bareFill ? 'transparent' : nodeFillCss(doc, painted, fillFallbackCss)
   const stroke = nodeStrokeCss(doc, painted, paintCss(doc, chrome.stroke, node.kind === 'line' || node.kind === 'vector' ? '#1c1c1c' : 'var(--color-koma-border)'))
+  // Shapes drawn as paths take SVG fills. A shape with no fill paint of its own uses the fallback color.
+  const pathFills: SvgFillLayer[] =
+    chrome.fill === 'none'
+      ? []
+      : (() => {
+          const layers = svgFillLayers(doc, painted, fillFallbackCss, `${node.id}-fill`, boxW, boxH)
+          return layers.length ? layers : [{ fill: fillFallbackCss }]
+        })()
   const fillLayers = bareFill || node.kind === 'line' || node.kind === 'vector' ? [] : nodeFillLayers(doc, painted, fillFallbackCss)
   const fillPlacements = fillPaints.map((paint) => imageFillPlacement({ w: boxW, h: boxH }, paint, paint.hash ? designImageSize(doc, paint.hash) : null))
   const fillSizes = fillPlacements.map((item) => item.size)
@@ -271,7 +279,8 @@ export const DesignNodeView = memo(function DesignNodeView({
         ) : null}
         {booleanGeometry && booleanGeometry.contours.length ? (
           <svg className="pointer-events-none absolute inset-0 overflow-visible" width={boxW} height={boxH}>
-            <path d={contoursSvgPath(booleanGeometry.contours)} fillRule={booleanGeometry.rule} fill={chrome.fill === 'none' ? 'none' : fill} stroke={chrome.stroke === 'none' ? 'none' : stroke} strokeWidth={chrome.strokeWidth} strokeLinecap={painted.strokeCap === 'round' || painted.strokeCap === 'square' ? painted.strokeCap : 'butt'} strokeLinejoin={painted.strokeJoin ?? 'miter'} strokeDasharray={painted.strokeDash?.join(' ')} />
+            <PathFills layers={pathFills} d={contoursSvgPath(booleanGeometry.contours)} rule={booleanGeometry.rule} />
+            <path d={contoursSvgPath(booleanGeometry.contours)} fillRule={booleanGeometry.rule} fill="none" stroke={chrome.stroke === 'none' ? 'none' : stroke} strokeWidth={chrome.strokeWidth} strokeLinecap={painted.strokeCap === 'round' || painted.strokeCap === 'square' ? painted.strokeCap : 'butt'} strokeLinejoin={painted.strokeJoin ?? 'miter'} strokeDasharray={painted.strokeDash?.join(' ')} />
             {nodePaints(painted, 'stroke').slice(1).filter((paint) => isPaintVisible(paint) && paintAlias(paint) !== 'none').map((paint, index) => (
               <path key={`stroke-${index}`} d={contoursSvgPath(booleanGeometry.contours)} fill="none" fillRule={booleanGeometry.rule} stroke={resolvePaintCss(doc, paint, stroke)} strokeWidth={strokePaintWidth(paint, chrome.strokeWidth)} strokeDasharray={strokePaintDash(paint, painted.strokeDash)} />
             ))}
@@ -279,7 +288,8 @@ export const DesignNodeView = memo(function DesignNodeView({
         ) : null}
         {!booleanShape && node.kind === 'vector' && node.vector ? (
           <svg className="absolute inset-0 overflow-visible" width={boxW} height={boxH}>
-            <path d={vectorSvgPath(node.vector)} fill={chrome.fill === 'none' ? 'none' : fill} stroke={chrome.stroke === 'none' ? 'none' : stroke} strokeWidth={chrome.strokeWidth} strokeLinecap={painted.strokeCap === 'round' || painted.strokeCap === 'square' ? painted.strokeCap : 'butt'} strokeLinejoin={painted.strokeJoin ?? 'miter'} strokeDasharray={painted.strokeDash?.join(' ')} {...(node.svgAttrs ?? {})} />
+            <PathFills layers={pathFills} d={vectorSvgPath(node.vector)} />
+            <path d={vectorSvgPath(node.vector)} fill="none" stroke={chrome.stroke === 'none' ? 'none' : stroke} strokeWidth={chrome.strokeWidth} strokeLinecap={painted.strokeCap === 'round' || painted.strokeCap === 'square' ? painted.strokeCap : 'butt'} strokeLinejoin={painted.strokeJoin ?? 'miter'} strokeDasharray={painted.strokeDash?.join(' ')} {...(node.svgAttrs ?? {})} />
             {nodePaints(painted, 'stroke').slice(1).filter((paint) => isPaintVisible(paint) && paintAlias(paint) !== 'none').map((paint, index) => (
               <path key={`stroke-${index}`} d={vectorSvgPath(node.vector)} fill="none" stroke={resolvePaintCss(doc, paint, stroke)} strokeWidth={strokePaintWidth(paint, chrome.strokeWidth)} strokeDasharray={strokePaintDash(paint, painted.strokeDash)} />
             ))}
@@ -400,6 +410,34 @@ function effectStyle(doc: DesignDoc, effects: DesignNode['effects'], followsShap
     filter: [...drops, ...blurs].join(' ') || undefined,
     backdropFilter: backdrop || undefined,
   }
+}
+
+/** The fill layers of a path shape (and the gradients they point at), drawn under its stroke. */
+function PathFills({ layers, d, rule }: { layers: SvgFillLayer[]; d: string; rule?: 'nonzero' | 'evenodd' }) {
+  const gradients = layers.flatMap((layer) => (layer.gradient ? [layer.gradient] : []))
+  return (
+    <>
+      {gradients.length ? (
+        <defs>
+          {gradients.map((gradient) => {
+            const stops = gradient.stops.map((stop, index) => <stop key={index} offset={stop.offset} stopColor={stop.color} />)
+            return gradient.kind === 'linear' ? (
+              <linearGradient key={gradient.id} id={gradient.id} gradientUnits="userSpaceOnUse" x1={gradient.x1} y1={gradient.y1} x2={gradient.x2} y2={gradient.y2}>
+                {stops}
+              </linearGradient>
+            ) : (
+              <radialGradient key={gradient.id} id={gradient.id} gradientUnits="userSpaceOnUse" cx={gradient.x1} cy={gradient.y1} r={gradient.x2}>
+                {stops}
+              </radialGradient>
+            )
+          })}
+        </defs>
+      ) : null}
+      {layers.map((layer, index) => (
+        <path key={index} d={d} fill={layer.fill} fillOpacity={layer.opacity} fillRule={rule} stroke="none" />
+      ))}
+    </>
+  )
 }
 
 function StrokeShape({

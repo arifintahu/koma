@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import { booleanEligible, booleanResult, contoursToVector, nodeContours, pointInContours, type Contour } from './boolean'
+import { svgFillLayers } from './paint'
+import { booleanEligible, booleanPaintNode, booleanResult, contoursToVector, nodeContours, pointInContours, type Contour } from './boolean'
 import { designChatHtml } from './chatHtml'
 import {
   bendSegment,
@@ -638,5 +639,24 @@ describe('boolean geometry', () => {
     // A group holding text is blocked as a whole.
     const group: DesignNode = { ...boolGroup('g', 'union', [square('c', 0, 0)]), children: [square('c', 0, 0), text] }
     expect(booleanEligible(docOf(group), ['g'])).toMatchObject({ ok: false })
+  })
+
+  it('path fills are SVG colors and gradients, never CSS background layers', () => {
+    const red: DesignNode = { ...square('a', 0, 0), fill: '#ff0000' }
+    const solid = svgFillLayers(docOf(red), red, '#d9d9d9', 'a', 100, 100)
+    expect(solid).toEqual([{ fill: '#ff0000', opacity: undefined }])
+    expect(solid[0].fill).not.toContain('gradient')
+    // A recolored boolean group paints the new color, not the child's.
+    const group = boolGroup('g', 'union', [square('a', 0, 0), square('b', 40, 30)])
+    const recolored: DesignNode = { ...group, fill: '#00ff00' }
+    expect(svgFillLayers(docOf(recolored), booleanPaintNode(recolored), '#d9d9d9', 'g', 100, 100)[0].fill).toBe('#00ff00')
+    // Gradients get a definition whose line runs corner to corner like the CSS gradient.
+    const gradient: DesignNode = {
+      ...square('c', 0, 0),
+      fills: [{ type: 'gradient', kind: 'linear', transform: [90, 0.5, 0.5], stops: [{ color: '#000000', at: 0 }, { color: '#ffffff', at: 1 }] }],
+    }
+    const layer = svgFillLayers(docOf(gradient), gradient, '#d9d9d9', 'c', 200, 100)[0]
+    expect(layer.fill).toBe('url(#c-0)')
+    expect(layer.gradient).toMatchObject({ kind: 'linear', x1: 0, y1: 50, x2: 200, y2: 50 })
   })
 })
