@@ -1,4 +1,7 @@
 import { isMacTerminalPlatform } from '../../lib/terminalInput'
+import type { HandleMode } from '../../lib/design/vectorEdit'
+
+type Point = { x: number; y: number }
 import {
   snapDesign,
   componentView,
@@ -90,8 +93,16 @@ export type Drag =
   | { kind: 'marquee'; x0: number; y0: number; x1: number; y1: number }
   | { kind: 'draw'; shape: DrawShape; cx: number; cy: number; x0: number; y0: number; x1: number; y1: number; parentId: string | null }
   | { kind: 'pen'; index: number; space: boolean }
-  | { kind: 'vertex'; id: string; index: number; startX: number; startY: number; remembered: boolean }
-  | { kind: 'handle'; id: string; segment: number; end: 'start' | 'end'; startX: number; startY: number; remembered: boolean }
+  | { kind: 'handle'; id: string; segment: number; end: 'start' | 'end'; startX: number; startY: number; remembered: boolean; mode: HandleMode }
+  /**
+   * Path edit drags. `base` is the vector node when the drag began and `start` the doc point
+   * of the press; every move recomputes from them. `alt` duplicates the nodes on the first
+   * move, or deletes the pressed node if the press ends without moving.
+   */
+  | { kind: 'vnodes'; id: string; ids: number[]; start: Point; base: DesignNode; moved: boolean; remembered: boolean; pressed: number; narrow: boolean; alt: boolean }
+  | { kind: 'vcurve'; id: string; index: number; start: Point; base: DesignNode; moved: boolean; remembered: boolean }
+  | { kind: 'vseg'; id: string; segment: number; t: number; start: Point; base: DesignNode; moved: boolean; remembered: boolean; bend: boolean }
+  | { kind: 'vmarquee'; id: string; start: Point; end: Point; base: number[] }
 
 export type DesignHistoryEntry = { doc: DesignDoc; selection: string[] }
 /** Undo stacks per file, outside the tab, so switching tabs keeps them. `head` is the document they lead up to. */

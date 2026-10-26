@@ -10,6 +10,7 @@ import {
   joinVertices,
   mergeOnDrop,
   mergeVertices,
+  moveHandle,
   moveVertices,
   nodeType,
   separateVertices,
@@ -344,5 +345,16 @@ describe('path editing', () => {
     const { vector, ids } = duplicateVertices(open(), [0, 1], 10, 10)
     expect(ids).toEqual([3, 4])
     expect(vector.segments).toHaveLength(3)
+  })
+
+  it('handle drags mirror, align or leave the opposite handle', () => {
+    const curved = setNodeType(open(), [1], 'mirror')
+    const tip = { x: 50 + 10, y: 20 }
+    const mirrored = moveHandle(curved, 1, 'start', tip, 'mirror')
+    expect(mirrored.segments[0].tangentEnd).toEqual({ x: -10, y: -20 })
+    const aligned = moveHandle(curved, 1, 'start', tip, 'aligned')
+    expect(Math.hypot(aligned.segments[0].tangentEnd.x, aligned.segments[0].tangentEnd.y)).toBeCloseTo(50 / 3)
+    const free = moveHandle(curved, 1, 'start', tip, 'independent')
+    expect(free.segments[0].tangentEnd).toEqual(curved.segments[0].tangentEnd)
   })
 })

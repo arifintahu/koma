@@ -495,3 +495,81 @@ export function verticesInRect(vector: DesignVector, rect: { x: number; y: numbe
   const y1 = Math.max(rect.y, rect.y + rect.h)
   return vector.vertices.flatMap((vertex, i) => (vertex.x >= x0 && vertex.x <= x1 && vertex.y >= y0 && vertex.y <= y1 ? [i] : []))
 }
+
+export type HandleMode = 'mirror' | 'aligned' | 'independent'
+
+/**
+ * Drag one handle to `tip` (node-local). The handle on the other side of the same vertex
+ * follows the mode: mirrored, kept straight with its own length (aligned), or left alone.
+ */
+export function moveHandle(vector: DesignVector, index: number, end: 'start' | 'end', tip: Point, mode: HandleMode): DesignVector {
+  const segment = vector.segments[index]
+  const vertexIndex = segment ? (end === 'start' ? segment.start : segment.end) : -1
+  const vertex = vector.vertices[vertexIndex]
+  if (!segment || !vertex) return vector
+  const tangent = sub(tip, vertex)
+  const segments = vector.segments.slice()
+  segments[index] = withTangent(segment, end, tangent)
+  if (mode !== 'independent') {
+    for (const other of segmentsAt(vector, vertexIndex)) {
+      if (other.index === index && other.end === end) continue
+      const current = tangentOf(segments[other.index] as DesignVectorSegment, other.end)
+      const opposite = mode === 'mirror' ? scale(tangent, -1) : scale(unit(tangent), -length(current))
+      segments[other.index] = withTangent(segments[other.index] as DesignVectorSegment, other.end, opposite)
+      break
+    }
+  }
+  return { ...vector, segments }
+}
+
+/** The handle mode a plain drag keeps: whatever the node already is. */
+export function handleModeOf(vector: DesignVector, vertex: number): HandleMode {
+  const type = nodeType(vector, vertex)
+  return type === 'mirror' ? 'mirror' : type === 'aligned' ? 'aligned' : 'independent'
+}
+
+/** Absolute SVG path of one segment, for hit areas and highlights. */
+export function segmentSvgPath(vector: DesignVector, index: number): string {
+  const curve = segmentCurve(vector, index)
+  if (!curve) return ''
+  const [p0, c1, c2, p3] = curve
+  return `M${p0.x} ${p0.y} C${c1.x} ${c1.y} ${c2.x} ${c2.y} ${p3.x} ${p3.y}`
+}
+
+/** Cmd/Ctrl-drag on a node: a smooth handle pair follows the pointer offset `v` (Penpot curve-config). */
+export function pullSmoothPair(vector: DesignVector, vertex: number, v: Point): DesignVector {
+  const touching = segmentsAt(vector, vertex)
+  if (!touching.length) return vector
+  const segments = vector.segments.slice()
+  for (const item of touching) {
+    segments[item.index] = withTangent(segments[item.index] as DesignVectorSegment, item.end, item.end === 'start' ? v : scale(v, -1))
+  }
+  return { ...vector, segments }
+}
+
+/** The vertices and the segments between them, as a standalone piece for the node clipboard. */
+export function extractVertices(vector: DesignVector, ids: readonly number[]): DesignVector {
+  const picked = [...new Set(ids)].filter((i) => vector.vertices[i])
+  const map = new Map(picked.map((i, n) => [i, n]))
+  const segments: DesignVectorSegment[] = []
+  for (const segment of vector.segments) {
+    const start = map.get(segment.start)
+    const end = map.get(segment.end)
+    if (start != null && end != null) segments.push({ ...segment, start, end })
+  }
+  return { vertices: picked.map((i) => ({ ...(vector.vertices[i] as Point) })), segments, regions: [] }
+}
+
+/** Paste a clipboard piece into the vector, shifted. Returns the new vertex indices. */
+export function appendVector(vector: DesignVector, piece: DesignVector, dx: number, dy: number): { vector: DesignVector; ids: number[] } {
+  const offset = vector.vertices.length
+  const vertices = [...vector.vertices, ...piece.vertices.map((p) => ({ x: p.x + dx, y: p.y + dy }))]
+  const segments = [...vector.segments, ...piece.segments.map((s) => ({ ...s, start: s.start + offset, end: s.end + offset }))]
+  return { vector: rebuild(vector, vertices, segments), ids: piece.vertices.map((_, i) => offset + i) }
+}
+
+/** The point at parameter `t` along a segment. */
+export function pointOnSegment(vector: DesignVector, index: number, t: number): Point | null {
+  const curve = segmentCurve(vector, index)
+  return curve ? bezier(...curve, t) : null
+}

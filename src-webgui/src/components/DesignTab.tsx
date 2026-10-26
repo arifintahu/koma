@@ -50,6 +50,7 @@ import {
   flipDesignNode,
   frameAtPoint,
   findDesignNode,
+  fitVectorNode,
   insertDesignNode,
   layoutDesign,
   locateDesign,
@@ -101,17 +102,12 @@ import {
   writeComponentView,
   unwrapDesignNode,
   wrapDesignNodes,
-  moveVectorVertex,
-  deleteVectorVertex,
-  insertVectorVertex,
   applyDesignToken,
   applyImageFill,
   booleanDesignNodes,
   createPolygonNode,
   createStarNode,
   flattenBooleanNode,
-  insertVertexOnSegment,
-  moveVectorTangent,
   rotationFromCenter,
   snapRotation,
   outlineStrokeNode,
@@ -152,12 +148,40 @@ import {
   type DesignPenPoint,
   type DesignQuery,
   type DesignNode,
+  type DesignVector,
   type DesignPaint,
   type DesignWeight,
 } from '../lib/design'
 import type { FramePreset } from '../lib/design/presets'
 import { DesignCursorGhost, type CursorGhostShape } from './design/DesignCursorGhost'
-import { fixAngle, snapToPoints } from '../lib/design/vectorEdit'
+import {
+  appendVector,
+  bendSegment,
+  closestOnSegment,
+  deleteSegments,
+  deleteVertices,
+  duplicateVertices,
+  extractVertices,
+  fixAngle,
+  flipVertices,
+  handleModeOf,
+  joinVertices,
+  mergeOnDrop,
+  mergeVertices,
+  moveHandle,
+  moveVertices,
+  nodeType,
+  pointOnSegment,
+  pullSmoothPair,
+  segmentSvgPath,
+  separateVertices,
+  setNodeType,
+  snapToPoints,
+  splitSegment,
+  verticesInRect,
+  type HandleMode,
+} from '../lib/design/vectorEdit'
+import { DesignPathBar, type PathBarAction } from './design/DesignPathBar'
 import { designPngBase64 } from '../lib/designRender'
 import { fileKey } from '../store/coding'
 import { isTabVisible } from '../store/editorGroups'
@@ -209,6 +233,9 @@ import { DesignSelectionChrome } from './design/DesignSelectionChrome'
 import { FrameToolFlyout, ShapeToolFlyout } from './design/DesignTools'
 import { NodeSettings } from './design/DesignNodeSettings'
 import { PenOverlay } from './design/DesignPropertyFields'
+
+/** Nodes copied in path edit mode. Shared across designer tabs, like the shape clipboard. */
+let vectorClipboard: DesignVector | null = null
 
 /** The cursor miniature for a drawing tool, sized like the shape a click would place. */
 function cursorGhostFor(
@@ -318,6 +345,17 @@ export function DesignTab({ tab }: { tab: Extract<Tab, { kind: 'design' }> }) {
   const [overrideTargetId, setOverrideTargetId] = useState<string | null>(null)
   const [enteredContainerId, setEnteredContainerId] = useState<string | null>(null)
   const [vectorEditId, setVectorEditId] = useState<string | null>(null)
+  /** Selected nodes of the vector being edited, and the node-edit options. */
+  const [vectorSel, setVectorSelState] = useState<number[]>([])
+  const vectorSelRef = useRef<number[]>([])
+  const [vectorSnap, setVectorSnap] = useState(true)
+  const vectorSnapRef = useRef(true)
+  vectorSnapRef.current = vectorSnap
+  const [vectorMarquee, setVectorMarquee] = useState<{ x: number; y: number; w: number; h: number } | null>(null)
+  useEffect(() => {
+    vectorSelRef.current = []
+    setVectorSelState([])
+  }, [vectorEditId])
   const [textRange, setTextRange] = useState<{ id: string; start: number; end: number } | null>(null)
   const [palette, setPalette] = useState(false)
   const vectorEditRef = useRef<string | null>(null)
@@ -798,20 +836,8 @@ export function DesignTab({ tab }: { tab: Extract<Tab, { kind: 'design' }> }) {
         penApplyRef.current(next)
         return
       }
-      if (drag.kind === 'vertex' && point) {
-        const stored = useKoma.getState().design?.docs?.[key]?.doc
-        if (!stored) return
-        const focus = focusRef.current
-        const doc = editingDoc(stored, focus)
-        const origin = nodeOrigin(doc, drag.id)
-        if (!origin) return
-        const next = projectDoc(stored, focus, updateDesignNode(doc, drag.id, (node) => moveVectorVertex(node, drag.index, point.x - origin.x, point.y - origin.y)))
-        if (sameDesign(next, stored)) return
-        if (!drag.remembered) {
-          noteRef.current(stored)
-          drag.remembered = true
-        }
-        updateRef.current(tab.root, tab.path, next)
+      if ((drag.kind === 'vnodes' || drag.kind === 'vcurve' || drag.kind === 'vseg' || drag.kind === 'vmarquee') && point) {
+        vectorDragRef.current.move(drag, point, event)
         return
       }
       if (drag.kind === 'rotate') {
@@ -842,7 +868,18 @@ export function DesignTab({ tab }: { tab: Extract<Tab, { kind: 'design' }> }) {
         const doc = editingDoc(stored, focus)
         const origin = nodeOrigin(doc, drag.id)
         if (!origin) return
-        const next = projectDoc(stored, focus, updateDesignNode(doc, drag.id, (node) => moveVectorTangent(node, drag.segment, drag.end, point.x - origin.x, point.y - origin.y, event.metaKey || event.ctrlKey, event.shiftKey)))
+        // Plain keeps the node's own type; ⌘ mirrors, Alt frees, ⌘+Alt aligns (Penpot). Shift snaps to 45°.
+        const meta = event.metaKey || event.ctrlKey
+        const mode: HandleMode = meta && event.altKey ? 'aligned' : meta ? 'mirror' : event.altKey ? 'independent' : drag.mode
+        const next = projectDoc(stored, focus, updateDesignNode(doc, drag.id, (node) => {
+          const vector = node.vector
+          const segment = vector?.segments[drag.segment]
+          const vertex = segment && vector?.vertices[drag.end === 'start' ? segment.start : segment.end]
+          if (!vector || !vertex) return node
+          const raw = { x: point.x - origin.x, y: point.y - origin.y }
+          const tip = event.shiftKey ? fixAngle(vertex, raw) : raw
+          return fitVectorNode({ ...node, vector: moveHandle(vector, drag.segment, drag.end, tip, mode) })
+        }))
         if (sameDesign(next, stored)) return
         if (!drag.remembered) {
           noteRef.current(stored)
@@ -1056,6 +1093,10 @@ export function DesignTab({ tab }: { tab: Extract<Tab, { kind: 'design' }> }) {
     const up = (event: PointerEvent) => {
       const drag = release()
       if (!drag || drag.kind === 'pan' || drag.kind === 'pen') return
+      if (drag.kind === 'vnodes' || drag.kind === 'vcurve' || drag.kind === 'vseg' || drag.kind === 'vmarquee') {
+        vectorDragRef.current.up(drag)
+        return
+      }
       const stored = useKoma.getState().design?.docs?.[key]?.doc
       if (!stored) return
       const focus = focusRef.current
@@ -1214,6 +1255,7 @@ export function DesignTab({ tab }: { tab: Extract<Tab, { kind: 'design' }> }) {
         redoRef.current()
         return
       }
+      if (vectorKeyRef.current(event)) return
       if (meta && event.altKey && !event.shiftKey && event.key.toLowerCase() === 'c') {
         event.preventDefault()
         commandsRef.current?.copyStyle()
@@ -1550,6 +1592,347 @@ export function DesignTab({ tab }: { tab: Extract<Tab, { kind: 'design' }> }) {
     setTool(next)
   }
   finishPenRef.current = finishPen
+
+  // --- Path editing (Penpot-style node editor) --------------------------------------------
+  const setVectorSel = (ids: number[]) => {
+    vectorSelRef.current = ids
+    setVectorSelState(ids)
+  }
+  /** The vector being edited, in the editing view, with its canvas origin. */
+  const editedVector = () => {
+    const open = viewDoc()
+    const id = vectorEditRef.current
+    if (!open || !id) return null
+    const node = findDesignNode(open.doc, id)
+    const origin = nodeOrigin(open.doc, id)
+    return node?.vector && origin ? { open, id, node, vector: node.vector, origin } : null
+  }
+  /** One undoable change to the edited vector; `select` replaces the node selection. */
+  const commitVector = (change: (vector: DesignVector) => DesignVector | { vector: DesignVector; select: number[] }) => {
+    const ctx = editedVector()
+    if (!ctx) return
+    const result = change(ctx.vector)
+    const vector = 'select' in result ? result.vector : result
+    if (vector !== ctx.vector) commit(updateDesignNode(ctx.open.doc, ctx.id, (node) => fitVectorNode({ ...node, vector })))
+    if ('select' in result) setVectorSel(result.select)
+  }
+  /** Live update during a node drag, always from the vector as it was when the drag began. */
+  const liveVector = (drag: { id: string; base: DesignNode; remembered: boolean }, vector: DesignVector) => {
+    const stored = useKoma.getState().design?.docs?.[key]?.doc
+    if (!stored) return
+    const focus = focusRef.current
+    const next = projectDoc(stored, focus, updateDesignNode(editingDoc(stored, focus), drag.id, () => fitVectorNode({ ...drag.base, vector })))
+    if (sameDesign(next, stored)) return
+    if (!drag.remembered) {
+      noteRef.current(stored)
+      drag.remembered = true
+    }
+    updateRef.current(tab.root, tab.path, next)
+  }
+  const nodeTolerance = () => 6 / viewRef.current.zoom
+
+  const vectorDown = {
+    vertex: (event: ReactPointerEvent, index: number) => {
+      event.preventDefault()
+      event.stopPropagation()
+      const ctx = editedVector()
+      if (!ctx || event.button !== 0) return
+      const start = toDoc(event.clientX, event.clientY)
+      if (!start) return
+      const meta = event.metaKey || event.ctrlKey
+      if (meta && event.altKey) {
+        commitVector((vector) => ({ vector: deleteVertices(vector, [index], false), select: [] }))
+        return
+      }
+      if (meta) {
+        dragRef.current = { kind: 'vcurve', id: ctx.id, index, start, base: ctx.node, moved: false, remembered: false }
+        return
+      }
+      const selected = vectorSelRef.current
+      let ids = selected.includes(index) ? selected : [index]
+      if (event.shiftKey) {
+        ids = selected.includes(index) ? selected.filter((i) => i !== index) : [...selected, index]
+        setVectorSel(ids)
+        if (!ids.includes(index)) return
+      } else if (!selected.includes(index)) setVectorSel(ids)
+      dragRef.current = {
+        kind: 'vnodes',
+        id: ctx.id,
+        ids,
+        start,
+        base: ctx.node,
+        moved: false,
+        remembered: false,
+        pressed: index,
+        narrow: !event.shiftKey && selected.includes(index) && selected.length > 1,
+        alt: event.altKey,
+      }
+    },
+    segment: (event: ReactPointerEvent, index: number) => {
+      event.preventDefault()
+      event.stopPropagation()
+      const ctx = editedVector()
+      if (!ctx || event.button !== 0) return
+      const start = toDoc(event.clientX, event.clientY)
+      if (!start) return
+      if (event.altKey) {
+        commitVector((vector) => ({ vector: deleteSegments(vector, [index]), select: [] }))
+        return
+      }
+      const hit = closestOnSegment(ctx.vector, index, { x: start.x - ctx.origin.x, y: start.y - ctx.origin.y })
+      dragRef.current = {
+        kind: 'vseg',
+        id: ctx.id,
+        segment: index,
+        t: hit?.t ?? 0.5,
+        start,
+        base: ctx.node,
+        moved: false,
+        remembered: false,
+        bend: event.metaKey || event.ctrlKey,
+      }
+    },
+    /** A press on empty canvas while editing: a node marquee, or leave edit mode for another object. */
+    canvas: (event: ReactPointerEvent, point: { x: number; y: number }, hitId: string | null) => {
+      const ctx = editedVector()
+      if (!ctx) return false
+      if (hitId && hitId !== ctx.id) {
+        setVectorEditId(null)
+        return false
+      }
+      event.preventDefault()
+      const base = event.shiftKey ? vectorSelRef.current : []
+      if (!event.shiftKey) setVectorSel([])
+      dragRef.current = { kind: 'vmarquee', id: ctx.id, start: point, end: point, base }
+      return true
+    },
+  }
+  const vectorDownRef = useRef(vectorDown)
+  vectorDownRef.current = vectorDown
+
+  const vectorDrag = {
+    move: (drag: Extract<Drag, { kind: 'vnodes' | 'vcurve' | 'vseg' | 'vmarquee' }>, point: { x: number; y: number }, event: PointerEvent) => {
+      if (drag.kind === 'vmarquee') {
+        drag.end = point
+        const ctx = editedVector()
+        if (!ctx) return
+        const rect = { x: Math.min(drag.start.x, point.x), y: Math.min(drag.start.y, point.y), w: Math.abs(point.x - drag.start.x), h: Math.abs(point.y - drag.start.y) }
+        setVectorMarquee(rect)
+        const inside = verticesInRect(ctx.vector, { ...rect, x: rect.x - ctx.origin.x, y: rect.y - ctx.origin.y })
+        setVectorSel([...new Set([...drag.base, ...inside])])
+        return
+      }
+      const dx = point.x - drag.start.x
+      const dy = point.y - drag.start.y
+      if (!drag.moved) {
+        if (Math.hypot(dx, dy) * viewRef.current.zoom < 3) return
+        drag.moved = true
+      }
+      const base = drag.base.vector
+      if (!base) return
+      if (drag.kind === 'vcurve') {
+        // The press was on the node, so the pointer's travel is the new handle.
+        liveVector(drag, pullSmoothPair(base, drag.index, { x: dx, y: dy }))
+        return
+      }
+      if (drag.kind === 'vseg') {
+        if (drag.bend) {
+          const segment = base.segments[drag.segment]
+          const held = pointOnSegment(base, drag.segment, drag.t)
+          if (!segment || !held) return
+          // The curve point under the press follows the pointer.
+          liveVector(drag, bendSegment(base, drag.segment, segment, drag.t, { x: held.x + dx, y: held.y + dy }))
+          return
+        }
+        const segment = base.segments[drag.segment]
+        if (!segment) return
+        liveVector(drag, moveVertices(base, [segment.start, segment.end], dx, dy))
+        return
+      }
+      // Moving nodes. Alt duplicates them on the first move, Penpot-style.
+      if (drag.alt) {
+        const copy = duplicateVertices(base, drag.ids)
+        // The copy of the pressed node is the one that snaps and follows Shift.
+        const pressedAt = drag.ids.indexOf(drag.pressed)
+        drag.alt = false
+        drag.base = { ...drag.base, vector: copy.vector }
+        drag.pressed = copy.ids[pressedAt] ?? copy.ids[0] ?? drag.pressed
+        drag.ids = copy.ids
+        setVectorSel(copy.ids)
+      }
+      const vector = drag.base.vector as DesignVector
+      const anchor = vector.vertices[drag.ids.includes(drag.pressed) ? drag.pressed : drag.ids[0] as number]
+      let mx = dx
+      let my = dy
+      if (anchor && event.shiftKey) {
+        const fixed = fixAngle(anchor, { x: anchor.x + dx, y: anchor.y + dy })
+        mx = fixed.x - anchor.x
+        my = fixed.y - anchor.y
+      } else if (anchor && vectorSnapRef.current) {
+        const moving = new Set(drag.ids)
+        const others = vector.vertices.filter((_, i) => !moving.has(i))
+        const snapped = snapToPoints({ x: anchor.x + dx, y: anchor.y + dy }, others, nodeTolerance())
+        mx = snapped.x - anchor.x
+        my = snapped.y - anchor.y
+      }
+      liveVector(drag, moveVertices(vector, drag.ids, mx, my))
+    },
+    up: (drag: Extract<Drag, { kind: 'vnodes' | 'vcurve' | 'vseg' | 'vmarquee' }>) => {
+      if (drag.kind === 'vmarquee') {
+        setVectorMarquee(null)
+        return
+      }
+      if (drag.kind === 'vcurve') {
+        if (!drag.moved) commitVector((vector) => setNodeType(vector, [drag.index], nodeType(vector, drag.index) === 'corner' ? 'mirror' : 'corner'))
+        return
+      }
+      if (drag.kind === 'vseg') {
+        if (drag.moved || drag.bend) return
+        // A click on the outline adds a node exactly there.
+        commitVector((vector) => {
+          const split = splitSegment(vector, drag.segment, drag.t)
+          return { vector: split.vector, select: split.vertex >= 0 ? [split.vertex] : [] }
+        })
+        return
+      }
+      if (!drag.moved) {
+        if (drag.alt) commitVector((vector) => ({ vector: deleteVertices(vector, [drag.pressed], true), select: [] }))
+        else if (drag.narrow) setVectorSel([drag.pressed])
+        return
+      }
+      // A node dropped onto another merges into it (Penpot merge-dragged-on-drop).
+      const ctx = editedVector()
+      if (!ctx || !vectorSnapRef.current) return
+      const merged = mergeOnDrop(ctx.vector, drag.ids, nodeTolerance())
+      if (merged === ctx.vector) return
+      const stored = useKoma.getState().design?.docs?.[key]?.doc
+      if (!stored) return
+      const focus = focusRef.current
+      updateRef.current(tab.root, tab.path, projectDoc(stored, focus, updateDesignNode(ctx.open.doc, ctx.id, (node) => fitVectorNode({ ...node, vector: merged }))))
+      setVectorSel([])
+    },
+  }
+  const vectorDragRef = useRef(vectorDrag)
+  vectorDragRef.current = vectorDrag
+
+  /** Node edits from the toolbar or the keyboard. Returns false when the action needs nodes it does not have. */
+  const vectorAction = (action: PathBarAction): boolean => {
+    const ids = vectorSelRef.current
+    if (action === 'draw') {
+      chooseTool('pen')
+      return true
+    }
+    if (action === 'move') {
+      setTool('select')
+      return true
+    }
+    if (action === 'snap') {
+      setVectorSnap((on) => !on)
+      return true
+    }
+    if (!ids.length) return false
+    if (typeof action === 'object') {
+      commitVector((vector) => setNodeType(vector, ids, action.handles))
+      return true
+    }
+    if (action === 'delete') commitVector((vector) => ({ vector: deleteVertices(vector, ids, true), select: [] }))
+    else if (action === 'corner') commitVector((vector) => setNodeType(vector, ids, 'corner'))
+    else if (action === 'curve') commitVector((vector) => setNodeType(vector, ids, 'mirror'))
+    else if (action === 'separate') commitVector((vector) => separateVertices(vector, ids))
+    else if (action === 'flipH') commitVector((vector) => flipVertices(vector, ids, 'horizontal'))
+    else if (action === 'flipV') commitVector((vector) => flipVertices(vector, ids, 'vertical'))
+    else if (action === 'merge') commitVector((vector) => ({ vector: mergeVertices(vector, ids), select: [Math.min(...ids)] }))
+    else if (action === 'join') {
+      if (ids.length !== 2) return false
+      commitVector((vector) => joinVertices(vector, ids[0] as number, ids[1] as number))
+    } else if (action === 'add') {
+      // A node in the middle of every segment whose two ends are both selected.
+      commitVector((vector) => {
+        const picked = new Set(ids)
+        const targets = vector.segments.flatMap((segment, index) => (picked.has(segment.start) && picked.has(segment.end) ? [index] : []))
+        let next = vector
+        const added: number[] = []
+        for (const index of targets) {
+          const split = splitSegment(next, index, 0.5)
+          next = split.vector
+          added.push(split.vertex)
+        }
+        return { vector: next, select: [...ids, ...added] }
+      })
+    }
+    return true
+  }
+
+  /** Node-editing keys, ahead of the canvas shortcuts. Returns true when it handled the key. */
+  const vectorKey = (event: KeyboardEvent): boolean => {
+    if (!vectorEditRef.current || toolRef.current !== 'select') return false
+    const meta = event.metaKey || event.ctrlKey
+    const lower = event.key.toLowerCase()
+    const run = (action: PathBarAction) => {
+      event.preventDefault()
+      vectorAction(action)
+      return true
+    }
+    if (event.key === 'Delete' || event.key === 'Backspace') {
+      event.preventDefault()
+      const ids = vectorSelRef.current
+      if (ids.length) commitVector((vector) => ({ vector: deleteVertices(vector, ids, !event.shiftKey), select: [] }))
+      return true
+    }
+    if (event.key.startsWith('Arrow') && !meta) {
+      event.preventDefault()
+      const step = event.shiftKey ? 10 : 1
+      const dx = event.key === 'ArrowLeft' ? -step : event.key === 'ArrowRight' ? step : 0
+      const dy = event.key === 'ArrowUp' ? -step : event.key === 'ArrowDown' ? step : 0
+      const ids = vectorSelRef.current
+      if (ids.length) commitVector((vector) => moveVertices(vector, ids, dx, dy))
+      return true
+    }
+    if (meta && !event.altKey && lower === 'a') {
+      event.preventDefault()
+      const ctx = editedVector()
+      setVectorSel(event.shiftKey || !ctx ? [] : ctx.vector.vertices.map((_, i) => i))
+      return true
+    }
+    if (meta && !event.shiftKey && !event.altKey && lower === 'j') return run('merge')
+    if (meta && !event.altKey && event.key === "'") return run('snap')
+    if (meta && !event.shiftKey && !event.altKey && (lower === 'c' || lower === 'x')) {
+      const ctx = editedVector()
+      const ids = vectorSelRef.current
+      if (!ctx || !ids.length) return false
+      event.preventDefault()
+      vectorClipboard = extractVertices(ctx.vector, ids)
+      if (lower === 'x') commitVector((vector) => ({ vector: deleteVertices(vector, ids, false), select: [] }))
+      return true
+    }
+    if (meta && !event.shiftKey && !event.altKey && (lower === 'v' || lower === 'd')) {
+      const piece = lower === 'v' ? vectorClipboard : (() => {
+        const ctx = editedVector()
+        return ctx && vectorSelRef.current.length ? extractVertices(ctx.vector, vectorSelRef.current) : null
+      })()
+      if (!piece) return false
+      event.preventDefault()
+      commitVector((vector) => {
+        const pasted = appendVector(vector, piece, 10, 10)
+        return { vector: pasted.vector, select: pasted.ids }
+      })
+      return true
+    }
+    if (meta || event.altKey) return false
+    if (event.shiftKey && lower === 'h') return run('flipH')
+    if (event.shiftKey && lower === 'v') return run('flipV')
+    if (event.shiftKey && (event.key === '+' || event.key === '=')) return run('add')
+    if (event.shiftKey) return false
+    if (lower === 'j') return run('join')
+    if (lower === 'k') return run('separate')
+    if (lower === 'x') return run('corner')
+    if (lower === 'c') return run('curve')
+    if (lower === 'p') return run('draw')
+    if (lower === 'm') return run('move')
+    return false
+  }
+  const vectorKeyRef = useRef(vectorKey)
+  vectorKeyRef.current = vectorKey
   cancelPenRef.current = cancelPen
   chooseToolRef.current = chooseTool
   vectorEditRef.current = vectorEditId
@@ -2065,6 +2448,13 @@ export function DesignTab({ tab }: { tab: Extract<Tab, { kind: 'design' }> }) {
     const storedNow = useKoma.getState().design?.docs?.[key]?.doc
     const current = storedNow ? editingDoc(storedNow, focusRef.current) : null
     if (!current) return
+    if (vectorEditRef.current && tool === 'select') {
+      // Editing a path: empty canvas (or the path's own fill) starts a node marquee;
+      // pressing another object leaves edit mode and selects it as usual.
+      const under = resolveDesignSelectHit(current, point.x, point.y, enteredContainerRef.current)
+      const hitId = under.kind === 'hit' || under.kind === 'exit-and-hit' ? under.id : null
+      if (vectorDownRef.current.canvas(event, point, hitId)) return
+    }
     const deepId = deepSelectKey(event) ? hitDesignDeepest(current, point.x, point.y)?.id : undefined
     const resolved = deepId ? { kind: 'hit' as const, id: deepId } : resolveDesignSelectHit(current, point.x, point.y, enteredContainerRef.current)
     if (resolved.kind === 'exit-and-hit') setEnteredContainerId(resolved.enteredContainerId)
@@ -2509,6 +2899,19 @@ export function DesignTab({ tab }: { tab: Extract<Tab, { kind: 'design' }> }) {
           style={{ backgroundColor: '#e6e8ed', ...canvasBackdrop(doc.snap, grid, view) }}
         >
           <DesignRulers panX={view.panX} panY={view.panY} zoom={view.zoom} bounds={selection.length ? designSelectionCanvasBox(doc, selection) : null} />
+          {vectorEditId ? (() => {
+            const vector = findDesignNode(doc, vectorEditId)?.vector
+            const modes = vector ? [...new Set(vectorSel.map((i) => handleModeOf(vector, i)))] : []
+            return (
+              <DesignPathBar
+                drawing={tool === 'pen'}
+                snap={vectorSnap}
+                handleMode={modes.length === 1 ? (modes[0] as HandleMode) : null}
+                nodes={vectorSel.length}
+                onAction={(action) => vectorAction(action)}
+              />
+            )
+          })() : null}
           {(() => {
             // The armed tool rides on the cursor until the click that places it. The pen shows
             // only before its first point; after that its own preview takes over.
@@ -2659,48 +3062,70 @@ export function DesignTab({ tab }: { tab: Extract<Tab, { kind: 'design' }> }) {
             if (!edited || !origin || !vector?.vertices.length) return null
             const unit = 7 / view.zoom
             const stroke = 1 / view.zoom
+            const picked = new Set(vectorSel)
+            // Handles show for the selected nodes, or for every node while none is selected.
+            const showHandles = (vertex: number) => !picked.size || picked.has(vertex)
             return (
               <>
-                {vector.segments.map((segment, index) => {
-                  const start = vector.vertices[segment.start]
-                  const end = vector.vertices[segment.end]
-                  if (!start || !end) return null
-                  return (
-                    <button
+                <svg className="absolute overflow-visible" width={1} height={1} style={{ left: origin.x, top: origin.y }}>
+                  {vector.segments.map((_, index) => (
+                    <path
                       key={`${vectorEditId}-seg-${index}`}
-                      type="button"
-                      aria-label={`Segment ${index + 1}`}
-                      className="absolute z-10 border-0 bg-transparent p-0"
-                      style={{ left: origin.x + (start.x + end.x) / 2, top: origin.y + (start.y + end.y) / 2, width: unit, height: unit, transform: 'translate(-50%, -50%)' }}
-                      onPointerDown={(event) => {
-                        event.preventDefault()
-                        event.stopPropagation()
-                        patchSelected((node) => node.id === vectorEditId ? insertVertexOnSegment(node, index, 0.5) : node)
-                      }}
+                      d={segmentSvgPath(vector, index)}
+                      fill="none"
+                      stroke="transparent"
+                      strokeWidth={10 / view.zoom}
+                      className="cursor-copy hover:stroke-[color-mix(in_srgb,var(--color-koma-accent)_45%,transparent)]"
+                      style={{ pointerEvents: 'stroke' }}
+                      onPointerDown={(event) => vectorDownRef.current.segment(event, index)}
+                    >
+                      <title>Click to add a node, drag to move, ⌘-drag to bend, Alt-click to delete</title>
+                    </path>
+                  ))}
+                  {vectorMarquee ? (
+                    <rect
+                      x={vectorMarquee.x - origin.x}
+                      y={vectorMarquee.y - origin.y}
+                      width={vectorMarquee.w}
+                      height={vectorMarquee.h}
+                      fill="color-mix(in srgb, var(--koma-accent) 12%, transparent)"
+                      stroke={SELECTION}
+                      strokeWidth={stroke}
                     />
-                  )
-                })}
+                  ) : null}
+                </svg>
                 {vector.segments.flatMap((segment, index) => {
                   const start = vector.vertices[segment.start]
                   const end = vector.vertices[segment.end]
                   if (!start || !end) return []
                   const handles = [
-                    { end: 'start' as const, x: start.x + segment.tangentStart.x, y: start.y + segment.tangentStart.y, from: start },
-                    { end: 'end' as const, x: end.x + segment.tangentEnd.x, y: end.y + segment.tangentEnd.y, from: end },
+                    { end: 'start' as const, vertex: segment.start, x: start.x + segment.tangentStart.x, y: start.y + segment.tangentStart.y, from: start, zero: !segment.tangentStart.x && !segment.tangentStart.y },
+                    { end: 'end' as const, vertex: segment.end, x: end.x + segment.tangentEnd.x, y: end.y + segment.tangentEnd.y, from: end, zero: !segment.tangentEnd.x && !segment.tangentEnd.y },
                   ]
                   return handles.flatMap((handle) => {
+                    if (handle.zero || !showHandles(handle.vertex)) return []
                     return [
                       <div key={`${vectorEditId}-hline-${index}-${handle.end}`} className="pointer-events-none absolute z-10" style={{ left: origin.x + handle.from.x, top: origin.y + handle.from.y, width: Math.hypot(handle.x - handle.from.x, handle.y - handle.from.y), height: stroke, background: SELECTION, transformOrigin: '0 50%', transform: `rotate(${Math.atan2(handle.y - handle.from.y, handle.x - handle.from.x)}rad)` }} />,
                       <button
                         key={`${vectorEditId}-h-${index}-${handle.end}`}
                         type="button"
                         aria-label={`${handle.end} handle`}
+                        title="Drag: ⌘ mirrors, Alt frees, Shift snaps to 45°"
                         className="absolute z-20 rounded-full border-0 p-0"
                         style={{ left: origin.x + handle.x, top: origin.y + handle.y, width: unit, height: unit, background: '#ffffff', border: `${stroke}px solid ${SELECTION}`, transform: 'translate(-50%, -50%)' }}
                         onPointerDown={(event) => {
                           event.preventDefault()
                           event.stopPropagation()
-                          dragRef.current = { kind: 'handle', id: vectorEditId, segment: index, end: handle.end, startX: event.clientX, startY: event.clientY, remembered: false }
+                          dragRef.current = {
+                            kind: 'handle',
+                            id: vectorEditId,
+                            segment: index,
+                            end: handle.end,
+                            startX: event.clientX,
+                            startY: event.clientY,
+                            remembered: false,
+                            mode: handleModeOf(vector, handle.vertex),
+                          }
                         }}
                       />,
                     ]
@@ -2710,32 +3135,21 @@ export function DesignTab({ tab }: { tab: Extract<Tab, { kind: 'design' }> }) {
                   <button
                     key={`${vectorEditId}-${index}`}
                     type="button"
-                    aria-label={`Vertex ${index + 1}`}
+                    aria-label={`Node ${index + 1}`}
+                    aria-pressed={picked.has(index)}
+                    title="Shift adds, Alt-drag duplicates, ⌘-click toggles curve"
                     className="absolute z-20 border-0 p-0"
                     style={{
                       left: origin.x + point.x,
                       top: origin.y + point.y,
                       width: unit,
                       height: unit,
-                      background: '#ffffff',
+                      background: picked.has(index) ? SELECTION : '#ffffff',
                       border: `${stroke}px solid ${SELECTION}`,
                       transform: 'translate(-50%, -50%)',
-                      cursor: 'pointer',
+                      cursor: 'move',
                     }}
-                    onPointerDown={(event) => {
-                      event.preventDefault()
-                      event.stopPropagation()
-                      if (event.altKey) {
-                        patchSelected((node) => node.id === vectorEditId ? deleteVectorVertex(node, index) : node)
-                        return
-                      }
-                      dragRef.current = { kind: 'vertex', id: vectorEditId, index, startX: event.clientX, startY: event.clientY, remembered: false }
-                    }}
-                    onDoubleClick={(event) => {
-                      event.preventDefault()
-                      event.stopPropagation()
-                      patchSelected((node) => node.id === vectorEditId ? insertVectorVertex(node, index, point.x + 8, point.y) : node)
-                    }}
+                    onPointerDown={(event) => vectorDownRef.current.vertex(event, index)}
                   />
                 ))}
               </>
